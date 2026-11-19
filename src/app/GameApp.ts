@@ -250,7 +250,7 @@ export class GameApp {
       <div class="battle-status"><span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span></div>
       <div class="control-deck"><div class="deck-top"><button class="upgrade-button" data-action="upgrade" id="upgrade-button" disabled>${icon("wrench")}<span>改装升级</span><b id="upgrade-count">0</b></button><button class="mode-button" data-action="bomb-mode" id="mode-button" aria-pressed="false">${icon("target")}<span>轰炸模式</span><i></i></button></div>
       <div class="deck-main"><div class="control-readout"><span id="flight-mode">空战巡航</span><strong id="speed-label">0.0<small>m/s</small></strong><span id="energy-state">能量充足</span></div>
-      <div class="stick-surface" role="group" aria-label="虚拟摇杆，拖动控制朝向和加速"><div class="stick-base"><span class="stick-cross"></span><span class="stick-knob">${icon("plane")}</span></div><span class="stick-label">拖动转向 · 松手巡航</span></div>
+      <div class="stick-surface" role="slider" aria-label="飞行摇杆，方向控制航向，推至外圈满油门加速" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="stick-base"><span class="stick-scale-label">外圈 · 满油门</span><span class="stick-throttle"></span><span class="stick-half"></span><span class="stick-cross"></span><span class="stick-knob">${icon("plane")}</span></div><span class="stick-label">巡航 · 油门 0%</span></div>
       <button class="bomb-button" data-action="bomb" id="bomb-button" aria-label="投弹" disabled><span class="bomb-progress"></span>${icon("bomb")}<strong id="bomb-label">待命</strong><small id="bomb-state">先开启轰炸</small></button></div>
       <div class="deck-footer"><span>KNIGHT ON AIR <i>第一关</i></span><button data-action="help" aria-label="飞行操作帮助">${icon("help")}</button><span id="quality-readout"></span></div></div>`;
     this.stick.attach(this.ui.querySelector(".stick-surface")!);
@@ -262,6 +262,7 @@ export class GameApp {
   private updateHud() {
     const w = this.world!;
     const p = w.player;
+    this.stick.setFlightState(p.energy > 0, w.isBombing);
     const text = (id: string, value: string) => {
       const el = this.ui.querySelector<HTMLElement>(`#${id}`);
       if (el && el.textContent !== value) el.textContent = value;

@@ -18,6 +18,8 @@ export interface Airframe {
   footprint: number;
   hardpoints: number;
   engines: number;
+  mass: number; // Base mass in kg, including the standard loadout.
+  wingArea: number; // Reference lifting area in m².
   gun: string;
   missile: boolean;
   turret: boolean;
@@ -46,6 +48,8 @@ export const AIRFRAMES: Airframe[] = [
     footprint: 0.75,
     hardpoints: 6,
     engines: 1,
+    mass: 1800,
+    wingArea: 17,
     gun: "nose_cannon_pair",
     missile: true,
     turret: false,
@@ -73,6 +77,8 @@ export const AIRFRAMES: Airframe[] = [
     footprint: 1,
     hardpoints: 10,
     engines: 2,
+    mass: 4500,
+    wingArea: 30,
     gun: "wing_machinegun_pair",
     missile: false,
     turret: false,
@@ -100,6 +106,8 @@ export const AIRFRAMES: Airframe[] = [
     footprint: 1.45,
     hardpoints: 16,
     engines: 4,
+    mass: 14500,
+    wingArea: 72,
     gun: "heavy_machinegun_quad",
     missile: false,
     turret: true,
@@ -127,6 +135,8 @@ export const AIRFRAMES: Airframe[] = [
     footprint: 0.58,
     hardpoints: 5,
     engines: 1,
+    mass: 950,
+    wingArea: 11,
     gun: "light_cannon",
     missile: true,
     turret: false,

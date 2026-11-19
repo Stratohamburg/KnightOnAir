@@ -9,14 +9,30 @@ import { World } from "../src/simulation/World";
 
 class StickSurface extends EventTarget {
   knob = { style: { transform: "" } };
+  label = { textContent: "" };
+  base = { getBoundingClientRect: () => ({ width: 128, height: 128 }) };
+  dataset: Record<string, string> = {};
+  attributes = new Map<string, string>();
+  properties = new Map<string, string>();
+  style = {
+    setProperty: (name: string, value: string) =>
+      this.properties.set(name, value),
+  };
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, value);
+  }
   classes = new Set<string>();
   classList = {
     add: (name: string) => this.classes.add(name),
     remove: (name: string) => this.classes.delete(name),
   };
   private captured = new Set<number>();
-  querySelector() {
-    return this.knob;
+  querySelector(selector: string) {
+    return selector === ".stick-knob"
+      ? this.knob
+      : selector === ".stick-base"
+        ? this.base
+        : this.label;
   }
   getBoundingClientRect() {
     return { left: 0, top: 0, width: 200, height: 200 };
@@ -121,14 +137,44 @@ describe("screen-relative flight controls", () => {
   });
   it("keeps the knob under the finger and releases directional input on cancellation", () => {
     const { surface, stick } = touchStick(1, 0);
-    expect(surface.knob.style.transform).toMatch(
-      /^translate\(42\.88px, 0px\)$/,
-    );
+    expect(surface.knob.style.transform).toMatch(/^translate\(64px, 0px\)$/);
     expect(surface.classes.has("active")).toBe(true);
     surface.pointer("pointercancel");
     expect(stick.read(1 / 60).active).toBe(false);
     expect(surface.knob.style.transform).toBe("");
     expect(surface.classes.has("active")).toBe(false);
     expect(surface.hasPointerCapture(1)).toBe(false);
+  });
+  it("matches the throttle ring, percentage and full-power highlight to the acceleration request", () => {
+    const { surface, stick } = touchStick(0.5, 0);
+    let intent = stick.read(1);
+    expect(intent.magnitude).toBeCloseTo(0.49, 2);
+    expect(surface.attributes.get("aria-valuenow")).toBe("49");
+    expect(surface.label.textContent).toBe("加速 · 油门 49%");
+    expect(surface.knob.style.transform).toBe("translate(32px, 0px)");
+    surface.pointer("pointermove", 2, 0);
+    intent = stick.read(1);
+    expect(intent.magnitude).toBeCloseTo(1, 7);
+    expect(surface.dataset.mode).toBe("full");
+    expect(surface.properties.get("--throttle")).toBe("100");
+    expect(surface.label.textContent).toBe("满油门 · 加速 100%");
+    surface.pointer("pointerup");
+    expect(stick.read(1 / 60).magnitude).toBe(0);
+    expect(surface.dataset.mode).toBe("cruise");
+    expect(surface.properties.get("--throttle")).toBe("0");
+  });
+  it("shows the actual bombing trim limit and depleted energy instead of full acceleration", () => {
+    const { surface, stick } = touchStick(0, -1);
+    stick.setFlightState(true, true);
+    stick.read(1);
+    expect(surface.dataset.mode).toBe("trim");
+    expect(surface.label.textContent).toBe("轰炸微调 · 油门 45%");
+    stick.setFlightState(false, false);
+    stick.read(1);
+    expect(surface.dataset.mode).toBe("depleted");
+    expect(surface.properties.get("--throttle")).toBe("0");
+    expect(surface.label.textContent).toContain("能量不足");
+    stick.reset();
+    expect(surface.dataset.mode).toBe("cruise");
   });
 });

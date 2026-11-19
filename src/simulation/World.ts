@@ -15,6 +15,7 @@ import {
 import { ObjectPool } from "../services/ObjectPool";
 import { Telemetry } from "../services/Telemetry";
 import { WindField } from "./WindField";
+import { FLIGHT_GRAVITY, updateFlightTurn } from "./FlightDynamics";
 import {
   NO_INPUT,
   type Player,
@@ -146,6 +147,7 @@ export class World {
       heading: 0,
       turnVelocity: 0,
       bank: 0,
+      rollVelocity: 0,
       speed: frame.cruiseSpeed,
       energy: frame.energyMax,
       health: frame.health,
@@ -274,6 +276,7 @@ export class World {
       maxHealth: health,
       destroyed: false,
       weight: 5,
+      addedMass: 0,
     };
   }
   private addWeapon(
@@ -404,19 +407,15 @@ export class World {
       wingFactor *
       (error < 0 ? s.leftTurn : s.rightTurn) *
       (this.isBombing ? 0.65 : 1);
-    const targetTurn = clamp(error * 7, -turn, turn);
-    p.turnVelocity = damp(p.turnVelocity, targetTurn, 11, dt);
-    const delta =
-      Math.abs(p.turnVelocity * dt) > Math.abs(error)
-        ? error
-        : p.turnVelocity * dt;
-    p.heading = angleDelta(p.heading + delta, 0);
-    p.bank = damp(
-      p.bank,
-      clamp(-p.turnVelocity / (5 * RAD), -18, 18) * RAD,
-      8,
+    const delta = updateFlightTurn(
+      p,
+      error,
+      turn,
       dt,
+      engineFactor,
+      wingFactor,
     );
+    p.heading = angleDelta(p.heading + delta, 0);
     const throttle = input.active
       ? input.magnitude * (this.isBombing ? 0.45 : 1)
       : 0;
@@ -522,6 +521,9 @@ export class World {
       vx: 0,
       vz: 0,
       heading: Math.atan2(this.player.x - x, this.player.z - z),
+      turnVelocity: 0,
+      bank: 0,
+      speed: c.speed,
       health: c.health,
       maxHealth: c.health,
       radius: c.radius,
@@ -584,16 +586,39 @@ export class World {
         }
         if (e.kind === "elite") target += d < 17 ? 1.3 : 0;
       }
-      e.heading += clamp(
-        angleDelta(target, e.heading),
-        -c.turnRate * RAD * dt,
-        c.turnRate * RAD * dt,
+      const turnError = angleDelta(target, e.heading);
+      const desiredTurn = clamp(
+        turnError * 2.2,
+        -c.turnRate * RAD,
+        c.turnRate * RAD,
       );
-      const speed =
+      e.turnVelocity = damp(
+        e.turnVelocity,
+        desiredTurn,
+        e.layer === "air" ? 1.8 : 5,
+        dt,
+      );
+      e.heading = angleDelta(e.heading + e.turnVelocity * dt, 0);
+      const targetSpeed =
         c.speed *
         (e.slow > 0 ? 0.6 : 1) *
         (e.health < e.maxHealth * 0.4 ? 0.8 : 1) *
         (e.kind === "striker" && e.age % 7 < 1.2 ? 1.8 : 1);
+      e.speed = damp(e.speed, targetSpeed, 1.5, dt);
+      const speed = e.speed;
+      e.bank =
+        e.layer === "air"
+          ? damp(
+              e.bank,
+              clamp(
+                -Math.atan2(speed * e.turnVelocity, FLIGHT_GRAVITY),
+                -0.85,
+                0.85,
+              ),
+              3,
+              dt,
+            )
+          : 0;
       e.vx = Math.sin(e.heading) * speed;
       e.vz = Math.cos(e.heading) * speed;
       e.x += e.vx * dt;
@@ -1180,6 +1205,7 @@ export class World {
         recipe.kind === "wing" ? 1.1 : 0.5,
       );
       part.weight = recipe.weight ?? 5;
+      part.addedMass = part.weight * 10;
       p.parts.push(part);
       newlyAdded.push(part);
     });

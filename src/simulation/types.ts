@@ -22,6 +22,7 @@ export interface Part {
   maxHealth: number;
   destroyed: boolean;
   weight: number;
+  addedMass: number;
 }
 export interface Player {
   frame: Airframe;
@@ -34,6 +35,7 @@ export interface Player {
   heading: number;
   turnVelocity: number;
   bank: number;
+  rollVelocity: number;
   speed: number;
   energy: number;
   health: number;
@@ -88,6 +90,9 @@ export interface Enemy {
   vx: number;
   vz: number;
   heading: number;
+  turnVelocity: number;
+  bank: number;
+  speed: number;
   health: number;
   maxHealth: number;
   radius: number;

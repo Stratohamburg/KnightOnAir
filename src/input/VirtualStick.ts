@@ -10,12 +10,20 @@ export class VirtualStick {
   enabled = false;
   private surface?: HTMLElement;
   private knob?: HTMLElement;
+  private base?: HTMLElement;
+  private label?: HTMLElement;
+  private energyAvailable = true;
+  private bombing = false;
   private abort?: AbortController;
   attach(surface: HTMLElement) {
     this.abort?.abort();
     this.abort = new AbortController();
     this.surface = surface;
     this.knob = surface.querySelector<HTMLElement>(".stick-knob")!;
+    this.base = surface.querySelector<HTMLElement>(".stick-base") ?? surface;
+    this.label =
+      surface.querySelector<HTMLElement>(".stick-label") ?? undefined;
+    this.feedback(0, 0, 0);
     const signal = this.abort.signal;
     surface.addEventListener(
       "pointerdown",
@@ -57,15 +65,23 @@ export class VirtualStick {
     if (down) this.keys.add(code);
     else this.keys.delete(code);
   }
+  setFlightState(energyAvailable: boolean, bombing: boolean) {
+    this.energyAvailable = energyAvailable;
+    this.bombing = bombing;
+  }
+  private radius() {
+    const rect = this.base!.getBoundingClientRect();
+    return Math.max(1, Math.min(rect.width, rect.height) / 2);
+  }
   private move(e: PointerEvent) {
     const rect = this.surface!.getBoundingClientRect();
-    const radius = Math.min(rect.width, rect.height) * 0.32;
+    const radius = this.radius();
     const x = (e.clientX - rect.left - rect.width / 2) / radius,
       z = -(e.clientY - rect.top - rect.height / 2) / radius;
     const len = Math.max(1, Math.hypot(x, z));
     this.rawX = x / len;
     this.rawZ = z / len;
-    this.knob!.style.transform = `translate(${this.rawX * radius * 0.67}px, ${-this.rawZ * radius * 0.67}px)`;
+    this.knob!.style.transform = `translate(${this.rawX * radius}px, ${-this.rawZ * radius}px)`;
   }
   read(dt: number): Intent {
     if (!this.enabled) return { x: 0, z: 1, active: false, magnitude: 0 };
@@ -81,13 +97,52 @@ export class VirtualStick {
     this.smoothZ = damp(this.smoothZ, z, 24, dt);
     const rawLength = Math.hypot(x, z),
       length = Math.hypot(this.smoothX, this.smoothZ);
+    const active = rawLength > 0.12;
+    const magnitude = active ? clamp((length - 0.12) / 0.88) ** 0.85 : 0;
+    this.feedback(magnitude, x, z);
     return {
       // The fixed camera looks toward +Z, so screen right is world -X.
       x: -this.smoothX / (length || 1),
       z: this.smoothZ / (length || 1),
-      active: rawLength > 0.12,
-      magnitude: clamp((length - 0.12) / 0.88) ** 0.85,
+      active,
+      magnitude,
     };
+  }
+  private feedback(magnitude: number, x: number, z: number) {
+    if (!this.surface || !this.knob) return;
+    const throttle = this.energyAvailable
+      ? magnitude * (this.bombing ? 0.45 : 1)
+      : 0;
+    const percent = Math.round(throttle * 100);
+    const mode =
+      magnitude > 0 && !this.energyAvailable
+        ? "depleted"
+        : magnitude === 0
+          ? "cruise"
+          : this.bombing
+            ? "trim"
+            : percent === 100
+              ? "full"
+              : "accelerating";
+    this.surface.dataset.mode = mode;
+    this.surface.style.setProperty("--throttle", String(percent));
+    this.surface.setAttribute("aria-valuenow", String(percent));
+    const message =
+      mode === "depleted"
+        ? "能量不足 · 松杆恢复"
+        : mode === "cruise"
+          ? "巡航 · 油门 0%"
+          : mode === "trim"
+            ? `轰炸微调 · 油门 ${percent}%`
+            : mode === "full"
+              ? "满油门 · 加速 100%"
+              : `加速 · 油门 ${percent}%`;
+    this.surface.setAttribute("aria-valuetext", message);
+    if (this.label && this.label.textContent !== message)
+      this.label.textContent = message;
+    const radius = this.radius();
+    this.knob.style.transform =
+      x || z ? `translate(${x * radius}px, ${-z * radius}px)` : "";
   }
   private resetPointer() {
     if (this.pointer !== null && this.surface?.hasPointerCapture(this.pointer))
@@ -95,6 +150,7 @@ export class VirtualStick {
     this.pointer = null;
     this.rawX = 0;
     this.rawZ = 0;
+    this.feedback(0, 0, 0);
     this.surface?.classList.remove("active");
     if (this.knob) this.knob.style.transform = "";
   }

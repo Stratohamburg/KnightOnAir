@@ -494,7 +494,7 @@ export class Renderer {
     this.anchor.x = damp(this.anchor.x, x + (display ? 0 : p.vx * 0.09), 7, dt);
     this.anchor.z = damp(this.anchor.z, z + (display ? 0 : p.vz * 0.09), 7, dt);
     const displayDistance = 26 * Math.max(1, p.stats.wingspan / 7.8);
-    const dist = display ? displayDistance - launch * 3 : 32;
+    const dist = display ? displayDistance - launch * 3 : RULES.camera.distance;
     const pitch = RULES.camera.pitch * RAD;
     const aspectZoom = this.camera.aspect < 0.55 ? 1.12 : 1;
     this.camera.position.set(
@@ -595,7 +595,7 @@ export class Renderer {
       const mesh = this.enemies.get(e.id) ?? this.createEnemy(e);
       mesh.visible = true;
       mesh.position.set(e.x, e.layer === "air" ? 4 : -0.1, e.z);
-      mesh.rotation.y = e.heading;
+      mesh.rotation.set(0, e.heading, e.bank);
       if (e.layer === "ground") {
         const marker = this.groundMarkers[gi++];
         marker.visible = world.isBombing || e.warning > 0;

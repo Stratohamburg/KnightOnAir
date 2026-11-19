@@ -16,7 +16,7 @@ export const RULES = {
   pickupRadius: 1.6,
   magnetRadius: 5.2,
   comboTimeout: 5,
-  camera: { fov: 48, pitch: 62, distance: 32, near: 0.1, far: 180, yaw: 0 },
+  camera: { fov: 48, pitch: 62, distance: 39, near: 0.1, far: 180, yaw: 0 },
 } as const;
 export type Quality = "low" | "standard" | "high";
 export const QUALITIES = {

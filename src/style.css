@@ -1158,6 +1158,8 @@ button:active:not(:disabled) {
   min-height: 0;
 }
 .stick-surface {
+  --throttle: 0;
+  --throttle-color: #bfe1bc;
   position: relative;
   touch-action: none;
   width: 100%;
@@ -1173,7 +1175,7 @@ button:active:not(:disabled) {
   position: relative;
   width: 100px;
   height: 100px;
-  border: 1px solid #cae3bd42;
+  border: 1px solid #ead49a9c;
   border-radius: 50%;
   box-shadow:
     0 0 0 8px #bed8b105,
@@ -1181,6 +1183,32 @@ button:active:not(:disabled) {
   display: grid;
   place-items: center;
   background: radial-gradient(circle, #abd0ac11, transparent);
+}
+.stick-scale-label {
+  position: absolute;
+  top: -17px;
+  color: #e9d6a6;
+  font-size: 8px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.stick-throttle {
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--throttle-color) calc(var(--throttle) * 1%),
+    #c8dfb51a 0
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 0);
+  pointer-events: none;
+}
+.stick-half {
+  position: absolute;
+  inset: 25%;
+  border: 1px dashed #bbd4b65c;
+  border-radius: 50%;
+  pointer-events: none;
 }
 .stick-base:before,
 .stick-base:after {
@@ -1196,13 +1224,13 @@ button:active:not(:disabled) {
 }
 .stick-cross {
   position: absolute;
-  inset: 8px;
+  inset: 43%;
   border-radius: 50%;
   border: 1px dashed #badbb022;
 }
 .stick-knob {
-  width: 52px;
-  height: 52px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -1227,10 +1255,34 @@ button:active:not(:disabled) {
 .stick-label {
   position: absolute;
   bottom: 2px;
-  font-size: 7px;
+  font-size: 9px;
+  font-weight: 600;
   white-space: nowrap;
   letter-spacing: 1px;
-  color: #b7cead77;
+  color: #cce4c1;
+  font-variant-numeric: tabular-nums;
+}
+.stick-surface[data-mode="full"] {
+  --throttle-color: #ffd27f;
+}
+.stick-surface[data-mode="full"] .stick-base {
+  border-color: #ffd27f;
+  box-shadow:
+    0 0 20px #e6b45c33,
+    inset 0 0 24px #e6b45c19;
+}
+.stick-surface[data-mode="full"] .stick-knob {
+  background: linear-gradient(130deg, #e9c77b, #927039);
+  border-color: #ffe0a1;
+}
+.stick-surface[data-mode="full"] .stick-label {
+  color: #ffdc95;
+}
+.stick-surface[data-mode="trim"] {
+  --throttle-color: #a6d9e7;
+}
+.stick-surface[data-mode="depleted"] .stick-label {
+  color: #f1a78a;
 }
 .control-readout {
   align-self: center;
@@ -2068,11 +2120,11 @@ button:active:not(:disabled) {
     height: 86px;
   }
   .stick-knob {
-    width: 45px;
-    height: 45px;
+    width: 32px;
+    height: 32px;
   }
   .stick-label {
-    font-size: 6px;
+    font-size: 8px;
   }
   .control-deck {
     padding-top: 11px;

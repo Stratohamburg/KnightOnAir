@@ -37,6 +37,10 @@ npm run preview  # 预览生产构建
 
 升级次数可以累积。进入升级、暂停或帮助/设置面板时，模拟、风场、弹道、冷却和敌人一起停止；选择部件后恢复之前的空战或轰炸模式。页面失焦或进入后台会暂停，返回后由玩家继续。
 
+摇杆虚线内环表示约半油门，实线外圈表示满油门；外侧进度环和百分比显示当前加速请求，满油门时变为金色。松手恢复巡航；轰炸模式显示最高 45% 的微调油门，能量耗尽时提示松杆恢复。镜头距离为 39，普通敌机尺寸与初始 Swift 相当或更大，转向和速度均有惯性。
+
+转弯使用简化协调转弯模型：速度和转弯需求决定目标倾角，动力、翼载与载荷限制倾角，质量和翼展决定滚转惯量，实际倾角再影响转弯速度。轻型强动力机在急弯时可接近 90°，重型机倾角更小、进入侧倾更慢；改装与发动机/机翼损伤也会影响操控。
+
 ## 已实现的内容
 
 - 机库的持续飞行场景、五入口导航、装备预览和独立的实际装备状态；商店与两个预留入口按设计提供占位页。
@@ -60,6 +64,7 @@ src/app/GameApp.ts                 页面、会话和 DOM 界面
 src/input/VirtualStick.ts          Pointer Events、触控捕获、死区和平滑
 src/simulation/World.ts            固定步长、状态、导演和战斗规则
 src/simulation/WindField.ts        确定性风场
+src/simulation/FlightDynamics.ts   协调转弯、载荷包线与滚转惯量
 src/simulation/types.ts            与渲染解耦的模拟数据
 src/data/                         机体、武器、敌人、升级和手感参数
 src/rendering/ProceduralAircraft.ts 参数化飞机与部件装配
@@ -68,6 +73,7 @@ src/rendering/ShaderMaterials.ts   无贴图 shader
 src/services/                     对象池、随机数、存档、音效、诊断事件
 tests/simulation.test.ts           行为与耐久验证
 tests/controls.test.ts             触控、键盘与屏幕中机头/飞行方向验证
+tests/flight-dynamics.test.ts      倾角、动力、改装、回正与敌机转向惯性
 ```
 
 模拟层不依赖 Three.js。`World.frame()` 接收帧时间和输入，以 1/60 秒执行模拟，限制后台回来时的追帧量。弹道使用线段扫掠碰撞，避免高速弹穿过目标；弹道、金币和命中特效使用固定容量对象池，预警线、锁定扇形和弹道路径复用 BufferGeometry。
