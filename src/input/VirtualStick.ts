@@ -82,7 +82,8 @@ export class VirtualStick {
     const rawLength = Math.hypot(x, z),
       length = Math.hypot(this.smoothX, this.smoothZ);
     return {
-      x: this.smoothX / (length || 1),
+      // The fixed camera looks toward +Z, so screen right is world -X.
+      x: -this.smoothX / (length || 1),
       z: this.smoothZ / (length || 1),
       active: rawLength > 0.12,
       magnitude: clamp((length - 0.12) / 0.88) ** 0.85,

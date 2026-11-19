@@ -14,7 +14,7 @@ npm run dev
 打开终端给出的本地地址，默认是 `http://localhost:5173`。同一局域网的手机可通过终端显示的 Network 地址访问。推荐竖屏，设计尺寸为 360×640 至 430×932；电脑提供侧栏和键盘辅助操作。低于 640px 高度的窗口可滚动查看完整界面。
 
 ```sh
-npm test          # 模拟、成长、存档与四种机体的 5 分钟耐久测试
+npm test          # 屏幕方向操控、模拟、成长、存档与四种机体的 5 分钟耐久测试
 npm run check    # 严格 TypeScript 检查
 npm run build    # 检查并生成 dist/
 npm run preview  # 预览生产构建
@@ -67,6 +67,7 @@ src/rendering/Renderer.ts          相机、场景、复用网格和动态分辨
 src/rendering/ShaderMaterials.ts   无贴图 shader
 src/services/                     对象池、随机数、存档、音效、诊断事件
 tests/simulation.test.ts           行为与耐久验证
+tests/controls.test.ts             触控、键盘与屏幕中机头/飞行方向验证
 ```
 
 模拟层不依赖 Three.js。`World.frame()` 接收帧时间和输入，以 1/60 秒执行模拟，限制后台回来时的追帧量。弹道使用线段扫掠碰撞，避免高速弹穿过目标；弹道、金币和命中特效使用固定容量对象池，预警线、锁定扇形和弹道路径复用 BufferGeometry。
