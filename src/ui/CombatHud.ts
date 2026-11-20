@@ -1,3 +1,4 @@
+import { RULES } from "../data/config";
 import type { Renderer } from "../rendering/Renderer";
 import type { WorldEvent } from "../simulation/types";
 import { edgeAnchors, radarPoint, type ThreatView } from "./combatHints";
@@ -55,10 +56,11 @@ export class CombatHud {
       const dx = enemy.x - p.x;
       const dz = enemy.z - p.z;
       const bearing = Math.atan2(dx, dz) - p.heading;
+      const y = enemy.layer === "air" ? RULES.flightAltitude : world.surfaceHeight(enemy.x, enemy.z) + 1;
       return {
         id: enemy.id,
         x: enemy.x,
-        y: enemy.layer === "air" ? 20 : 0,
+        y,
         z: enemy.z,
         layer: enemy.layer === "air" ? "air" : "ground",
         distance: Math.hypot(dx, dz),
@@ -66,7 +68,7 @@ export class CombatHud {
         firing: enemy.warning > 0,
         chasing: enemy.state === "attacking",
         elite: enemy.kind === "elite",
-        onScreen: renderer.project(enemy.x, enemy.layer === "air" ? 20 : 0, enemy.z).visible,
+        onScreen: renderer.project(enemy.x, y, enemy.z).visible,
         kind: enemy.kind,
       };
     });

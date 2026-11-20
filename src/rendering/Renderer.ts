@@ -23,6 +23,7 @@ import {
 } from "./ShaderMaterials";
 import { TerrainChunks } from "./TerrainChunks";
 import { CloudField } from "./CloudField";
+import { frameBattleCamera } from "./BattleCamera";
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
@@ -51,8 +52,7 @@ export class Renderer {
   private forest: THREE.InstancedMesh;
   private dummy = new THREE.Object3D();
   private projected = new THREE.Vector3();
-  private viewTarget = new THREE.Vector3();
-  private anchor = new THREE.Vector3();
+  private displayAnchor = new THREE.Vector3();
   private time = 0;
   private crashTime = 0;
   private cameraBombing = 0;
@@ -70,7 +70,6 @@ export class Renderer {
   quality: Quality = "standard";
   private width = 0;
   private height = 0;
-  private battleView = false;
   private readonly vegetationColor = new THREE.Color();
   private readonly vegetationPalette = ["#83ad65", "#5e956c", "#9bbe70", "#728f63"];
   private groundOrigin = { x: -99999, z: -99999 };
@@ -309,8 +308,7 @@ export class Renderer {
     this.enemies.clear();
     this.aircraft = new ProceduralAircraft(p);
     this.overlayScene.add(this.aircraft.group);
-    this.anchor.set(p.x, 0, p.z);
-    this.viewTarget.copy(this.anchor);
+    this.displayAnchor.set(p.x, 0, p.z);
   }
   setQuality(q: Quality) {
     this.quality = q;
@@ -534,41 +532,34 @@ export class Renderer {
     const alpha = world ? clamp(world.clock.accumulator / RULES.step) : 1;
     const x = display ? p.x : p.prevX + (p.x - p.prevX) * alpha;
     const z = display ? p.z : p.prevZ + (p.z - p.prevZ) * alpha;
-    if (this.battleView === display) {
-      this.anchor.set(x, 0, z);
-      this.battleView = !display;
+    if (display) {
+      this.cameraBombing = 0;
+      this.displayAnchor.x = damp(this.displayAnchor.x, x, 7, dt);
+      this.displayAnchor.z = damp(this.displayAnchor.z, z, 7, dt);
+      if (this.camera.fov !== RULES.camera.fov) {
+        this.camera.fov = RULES.camera.fov;
+        this.camera.updateProjectionMatrix();
+      }
+      const displayDistance = 26 * Math.max(1, p.stats.wingspan / 9, p.stats.length / 10);
+      const aspectScale = this.camera.aspect < 0.55 ? 1.12 : 1;
+      const distance = (displayDistance - launch * 3) * aspectScale;
+      const pitch = RULES.camera.pitch * RAD;
+      const cameraBase = RULES.flightAltitude - 9;
+      this.camera.position.set(
+        this.displayAnchor.x,
+        cameraBase + Math.sin(pitch) * distance,
+        this.displayAnchor.z - Math.cos(pitch) * distance,
+      );
+      this.camera.lookAt(
+        this.displayAnchor.x,
+        cameraBase + 2,
+        this.displayAnchor.z - 2 - (displayDistance - 26) * 0.17,
+      );
+      this.camera.updateMatrixWorld();
+    } else {
+      this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
+      frameBattleCamera(this.camera, x, z, this.cameraBombing);
     }
-    this.anchor.x = damp(this.anchor.x, x + (display ? 0 : p.vx * 0.09), 7, dt);
-    this.anchor.z = damp(this.anchor.z, z + (display ? 0 : p.vz * 0.09), 7, dt);
-    this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
-    const displayDistance = 26 * Math.max(1, p.stats.wingspan / 9, p.stats.length / 10);
-    const dist = display
-      ? displayDistance - launch * 3
-      : RULES.camera.distance + this.cameraBombing * 4;
-    const pitch = (RULES.camera.pitch + this.cameraBombing * 10) * RAD;
-    const fov = RULES.camera.fov - this.cameraBombing * 14;
-    if (Math.abs(this.camera.fov - fov) > 0.01) {
-      this.camera.fov = fov;
-      this.camera.updateProjectionMatrix();
-    }
-    const aspectZoom = this.camera.aspect < 0.55 ? 1.12 : 1;
-    const cameraBase = RULES.flightAltitude - 9;
-    this.camera.position.set(
-      this.anchor.x,
-      cameraBase + Math.sin(pitch) * dist * aspectZoom,
-      this.anchor.z - Math.cos(pitch) * dist * aspectZoom,
-    );
-    const aimX = world?.aim.x ?? this.anchor.x;
-    const aimZ = world?.aim.z ?? this.anchor.z + 1.5;
-    this.viewTarget.set(
-      display ? this.anchor.x : this.anchor.x * (1 - this.cameraBombing * 0.55) + aimX * this.cameraBombing * 0.55,
-      display ? cameraBase + 2 : 2,
-      display
-        ? this.anchor.z - 2 - (displayDistance - 26) * 0.17
-        : this.anchor.z * (1 - this.cameraBombing * 0.55) + aimZ * this.cameraBombing * 0.55,
-    );
-    this.camera.lookAt(this.viewTarget);
-    this.camera.updateMatrixWorld();
     this.viewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this.viewFrustum.setFromProjectionMatrix(this.viewProjection);
     this.aircraft.update(this.time, sceneDt, options.highlight, display);

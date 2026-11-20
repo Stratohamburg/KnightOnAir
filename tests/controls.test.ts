@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { AIRFRAMES } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { VirtualStick } from "../src/input/VirtualStick";
+import { frameBattleCamera } from "../src/rendering/BattleCamera";
 import { ProceduralAircraft } from "../src/rendering/ProceduralAircraft";
 import { RAD } from "../src/services/Random";
 import { World } from "../src/simulation/World";
@@ -76,8 +77,7 @@ function expectFlightDirection(stick: VirtualStick, x: number, y: number) {
   const player = world.player,
     model = new ProceduralAircraft(player);
   model.update(3, 3);
-  model.group.position.x = player.x;
-  model.group.position.z = player.z;
+  model.group.position.set(player.x, RULES.flightAltitude, player.z);
   model.group.updateMatrixWorld(true);
   // Match the fixed battle camera; compare what the player sees, not the raw heading number.
   const camera = new THREE.PerspectiveCamera(
@@ -86,15 +86,7 @@ function expectFlightDirection(stick: VirtualStick, x: number, y: number) {
     RULES.camera.near,
     RULES.camera.far,
   );
-  const pitch = RULES.camera.pitch * RAD,
-    distance = RULES.camera.distance;
-  camera.position.set(
-    player.x,
-    3 + Math.sin(pitch) * distance,
-    player.z - Math.cos(pitch) * distance,
-  );
-  camera.lookAt(player.x, 2, player.z + 1.5);
-  camera.updateMatrixWorld(true);
+  frameBattleCamera(camera, player.x, player.z, 0);
   const origin = model.group.getWorldPosition(new THREE.Vector3());
   const base = origin.clone().project(camera);
   const nose = new THREE.Vector3(0, 0, 2)
@@ -188,5 +180,42 @@ describe("screen-relative flight controls", () => {
     expect(surface.label.textContent).toContain("加力回充");
     stick.reset();
     expect(surface.dataset.mode).toBe("cruise");
+  });
+});
+
+describe("battle camera framing", () => {
+  it.each([360 / 408, 430 / 632, 320 / 700])("keeps the aircraft centered throughout camera transitions at aspect %s", (aspect) => {
+    const camera = new THREE.PerspectiveCamera(RULES.camera.fov, aspect);
+    const plane = new THREE.Vector3();
+    for (const blend of [0, 0.2, 0.5, 0.8, 1, 0.5, 0]) {
+      const x = 17 * blend - 31;
+      const z = 66 + 7 * blend;
+      frameBattleCamera(camera, x, z, blend);
+      const point = plane.set(x, RULES.flightAltitude, z).project(camera);
+      expect(point.x).toBeCloseTo(0, 8);
+      expect(point.y).toBeCloseTo(0, 8);
+    }
+  });
+
+  it.each([false, true])("reduces air and ground targets by at least 30 percent with bombing mode %s", (bombing) => {
+    const aspect = 360 / 408;
+    const reference = new THREE.PerspectiveCamera(bombing ? 34 : 48, aspect);
+    const referencePitch = (bombing ? 74 : 64) * RAD;
+    const referenceDistance = bombing ? 50 : 46;
+    reference.position.set(
+      0,
+      15 + Math.sin(referencePitch) * referenceDistance,
+      -Math.cos(referencePitch) * referenceDistance,
+    );
+    reference.lookAt(0, 2, bombing ? 4.4 : 0);
+    reference.updateMatrixWorld();
+    const camera = new THREE.PerspectiveCamera(RULES.camera.fov, aspect);
+    frameBattleCamera(camera, 0, 0, Number(bombing));
+    const width = (view: THREE.PerspectiveCamera, y: number) => Math.abs(
+      new THREE.Vector3(2, y, 10).project(view).x -
+      new THREE.Vector3(-2, y, 10).project(view).x,
+    );
+    for (const height of [4, RULES.flightAltitude])
+      expect(width(camera, height)).toBeLessThanOrEqual(0.7 * width(reference, height));
   });
 });
