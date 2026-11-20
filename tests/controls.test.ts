@@ -155,9 +155,9 @@ describe("screen-relative flight controls", () => {
     surface.pointer("pointermove", 2, 0);
     intent = stick.read(1);
     expect(intent.magnitude).toBeCloseTo(1, 7);
-    expect(surface.dataset.mode).toBe("full");
+    expect(surface.dataset.mode).toBe("boost");
     expect(surface.properties.get("--throttle")).toBe("100");
-    expect(surface.label.textContent).toBe("满油门 · 加速 100%");
+    expect(surface.label.textContent).toContain("加力");
     surface.pointer("pointerup");
     expect(stick.read(1 / 60).magnitude).toBe(0);
     expect(surface.dataset.mode).toBe("cruise");

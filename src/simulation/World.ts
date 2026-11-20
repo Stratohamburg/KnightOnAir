@@ -1,5 +1,10 @@
 import { RULES } from "../data/config";
-import { ENEMIES } from "../data/enemies";
+import {
+  combatantById,
+  type CombatantConfig,
+  assertCombatantConfigIntegrity,
+  npcProfileById,
+} from "../data/combatants";
 import { WEAPONS, type WeaponConfig } from "../data/weapons";
 import { UPGRADES, upgradeById, type Upgrade } from "../data/upgrades";
 import type { Airframe } from "../data/aircrafts";
@@ -10,14 +15,30 @@ import {
   damp,
   angleDelta,
   distance,
-  segmentDistance,
 } from "../services/Random";
 import { ObjectPool } from "../services/ObjectPool";
 import { Telemetry } from "../services/Telemetry";
 import { WindField } from "./WindField";
-import { FLIGHT_GRAVITY, updateFlightTurn } from "./FlightDynamics";
+import { integrateAirActor } from "./FlightDynamics";
+import {
+  applyPartDamage,
+  evaluateDamage,
+  neutralDamage,
+  repairPartsWithOverflow,
+  stateFor,
+  totalPartHealth,
+  totalPartMaxHealth,
+} from "./DamageModel";
+import { hitEntity as hitCombatEntity } from "./HitTest";
+import { HEALTH_SUPPLY, PICKUP } from "../data/pickups";
+import { surfaceHeight as sampleSurfaceHeight } from "./Terrain";
+import { separationTarget } from "./Separation";
+import { createDefaultRoutes, nearestRouteDistance, routeHeading, routePosition } from "./Routes";
+import { playerIntent } from "./Controllers";
+import { partFromRecipe } from "./parts";
 import {
   NO_INPUT,
+  type CombatEntity,
   type Player,
   type Stats,
   type Part,
@@ -30,6 +51,8 @@ import {
   type Effect,
   type Bomb,
   type FireZone,
+  type WorldEvent,
+  type PickupKind,
 } from "./types";
 
 export const requiredXp = (level: number) =>
@@ -55,6 +78,7 @@ export class World {
   private eliteAt = 90;
   private deathTimer = 0;
   enemies: Enemy[] = [];
+  readonly actors: CombatEntity[] = [];
   readonly projectiles = new ObjectPool<Projectile>(
     RULES.maxProjectiles,
     () => ({
@@ -92,7 +116,7 @@ export class World {
     value: 0,
     xp: 0,
     life: 0,
-    repair: false,
+    kind: "coin",
   }));
   readonly effects = new ObjectPool<Effect>(RULES.maxEffects, () => ({
     active: false,
@@ -127,119 +151,92 @@ export class World {
   speedIntegral = 0;
   energyEmptyCount = 0;
   private energyWasEmpty = false;
+  private supplyTimer = 0;
+  private supplyEnabled: boolean;
+  private readonly eventQueue: WorldEvent[] = [];
+  readonly events: readonly WorldEvent[] = this.eventQueue;
   notice = "第一关 · 翡翠海岸";
   noticeTime = 4;
+  healPulse = 0;
+  boostStatePulse = 0;
+  readonly terrainSeed = 491;
+  readonly routes = createDefaultRoutes(this.terrainSeed);
 
   constructor(
     frame: Airframe,
     seed = Date.now(),
-    private options: { director?: boolean } = {},
+    private options: { director?: boolean; supply?: boolean } = {},
   ) {
+    this.supplyEnabled = options.supply ?? options.director !== false;
     this.random = new Random(seed);
+    assertCombatantConfigIntegrity();
+    const playerConfig = combatantById(frame.id);
+    if (!playerConfig || playerConfig.layer !== "air" || playerConfig.frame.model !== "air")
+      throw new Error(`missing air combatant config ${frame.id}`);
     this.player = {
+      id: "player",
+      configId: frame.id,
+      factionId: "player",
+      layer: "air",
+      controllerId: "player-input",
       frame,
       x: 0,
       z: 0,
       prevX: 0,
       prevZ: 0,
       vx: 0,
-      vz: frame.cruiseSpeed,
+      vz: playerConfig.frame.cruiseSpeed,
       heading: 0,
       turnVelocity: 0,
       bank: 0,
       rollVelocity: 0,
-      speed: frame.cruiseSpeed,
-      energy: frame.energyMax,
+      speed: playerConfig.frame.cruiseSpeed,
+      energy: playerConfig.frame.energyMax,
       health: frame.health,
+      maxHealth: frame.health,
+      damageTransfer: 0,
       hitFlash: 0,
       invulnerable: 0,
-      stats: this.baseStats(frame),
+      stats: this.baseStats(frame, playerConfig),
       parts: [],
       weapons: [],
       upgrades: [],
       revision: 0,
+      boost: 0,
+      boosting: false,
+      boostLocked: false,
+      damage: neutralDamage(),
+      partRevision: 0,
+      damageRevision: 0,
     };
     const p = this.player;
-    p.parts = [
-      this.part("core", "body", "center", 0, 0, frame.health, 0.65),
-      this.part(
-        "left_wing",
-        "wing",
-        "leftWing",
-        -frame.wingspan * 0.23,
-        -0.1,
-        30,
-        frame.wingspan * 0.16,
-      ),
-      this.part(
-        "right_wing",
-        "wing",
-        "rightWing",
-        frame.wingspan * 0.23,
-        -0.1,
-        30,
-        frame.wingspan * 0.16,
-      ),
-      this.part("nose", "gun", "nose", 0, frame.length * 0.31, 24, 0.42),
-      this.part("tail", "tail", "tail", 0, -frame.length * 0.34, 28, 0.5),
-      this.part("bay", "bombBay", "bottom", 0, -0.3, 30, 0.45),
-    ];
-    for (let i = 0; i < frame.engines; i++) {
-      const x =
-        frame.engines === 1
-          ? 0
-          : (i - (frame.engines - 1) / 2) * frame.wingspan * 0.2;
-      p.parts.push(
-        this.part(
-          `engine_${i}`,
-          "engine",
-          x < 0 ? "leftWing" : x > 0 ? "rightWing" : "tail",
-          x,
-          -frame.length * 0.2,
-          30,
-          0.42,
-        ),
-      );
-    }
-    if (
-      frame.gun === "wing_machinegun_pair" ||
-      frame.gun === "heavy_machinegun_quad"
-    ) {
-      const config = WEAPONS[frame.gun];
-      this.addWeapon(
-        { ...config, count: config.count / 2 },
-        "left_wing",
-        -frame.wingspan * 0.2,
-        0.5,
-      );
-      this.addWeapon(
-        { ...config, count: config.count / 2 },
-        "right_wing",
-        frame.wingspan * 0.2,
-        0.5,
-      );
-    } else this.addWeapon(WEAPONS[frame.gun], "nose", 0, frame.length * 0.32);
-    if (frame.missile) this.addWeapon(WEAPONS.lock_missile, "nose", 0.6, 0.5);
-    if (frame.turret) {
-      p.parts.push(this.part("top_turret", "turret", "top", 0, 0, 30, 0.4));
-      this.addWeapon(WEAPONS.top_turret, "top_turret", 0, 0);
-    }
+    p.parts = this.partsFromConfig(playerConfig);
+    for (const mount of playerConfig.mounts)
+      if (mount.weaponId !== frame.bomb)
+        this.addConfiguredWeapon(p, mount, playerConfig);
+    this.syncPlayerHealth();
     if (frame.id === "wasp_04") p.stats.lockTime = -0.25;
+    this.player.damage = evaluateDamage(this.player.parts);
+    this.actors.push(this.player);
     this.telemetry.record(0, "session_start", { frame: frame.id, seed });
     // First encounter approaches from beyond the viewport; the opening coins teach steering.
-    this.spawnEnemy("scout", -3, 25);
-    this.spawnEnemy("hunter", 3, 31);
+    this.spawnEnemy("scout", -4, 38);
+    this.spawnEnemy("hunter", 4, 46);
+    this.supplyTimer = this.supplyEnabled
+      ? this.random.range(HEALTH_SUPPLY.firstDelay[0], HEALTH_SUPPLY.firstDelay[1])
+      : Number.POSITIVE_INFINITY;
     for (let i = 0; i < 6; i++)
-      this.spawnPickup(Math.sin(i * 0.4) * 1.6, 4 + i * 2.4, 1, 12);
+      this.spawnPickup("coin", Math.sin(i * 0.4) * 1.6, 4 + i * 2.4, 1, 12);
   }
-  private baseStats(f: Airframe): Stats {
+  private baseStats(f: Airframe, config?: CombatantConfig): Stats {
+    const motion = config?.frame?.model === "air" ? config.frame : undefined;
     return {
-      maxSpeed: f.maxSpeed,
-      acceleration: f.acceleration,
-      turnRate: f.turnRate,
-      energyMax: f.energyMax,
-      energyDrain: f.energyDrain,
-      energyRecover: f.energyRecover,
+      maxSpeed: motion?.maxSpeed ?? f.maxSpeed,
+      acceleration: motion?.acceleration ?? f.acceleration,
+      turnRate: motion?.turnRate ?? f.turnRate,
+      energyMax: motion?.energyMax ?? f.energyMax,
+      energyDrain: motion?.energyDrain ?? f.energyDrain,
+      energyRecover: motion?.energyRecover ?? f.energyRecover,
       health: f.health,
       wingspan: f.wingspan,
       length: f.length,
@@ -255,6 +252,52 @@ export class World {
       damageTransfer: 0.7,
       windResponse: 1,
     };
+  }
+  private partsFromConfig(config: CombatantConfig) {
+    return config.parts.map((recipe) => {
+      const part = partFromRecipe(recipe.id, {
+        kind: recipe.kind ?? recipe.role,
+        role: recipe.role,
+        side: recipe.side,
+        slot: recipe.slot,
+        x: recipe.x,
+        z: recipe.z,
+        radius: recipe.radius,
+        health: recipe.health,
+        lift: recipe.lift,
+        thrust: recipe.thrust,
+        damageTransfer: recipe.damageTransfer,
+        weight: recipe.weight,
+        detachable: recipe.detachable,
+      });
+      part.visual = { ...(part.visual ?? { kind: part.kind, scale: 1, detachable: false }), detachable: false };
+      return part;
+    });
+  }
+  private addConfiguredWeapon(
+    entity: Player | Enemy,
+    mount: CombatantConfig["mounts"][number],
+    config: CombatantConfig,
+  ) {
+    const weaponConfig = WEAPONS[mount.weaponId];
+    if (!weaponConfig) return;
+    const weapon: RuntimeWeapon = {
+      config: { ...weaponConfig, count: mount.count, arc: mount.arc, ...(mount.overrides ?? {}) },
+      partId: mount.partId,
+      x: mount.x ?? 0,
+      z: mount.z ?? 0,
+      cooldown: entity === this.player ? 0 : this.random.range(1.5, 3.5),
+      targetId: 0,
+      lockProgress: 0,
+      lockLost: false,
+      heading: entity.heading + mount.baseAngle,
+      baseAngle: mount.baseAngle,
+    };
+    const part = entity.parts.find((value) => value.id === mount.partId);
+    if (!part) return;
+    part.weaponIds = [...(part.weaponIds ?? []), weapon.config.id];
+    entity.weapons.push(weapon);
+    if (config.layer !== "air" && weapon.config.damage <= 0) entity.weapons.pop();
   }
   private part(
     id: string,
@@ -277,7 +320,44 @@ export class World {
       destroyed: false,
       weight: 5,
       addedMass: 0,
+      role:
+        kind === "bombBay"
+          ? "bay"
+          : kind === "wing" || kind === "winglet"
+            ? "wing"
+            : kind === "engine"
+              ? "engine"
+              : kind === "tail"
+                ? "tail"
+                : kind === "turret"
+                  ? "turret"
+                  : kind === "gun" || kind === "cannon"
+                    ? "gun"
+                    : kind === "radar"
+                      ? "radar"
+                      : "body",
+      side: slot === "leftWing" ? -1 : slot === "rightWing" ? 1 : 0,
+      lift: kind === "wing" || kind === "winglet" ? 1 : 0,
+      thrust: kind === "engine" ? 1 : 0,
+      weaponIds: [],
+      damageTransfer: kind === "engine" ? 0.35 : kind === "wing" ? 0.5 : 1,
+      state: "intact",
+      disabled: false,
+      visual: {
+        kind,
+        scale: 1,
+        detachable: false,
+      },
+      detachSeed: id.length,
     };
+  }
+  private syncPlayerHealth() {
+    this.player.health = totalPartHealth(this.player.parts);
+    this.player.maxHealth = totalPartMaxHealth(this.player.parts);
+    this.player.damageTransfer = this.player.stats.damageTransfer;
+  }
+  get playerMaxHealth() {
+    return totalPartMaxHealth(this.player.parts);
   }
   private addWeapon(
     config: WeaponConfig,
@@ -286,6 +366,8 @@ export class World {
     z: number,
     baseAngle = 0,
   ) {
+    const mount = this.player.parts.find((part) => part.id === partId);
+    if (mount) mount.weaponIds = [...(mount.weaponIds ?? []), config.id];
     this.player.weapons.push({
       config,
       partId,
@@ -302,6 +384,9 @@ export class World {
   get elapsed() {
     return this.clock.elapsed;
   }
+  surfaceHeight(x: number, z: number) {
+    return sampleSurfaceHeight(x, z, this.terrainSeed);
+  }
   get isBombing() {
     return (
       this.phase === "bombing" ||
@@ -309,18 +394,17 @@ export class World {
     );
   }
   get bombWeapon() {
-    return WEAPONS[
-      this.player.upgrades.includes("napalm")
-        ? "napalm_bomb"
-        : this.player.frame.bomb
-    ];
+    const config = combatantById(this.player.configId);
+    const mount = config?.mounts.find((value) => value.partId === "bay");
+    const id = this.player.upgrades.includes("napalm") ? "napalm_bomb" : mount?.weaponId ?? this.player.frame.bomb;
+    return WEAPONS[id];
   }
   get canBomb() {
     return (
       this.phase === "bombing" &&
       this.stability >= RULES.bombThreshold &&
       this.bombCooldown <= 0 &&
-      this.partFactor("bombBay") > 0
+      this.player.damage.bombFactor > 0
     );
   }
   get mainLock() {
@@ -329,21 +413,12 @@ export class World {
   get averageSpeed() {
     return this.elapsed ? this.speedIntegral / this.elapsed : 0;
   }
-  private partFactor(kind: string) {
-    const parts = this.player.parts.filter((p) => p.kind === kind);
-    return parts.length
-      ? parts.reduce(
-          (v, p) =>
-            v + (p.health <= 0 ? 0 : 0.5 + (0.5 * p.health) / p.maxHealth),
-          0,
-        ) / parts.length
-      : 1;
-  }
   frame(dt: number, input: Intent = NO_INPUT) {
     if (this.clock.timeScale === 0) {
       this.clock.accumulator = 0;
       return;
     }
+    this.eventQueue.length = 0;
     this.clock.accumulator += Math.min(RULES.maxFrame, Math.max(0, dt));
     let steps = 0;
     while (this.clock.accumulator >= RULES.step && steps++ < RULES.maxSteps) {
@@ -367,11 +442,15 @@ export class World {
       return;
     }
     this.clock.elapsed += dt;
+    this.syncActorCollection();
+    this.healPulse = Math.max(0, this.healPulse - dt);
+    this.boostStatePulse = Math.max(0, this.boostStatePulse - dt);
     this.wind.update(dt);
     this.noticeTime = Math.max(0, this.noticeTime - dt);
     this.lockPulse = Math.max(0, this.lockPulse - dt);
     this.updatePlayer(dt, input);
     this.updateDirector(dt);
+    this.updatePickupSupply(dt);
     this.updateEnemies(dt);
     this.updateWeapons(dt);
     this.updateProjectiles(dt);
@@ -381,67 +460,97 @@ export class World {
     this.speedIntegral += this.player.speed * dt;
     if (this.player.health <= 0) this.end("aircraft_destroyed");
   }
+  consumeEvents() {
+    const events = this.eventQueue.slice();
+    this.eventQueue.length = 0;
+    return events;
+  }
+  private syncActorCollection() {
+    this.actors.length = 0;
+    this.actors.push(this.player, ...this.enemies);
+  }
+  private emit(event: WorldEvent) {
+    if (this.eventQueue.length >= 64) this.eventQueue.shift();
+    this.eventQueue.push(event);
+  }
   private updatePlayer(dt: number, input: Intent) {
     const p = this.player,
       s = p.stats;
-    const core = p.parts.find((part) => part.id === "core");
-    if (core) {
-      core.maxHealth = s.health;
-      core.health = p.health;
-    }
+    this.syncPlayerHealth();
     p.prevX = p.x;
     p.prevZ = p.z;
     p.invulnerable = Math.max(0, p.invulnerable - dt);
     p.hitFlash = Math.max(0, p.hitFlash - dt * 4);
-    const engineFactor = 0.5 + this.partFactor("engine") * 0.5;
-    const wingFactor = 0.65 + this.partFactor("wing") * 0.35;
-    let error = input.active
-      ? angleDelta(Math.atan2(input.x, input.z), p.heading)
-      : 0;
+    const nextDamage = evaluateDamage(p.parts);
+    p.damage = nextDamage;
+    p.damageRevision++;
     const edge = Math.hypot(p.x, p.z);
-    if (edge > RULES.boundary)
-      error = angleDelta(Math.atan2(-p.x, -p.z), p.heading);
-    const turn =
-      s.turnRate *
-      RAD *
-      wingFactor *
-      (error < 0 ? s.leftTurn : s.rightTurn) *
-      (this.isBombing ? 0.65 : 1);
-    const delta = updateFlightTurn(
-      p,
-      error,
-      turn,
-      dt,
-      engineFactor,
-      wingFactor,
-    );
-    p.heading = angleDelta(p.heading + delta, 0);
+    const targetHeading = edge > RULES.boundary
+      ? Math.atan2(-p.x, -p.z)
+      : input.active
+        ? Math.atan2(input.x, input.z)
+        : p.heading;
     const throttle = input.active
-      ? input.magnitude * (this.isBombing ? 0.45 : 1)
+      ? (input.travel === undefined ? input.magnitude : Math.min(1, input.travel / 0.74)) * (this.isBombing ? 0.45 : 1)
       : 0;
-    if (throttle > 0 && p.energy > 0) {
-      p.energy = Math.max(0, p.energy - s.energyDrain * throttle * dt);
-      p.speed += s.acceleration * engineFactor * throttle * dt;
+    const request = !this.isBombing && RULES.boost.enabled && input.active
+      ? clamp(input.boost ?? 0)
+      : 0;
+    if (p.boostLocked && p.energy >= RULES.boost.rearm && request === 0)
+      p.boostLocked = false;
+    const previousBoosting = p.boosting;
+    p.boosting = request > 0 && p.energy > 0 && !p.boostLocked;
+    p.boost = p.boosting ? request : 0;
+    if (p.boosting) {
+      p.energy = Math.max(0, p.energy - s.energyDrain * p.boost * dt);
+      if (p.energy <= 0) {
+        p.energy = 0;
+        p.boosting = false;
+        p.boost = 0;
+        p.boostLocked = true;
+        this.energyEmptyCount++;
+      }
     } else {
       p.energy = Math.min(s.energyMax, p.energy + s.energyRecover * dt);
-      p.speed -= 1.2 * dt;
+    }
+    if (p.boosting !== previousBoosting) {
+      this.boostStatePulse = 0.25;
+      this.telemetry.record(this.elapsed, "boost_state", { on: Number(p.boosting) });
     }
     if (p.energy < 0.5 && !this.energyWasEmpty) {
       this.energyEmptyCount++;
       this.energyWasEmpty = true;
     }
-    if (p.energy > 8) this.energyWasEmpty = false;
-    p.speed -= Math.abs(delta) * 0.35;
-    p.speed = clamp(
-      p.speed,
-      p.frame.cruiseSpeed,
-      Math.max(p.frame.cruiseSpeed, s.maxSpeed * engineFactor),
+    if (p.energy > RULES.boost.rearm) this.energyWasEmpty = false;
+    integrateAirActor(
+      p,
+      playerIntent({
+        heading: targetHeading,
+        throttle,
+        boost: p.boost,
+        fire: true,
+        bomb: this.isBombing,
+      }),
+      {
+        mass: p.frame.mass + p.parts.reduce((sum, part) => sum + part.addedMass, 0),
+        wingspan: s.wingspan,
+        wingArea: p.frame.wingArea,
+        acceleration: s.acceleration,
+        maxSpeed: s.maxSpeed,
+        cruiseSpeed: p.frame.cruiseSpeed,
+        turnRate: s.turnRate * (this.isBombing ? 0.65 : 1),
+        speedMultiplier: RULES.boost.speedMultiplier,
+        thrustMultiplier: RULES.boost.thrustMultiplier,
+      },
+      nextDamage,
+      dt,
     );
+    p.bank = clamp(p.bank + nextDamage.rollBias * dt * 2, -87.5 * RAD, 87.5 * RAD);
     const wind = this.wind.sample(p.x, p.z);
-    p.vx = Math.sin(p.heading) * p.speed + wind.x * s.windResponse;
-    p.vz = Math.cos(p.heading) * p.speed + wind.z * s.windResponse;
-    p.x += p.vx * dt;
-    p.z += p.vz * dt;
+    p.vx += wind.x * s.windResponse;
+    p.vz += wind.z * s.windResponse;
+    p.x += wind.x * s.windResponse * dt;
+    p.z += wind.z * s.windResponse * dt;
   }
   private updateDirector(dt: number) {
     if (this.options.director === false) return;
@@ -462,32 +571,33 @@ export class World {
             ? ["hunter", "scout", "striker"]
             : ["hunter", "bomber", "escort", "striker"];
       const count =
-        p.health / p.stats.health < 0.35
+        p.health / this.playerMaxHealth < 0.35
           ? 1
           : 2 + Math.min(2, Math.floor(t / 70));
       const angle = p.heading + this.random.range(-1.1, 1.1);
       for (let i = 0; i < count; i++)
-        this.spawnEnemy(
+          this.spawnEnemy(
           this.random.pick(pool),
-          p.x + Math.sin(angle) * (30 + i * 3) + (i - 1) * 3,
-          p.z + Math.cos(angle) * (30 + i * 3),
+          p.x + Math.sin(angle) * (34 + i * 4) + (i - 1) * 3,
+          p.z + Math.cos(angle) * (34 + i * 4),
+            true,
         );
       this.spawnTimer = this.random.range(8, 12) * (airCount > 9 ? 1.5 : 1);
     }
     if (
       this.groundTimer <= 0 &&
-      this.enemies.filter((e) => e.layer === "ground").length <
+      this.enemies.filter((e) => e.layer !== "air").length <
         RULES.maxGround - 2
     ) {
       const a = p.heading + this.random.range(-0.6, 0.6),
-        d = this.random.range(24, 38);
+        d = this.random.range(34, 46);
       const kind =
         t < 30
           ? "resource"
           : t < 60
-            ? this.random.pick(["aa", "emplacement", "resource"])
-            : this.random.pick(["aa", "missile_truck", "resource", "depot"]);
-      this.spawnEnemy(kind, p.x + Math.sin(a) * d, p.z + Math.cos(a) * d);
+            ? this.random.pick(["aa_truck", "resource"])
+            : this.random.pick(["aa_truck", "missile_truck", "resource", "depot"]);
+      this.spawnEnemy(kind, p.x + Math.sin(a) * d, p.z + Math.cos(a) * d, true);
       this.groundTimer = t < 30 ? 10 : 7;
     }
     if (t >= this.eliteAt - 2 && t < this.eliteAt)
@@ -495,8 +605,9 @@ export class World {
     if (t >= this.eliteAt) {
       this.spawnEnemy(
         "elite",
-        p.x + Math.sin(p.heading) * 32,
-        p.z + Math.cos(p.heading) * 32,
+        p.x + Math.sin(p.heading) * 40,
+        p.z + Math.cos(p.heading) * 40,
+        true,
       );
       this.eliteAt += 90;
     }
@@ -504,18 +615,38 @@ export class World {
       for (let i = 0; i < 5; i++) {
         const a = p.heading + Math.sin(i * 0.5) * 0.17,
           d = 9 + i * 2;
-        this.spawnPickup(p.x + Math.sin(a) * d, p.z + Math.cos(a) * d, 1, 9);
+        this.spawnPickup("coin", p.x + Math.sin(a) * d, p.z + Math.cos(a) * d, 1, 9);
       }
       this.pickupTimer = 7;
     }
   }
-  spawnEnemy(kind: string, x: number, z: number) {
-    if (this.enemies.length >= RULES.maxEnemies + RULES.maxGround) return;
-    const c = ENEMIES[kind];
-    const e: Enemy = {
+  spawnEnemy(kind: string, x: number, z: number, safePlacement = false) {
+    const profile = npcProfileById(kind);
+    if (!profile) return;
+    kind = profile.id;
+    const config = combatantById(profile.combatantId);
+    if (!config) return;
+    const layerCount = this.enemies.filter((enemy) => enemy.layer === config.layer).length;
+    const airOrdinary = this.enemies.filter((enemy) => enemy.layer === "air" && enemy.kind !== "elite").length;
+    if (config.layer === "air" && (kind === "elite" ? layerCount >= RULES.maxEnemies + RULES.maxElite : airOrdinary >= RULES.maxEnemies)) return;
+    if (config.layer !== "air" && layerCount >= RULES.maxGround) return;
+    if (kind === "elite" && this.enemies.some((enemy) => enemy.kind === "elite")) return;
+    if (this.enemies.length >= RULES.maxTotal) return;
+    if (safePlacement) {
+      const playerDistance = distance({ x, z }, this.player);
+      if (playerDistance < 34 || playerDistance > 46) return;
+      if (this.enemies.some((enemy) => enemy.layer === config.layer && distance({ x, z }, enemy) < 10)) return;
+    }
+    const parts = this.partsFromConfig(config);
+    const totalHealth = totalPartHealth(parts);
+    const totalMaxHealth = totalPartMaxHealth(parts);
+    const weapons: RuntimeWeapon[] = [];
+    const enemy: Enemy = {
       id: this.nextId++,
       kind,
-      layer: c.layer,
+      configId: config.id,
+      profileId: profile.id,
+      layer: config.layer,
       x,
       z,
       vx: 0,
@@ -523,10 +654,11 @@ export class World {
       heading: Math.atan2(this.player.x - x, this.player.z - z),
       turnVelocity: 0,
       bank: 0,
-      speed: c.speed,
-      health: c.health,
-      maxHealth: c.health,
-      radius: c.radius,
+      rollVelocity: 0,
+      speed: config.frame.model === "air" ? config.frame.cruiseSpeed : config.frame.maxSpeed,
+      health: totalHealth,
+      maxHealth: totalMaxHealth,
+      radius: config.combat.collisionRadius,
       age: 0,
       cooldown: this.random.range(1.5, 3.5),
       warning: 0,
@@ -537,17 +669,59 @@ export class World {
       slow: 0,
       armorBreak: 0,
       called: false,
-      state: "entering",
+      state: "entering" as Enemy["state"],
+      factionId: "enemy",
+      controllerId: `npc:${profile.id}`,
+      parts,
+      weapons,
+      damage: evaluateDamage(parts),
+      damageTransfer: 0.7,
+      partRevision: 0,
+      damageRevision: 0,
+      routeId: undefined,
+      routeDistance: undefined,
+      laneOffset: undefined,
     };
+    for (const mount of config.mounts) this.addConfiguredWeapon(enemy, mount, config);
+    const routeKind = profile.behavior.patrolRoute?.includes("water")
+      ? "water"
+      : profile.behavior.patrolRoute?.includes("rail")
+        ? "rail"
+        : "road";
+    const routeCandidate = config.layer === "water"
+      ? this.routes.find((candidate) => candidate.kind === "water")
+      : routeKind === "rail"
+        ? this.routes.find((candidate) => candidate.kind === "rail")
+        : config.layer === "ground"
+          ? this.routes.find((candidate) => candidate.kind === "road")
+          : undefined;
+    const candidateDistance = routeCandidate
+      ? nearestRouteDistance(routeCandidate, x, z)
+      : 0;
+    const candidatePoint = routeCandidate
+      ? routePosition(routeCandidate, candidateDistance)
+      : undefined;
+    const route = routeCandidate && candidatePoint && distance(candidatePoint, { x, z }) < 20
+      ? routeCandidate
+      : undefined;
+    enemy.routeId = route?.id;
+    enemy.routeDistance = route ? nearestRouteDistance(route, x, z) : undefined;
+    enemy.laneOffset = route ? this.random.range(-0.55, 0.55) : undefined;
+    const e = enemy;
     this.enemies.push(e);
+    this.actors.push(e);
     return e;
   }
   private updateEnemies(dt: number) {
     const p = this.player;
     for (const e of [...this.enemies]) {
-      const c = ENEMIES[e.kind],
+      const profile = npcProfileById(e.kind);
+      const config = profile ? combatantById(profile.combatantId) : undefined;
+      if (!profile || !config) continue;
+      const behavior = profile.behavior,
         d = distance(e, p);
       e.age += dt;
+      if (e.parts) e.damage = evaluateDamage(e.parts);
       e.flash = Math.max(0, e.flash - dt * 5);
       if (e.burn > 0) {
         e.burn -= dt;
@@ -556,27 +730,34 @@ export class World {
       e.slow = Math.max(0, e.slow - dt);
       e.armorBreak = Math.max(0, e.armorBreak - dt);
       if (e.health <= 0) continue;
-      let target = Math.atan2(p.x - e.x, p.z - e.z);
+      let target = e.layer !== "air"
+        ? e.heading + Math.sin(e.age * 0.23 + e.id) * 0.14
+        : Math.atan2(p.x - e.x, p.z - e.z);
       if (e.layer === "air") {
         e.state =
           d > 22
             ? "entering"
-            : e.health < c.health * 0.2
+            : e.health < e.maxHealth * 0.2
               ? "fleeing"
               : e.age % 9 > 5.5
                 ? "breaking"
                 : "attacking";
         if (e.state === "breaking") target += 1.15;
         if (e.state === "fleeing") target += Math.PI * 0.7;
-        if (e.kind === "scout") {
+        if (behavior.kind === "crossing") {
           target += d < 16 ? 1.5 : 0.3;
           if (e.age > 8 && !e.called) {
             e.called = true;
-            this.spawnEnemy("hunter", e.x + 5, e.z + 14);
+            this.spawnEnemy(
+              "hunter",
+              p.x + Math.sin(p.heading + 0.5) * 38,
+              p.z + Math.cos(p.heading + 0.5) * 38,
+              true,
+            );
           }
         }
-        if (e.kind === "bomber") target = Math.sin(e.age * 0.2) * 0.4 + Math.PI;
-        if (e.kind === "escort") {
+        if (behavior.kind === "standoff") target = Math.sin(e.age * 0.2) * 0.4 + Math.PI;
+        if (behavior.kind === "escort") {
           const elite = this.enemies.find((v) => v.kind === "elite");
           if (elite)
             target = Math.atan2(
@@ -586,56 +767,87 @@ export class World {
         }
         if (e.kind === "elite") target += d < 17 ? 1.3 : 0;
       }
-      const turnError = angleDelta(target, e.heading);
-      const desiredTurn = clamp(
-        turnError * 2.2,
-        -c.turnRate * RAD,
-        c.turnRate * RAD,
-      );
-      e.turnVelocity = damp(
-        e.turnVelocity,
-        desiredTurn,
-        e.layer === "air" ? 1.8 : 5,
-        dt,
-      );
-      e.heading = angleDelta(e.heading + e.turnVelocity * dt, 0);
+      if (e.layer === "air") {
+        target = separationTarget(
+          target,
+          e,
+          this.enemies.filter((other) => other.layer === "air" && other.health > 0),
+        );
+      }
       const targetSpeed =
-        c.speed *
+        config.frame.maxSpeed *
+        (e.damage ? e.damage.engineFactor : 1) *
         (e.slow > 0 ? 0.6 : 1) *
         (e.health < e.maxHealth * 0.4 ? 0.8 : 1) *
-        (e.kind === "striker" && e.age % 7 < 1.2 ? 1.8 : 1);
-      e.speed = damp(e.speed, targetSpeed, 1.5, dt);
-      const speed = e.speed;
-      e.bank =
-        e.layer === "air"
-          ? damp(
-              e.bank,
-              clamp(
-                -Math.atan2(speed * e.turnVelocity, FLIGHT_GRAVITY),
-                -0.85,
-                0.85,
-              ),
-              3,
-              dt,
-            )
-          : 0;
-      e.vx = Math.sin(e.heading) * speed;
-      e.vz = Math.cos(e.heading) * speed;
-      e.x += e.vx * dt;
-      e.z += e.vz * dt;
+        (behavior.kind === "dive" && e.age % 7 < 1.2 ? 1.8 : 1);
+      if (e.layer === "air") {
+        e.speed = targetSpeed;
+        const factor = Math.max(0.2, e.damage.engineFactor);
+        integrateAirActor(
+          e,
+          {
+            targetHeading: target,
+            throttle: 0,
+            boost: 0,
+            fire: false,
+            bomb: false,
+            brake: false,
+          },
+          {
+            mass: config.frame.model === "air" ? config.frame.mass : 100,
+            wingspan: config.frame.model === "air" ? config.frame.wingspan : 1,
+            wingArea: config.frame.model === "air" ? config.frame.wingArea : 1,
+            acceleration: 0,
+            maxSpeed: Math.max(0.1, targetSpeed / factor),
+            cruiseSpeed: Math.max(0, targetSpeed / factor),
+            turnRate: config.frame.turnRate,
+            speedMultiplier: 1,
+            thrustMultiplier: 1,
+          },
+          e.damage,
+          dt,
+        );
+      } else {
+        const route = e.routeId ? this.routes.find((candidate) => candidate.id === e.routeId) : undefined;
+        if (route && e.routeDistance !== undefined) {
+          e.routeDistance = (e.routeDistance + (e.speed * dt) / 12) % route.points.length;
+          const point = routePosition(route, e.routeDistance);
+          const heading = routeHeading(route, e.routeDistance);
+          const side = e.laneOffset ?? 0;
+          e.x = point.x + Math.cos(heading) * side;
+          e.z = point.z - Math.sin(heading) * side;
+          e.heading = heading;
+          e.speed = damp(e.speed, targetSpeed, 1.5, dt);
+          e.turnVelocity = 0;
+          e.bank = 0;
+          e.vx = Math.sin(e.heading) * e.speed;
+          e.vz = Math.cos(e.heading) * e.speed;
+        } else {
+          const turnError = angleDelta(target, e.heading);
+        const desiredTurn = clamp(turnError * 2.2, -config.frame.turnRate * RAD, config.frame.turnRate * RAD);
+          e.turnVelocity = damp(e.turnVelocity, desiredTurn, 5, dt);
+          e.heading = angleDelta(e.heading + e.turnVelocity * dt, 0);
+          e.speed = damp(e.speed, targetSpeed, 1.5, dt);
+          e.bank = 0;
+          e.vx = Math.sin(e.heading) * e.speed;
+          e.vz = Math.cos(e.heading) * e.speed;
+          e.x += e.vx * dt;
+          e.z += e.vz * dt;
+        }
+      }
       if (e.layer === "air" && d < e.radius + 0.7)
-        this.damagePlayer(e.kind === "striker" ? 28 : 8, e.x, e.z, e.kind);
+        this.damagePlayer(behavior.kind === "dive" ? 28 : 8, e.x, e.z, e.kind);
       e.cooldown -= dt;
       const angle = Math.abs(
         angleDelta(Math.atan2(p.x - e.x, p.z - e.z), e.heading),
       );
       const canAttack =
-        c.damage > 0 &&
-        d < (e.layer === "ground" ? 30 : 22) &&
-        (e.layer === "ground" || angle < 0.6 || e.kind === "elite");
+        config.combat.weaponDamage > 0 &&
+        d < (e.layer !== "air" ? 30 : 22) &&
+        (e.layer !== "air" || angle < 0.6 || e.kind === "elite");
       if (e.cooldown <= 0 && canAttack && e.warning === 0) {
         e.warning =
-          e.layer === "ground" ? (e.kind === "missile_truck" ? 1.3 : 0.8) : 0.7;
+          e.layer !== "air" ? (e.kind === "missile_truck" ? 1.3 : 0.8) : 0.7;
         e.aimX = p.x + p.vx * 0.35;
         e.aimZ = p.z + p.vz * 0.35;
       }
@@ -643,38 +855,55 @@ export class World {
         e.warning -= dt;
         if (e.warning <= 0) {
           e.warning = 0;
-          e.cooldown = c.fireInterval * (e.health < c.health * 0.4 ? 1.5 : 1);
+          e.cooldown = config.combat.fireInterval * (e.health < e.maxHealth * 0.4 ? 1.5 : 1);
           const a = Math.atan2(e.aimX - e.x, e.aimZ - e.z);
-          const count =
-            e.kind === "elite" ? 12 : e.kind === "emplacement" ? 5 : 1;
-          for (let i = 0; i < count; i++) {
-            const heading =
-              e.kind === "elite"
-                ? a + (i * Math.PI * 2) / count
-                : a + (i - (count - 1) / 2) * 0.075;
-            this.shoot(
+          const weapon = e.weapons[0];
+          const active = weapon && this.weaponMountActive(e, weapon);
+          const count = active ? weapon.config.count : 0;
+          if (weapon && active)
+            this.fireWeaponSalvo(
+              weapon,
               e.x,
               e.z,
-              heading,
-              {
-                ...WEAPONS.light_cannon,
-                damage: c.damage,
-                speed: e.kind === "missile_truck" ? 10 : 12,
-                range: 45,
-                homing: e.kind === "missile_truck" ? 35 : 0,
-                homingLife: 4,
-              },
+              a,
               "enemy",
               0,
-              e.layer === "ground" ? "flak" : "bullet",
+              e.layer !== "air" ? "flak" : "bullet",
+              e.kind === "elite"
+                ? (index, total) => a + (index * Math.PI * 2) / total
+                : (index, total) => a + (index - (total - 1) / 2) * 0.075,
             );
-          }
+          const eventType = e.layer !== "air" ? "ground_attack" : "enemy_fire";
+          this.emit({
+            type: eventType,
+            time: this.elapsed,
+            enemyId: e.id,
+            heading: a,
+            aimX: e.aimX,
+            aimZ: e.aimZ,
+            count,
+            threat: Math.max(0, 1 - d / 45),
+          });
+          if (e.kind === "missile_truck")
+            this.emit({
+              type: "missile_lock_warning",
+              time: this.elapsed,
+              enemyId: e.id,
+              heading: a,
+              aimX: e.aimX,
+              aimZ: e.aimZ,
+              count,
+              threat: Math.max(0, 1 - d / 45),
+            });
         }
       }
     }
     this.enemies = this.enemies.filter(
       (e) => e.health > 0 && distance(e, p) < 85 && e.age < 65,
     );
+    const live = new Set(this.enemies);
+    for (let i = this.actors.length - 1; i > 0; i--)
+      if (!live.has(this.actors[i] as Enemy)) this.actors.splice(i, 1);
   }
   private targetFor(w: RuntimeWeapon) {
     const p = this.player,
@@ -714,7 +943,7 @@ export class World {
       const part = p.parts.find((v) => v.id === w.partId),
         c = w.config;
       w.cooldown = Math.max(0, w.cooldown - dt);
-      if (part && part.health <= 0) {
+      if (!part || !this.weaponMountActive(p, w)) {
         w.lockProgress = 0;
         continue;
       }
@@ -838,6 +1067,28 @@ export class World {
     });
     v.hitIds.length = 0;
   }
+  private weaponMountActive(entity: Pick<CombatEntity, "parts">, weapon: RuntimeWeapon) {
+    const part = entity.parts.find((value) => value.id === weapon.partId);
+    return Boolean(part && part.health > 0 && part.state !== "disabled" && !part.destroyed);
+  }
+  private fireWeaponSalvo(
+    weapon: RuntimeWeapon,
+    x: number,
+    z: number,
+    heading: number,
+    team: "player" | "enemy",
+    targetId = 0,
+    kind?: Projectile["kind"],
+    headingForShot?: (index: number, count: number) => number,
+  ) {
+    if (!weapon.config.count) return;
+    for (let i = 0; i < weapon.config.count; i++) {
+      const shotHeading = headingForShot
+        ? headingForShot(i, weapon.config.count)
+        : heading + (i - (weapon.config.count - 1) / 2) * weapon.config.spread * RAD;
+      this.shoot(x, z, shotHeading, weapon.config, team, targetId, kind);
+    }
+  }
   private updateProjectiles(dt: number) {
     const p = this.player;
     for (const v of this.projectiles.items) {
@@ -868,20 +1119,18 @@ export class World {
       v.x += (Math.sin(v.heading) * v.speed + wind.x * 0.15) * dt;
       v.z += (Math.cos(v.heading) * v.speed + wind.z * 0.15) * dt;
       if (v.team === "enemy") {
-        if (this.hitPlayer(v)) {
+        const hit = hitCombatEntity(this.player, v);
+        if (hit) {
           v.active = false;
-          this.damagePlayer(v.damage, v.x, v.z, v.kind);
+          this.damageEntity(this.player, hit.part, v.damage, v.x, v.z, v.kind, "player");
         }
       } else {
         for (const e of this.enemies) {
           if (e.layer !== "air" || e.health <= 0 || v.hitIds.includes(e.id))
             continue;
-          if (
-            segmentDistance(e.x, e.z, v.prevX, v.prevZ, v.x, v.z) >
-            e.radius + 0.14
-          )
-            continue;
-          this.damageEnemy(e, v.damage, v.x, v.z);
+          const hit = hitCombatEntity(e, v);
+          if (!hit) continue;
+          this.damageEntity(e, hit.part, v.damage, v.x, v.z, "player", "enemy");
           v.hitIds.push(e.id);
           e.burn = Math.max(e.burn, v.burn > 0 ? 3 : 0);
           e.slow = Math.max(e.slow, v.slow);
@@ -900,24 +1149,84 @@ export class World {
       }
     }
   }
-  private hitPlayer(v: Projectile) {
-    const p = this.player,
-      sin = Math.sin(p.heading),
-      cos = Math.cos(p.heading);
-    const x = v.x - p.x,
-      z = v.z - p.z,
-      px = v.prevX - p.prevX,
-      pz = v.prevZ - p.prevZ;
-    const lx = x * cos - z * sin,
-      lz = x * sin + z * cos;
-    const ax = px * cos - pz * sin,
-      az = px * sin + pz * cos;
-    return p.parts.some(
-      (part) =>
-        !part.destroyed &&
-        segmentDistance(part.x, part.z, ax, az, lx, lz) <
-          part.radius + 0.1 + p.stats.radius * 0.1,
+  private nearestPart(entity: { x: number; z: number; heading: number; parts: Part[] }, x: number, z: number) {
+    const dx = x - entity.x;
+    const dz = z - entity.z;
+    const sin = Math.sin(entity.heading);
+    const cos = Math.cos(entity.heading);
+    const localX = dx * cos - dz * sin;
+    const localZ = dx * sin + dz * cos;
+    return entity.parts
+      .filter((part) => part.health > 0 && part.state !== "destroyed" && part.state !== "disabled" && !part.destroyed)
+      .sort((a, b) => Math.hypot(a.x - localX, a.z - localZ) - Math.hypot(b.x - localX, b.z - localZ))[0]
+      ?? entity.parts.find((part) => part.health > 0) ?? entity.parts[0];
+  }
+  private damageEntity(
+    entity: Player | Enemy,
+    part: Part,
+    amount: number,
+    x: number,
+    z: number,
+    source: string,
+    owner: "player" | "enemy",
+  ) {
+    if (entity.health <= 0) return;
+    if (owner === "player" && this.player.invulnerable > 0) return;
+    const damage = amount * (owner === "enemy" && "armorBreak" in entity && entity.armorBreak > 0 ? 1.25 : 1);
+    const wasDisabled = part.health <= 0 || part.state === "disabled";
+    const appliedDamage = Math.min(damage, Math.max(0, part.health));
+    applyPartDamage(
+      {
+        health: entity.health,
+        maxHealth: owner === "player" ? this.playerMaxHealth : (entity as Enemy).maxHealth,
+        parts: entity.parts,
+        damageTransfer: owner === "player" ? this.player.stats.damageTransfer : (entity as Enemy).damageTransfer ?? 0.7,
+        partRevision: entity.partRevision,
+        damageRevision: entity.damageRevision,
+      },
+      part,
+      appliedDamage,
     );
+    if (owner === "player") {
+      this.syncPlayerHealth();
+    } else {
+      entity.health = Math.max(0, entity.health - appliedDamage);
+    }
+    entity.partRevision = (entity.partRevision ?? 0) + 1;
+    entity.damageRevision = (entity.damageRevision ?? 0) + 1;
+    part.state = stateFor(part);
+    part.disabled = part.state === "disabled";
+    if (part.state === "disabled" && !wasDisabled) {
+      part.destroyed = false;
+      this.emit({
+        type: "part_disabled",
+        time: this.elapsed,
+        owner,
+        entityId: entity === this.player ? "player" : (entity as Enemy).id,
+        partId: part.id,
+        label: part.slot === "leftWing" ? "左翼" : part.slot === "rightWing" ? "右翼" : part.kind,
+      });
+    }
+    if (owner === "player") {
+      const p = entity as Player;
+      p.health = Math.max(0, p.health);
+      this.damageTaken += appliedDamage;
+      p.hitFlash = 1;
+      p.invulnerable = RULES.invulnerability;
+      this.stability *= 0.5;
+      this.combo = 1;
+      this.comboTimer = 0;
+      this.effect(p.x, p.z, "hit", 0.45, 1);
+      this.emit({ type: "player_hit", time: this.elapsed, amount: appliedDamage, source, part: part.id });
+      this.telemetry.record(this.elapsed, "player_damage", { source, amount: appliedDamage, part: part.id });
+    } else {
+      const e = entity as Enemy;
+      e.flash = 1;
+      if (appliedDamage > 1)
+        this.effect(x, z, "hit", 0.22, 0.5, e.layer !== "air" ? 0.6 : 4);
+      this.emit({ type: "enemy_hit", time: this.elapsed, enemyId: e.id, amount: appliedDamage, part: part.id });
+      if (e.health <= 0) this.finishEnemy(e);
+    }
   }
   damagePlayer(
     amount: number,
@@ -925,76 +1234,48 @@ export class World {
     z = this.player.z,
     source = "unknown",
   ) {
-    const p = this.player;
-    if (p.invulnerable > 0 || this.phase === "dying" || this.phase === "result")
-      return;
-    const dx = x - p.x,
-      dz = z - p.z,
-      sin = Math.sin(p.heading),
-      cos = Math.cos(p.heading);
-    const lx = dx * cos - dz * sin,
-      lz = dx * sin + dz * cos;
-    const part = p.parts
-      .filter((v) => !v.destroyed)
-      .sort(
-        (a, b) =>
-          Math.hypot(a.x - lx, a.z - lz) - Math.hypot(b.x - lx, b.z - lz),
-      )[0];
-    if (part && part.id !== "core") {
-      part.health = Math.max(0, part.health - amount);
-      if (part.health === 0 && ["winglet", "gun", "wing"].includes(part.kind))
-        part.destroyed = true;
-      p.health -= amount * p.stats.damageTransfer;
-    } else p.health -= amount;
-    p.health = Math.max(0, p.health);
-    const core = p.parts.find((part) => part.id === "core");
-    if (core) {
-      core.health = p.health;
-      core.maxHealth = p.stats.health;
-    }
-    this.damageTaken += amount;
-    p.hitFlash = 1;
-    p.invulnerable = RULES.invulnerability;
-    this.stability *= 0.5;
-    this.combo = 1;
-    this.comboTimer = 0;
-    this.effect(p.x, p.z, "hit", 0.45, 1);
-    this.telemetry.record(this.elapsed, "player_damage", {
-      source,
-      amount,
-      part: part?.id ?? "core",
-    });
+    if (this.phase === "dying" || this.phase === "result") return;
+    this.damageEntity(this.player, this.nearestPart(this.player, x, z), amount, x, z, source, "player");
   }
   damageEnemy(e: Enemy, damage: number, x = e.x, z = e.z) {
-    if (e.health <= 0) return;
-    e.health -= damage * (e.armorBreak > 0 ? 1.25 : 1);
-    e.flash = 1;
-    if (damage > 1)
-      this.effect(x, z, "hit", 0.22, 0.5, e.layer === "ground" ? 0.6 : 4);
+    if (e.health <= 0 || !e.parts) return;
+    this.damageEntity(e, this.nearestPart(e, x, z), damage, x, z, "damage", "enemy");
+  }
+  private finishEnemy(e: Enemy) {
     if (e.health > 0) return;
-    const c = ENEMIES[e.kind];
+    const profile = npcProfileById(e.kind);
+    const config = profile ? combatantById(profile.combatantId) : undefined;
+    if (!profile || !config) return;
     this.kills++;
-    this.score += Math.round(c.xp * 4 * this.combo);
-    this.awardXp(c.xp);
+    this.score += Math.round(profile.rewards.score * this.combo);
+    this.awardXp(profile.rewards.xp);
     this.effect(
       e.x,
       e.z,
-      e.layer === "ground" ? "ground" : "explosion",
+      e.layer !== "air" ? "ground" : "explosion",
       1,
-      c.radius * 2,
-      e.layer === "ground" ? 0.3 : 4,
+      config.combat.collisionRadius * 2,
+      e.layer !== "air" ? 0.3 : 4,
     );
-    for (let i = 0; i < Math.min(c.coins, 6); i++)
+    for (let i = 0; i < Math.min(profile.rewards.coins, 6); i++)
       this.spawnPickup(
+        "coin",
         e.x + this.random.range(-1.5, 1.5),
         e.z + this.random.range(-1.5, 1.5),
-        Math.ceil(c.coins / 6),
+        Math.ceil(profile.rewards.coins / 6),
         8,
       );
-    if (e.kind === "elite") {
-      this.spawnPickup(e.x, e.z, 0, 100, true);
-      this.message("精英击毁 · 维修补给已投放", 4);
-    }
+    for (const drop of profile.rewards.drops ?? [])
+      if (drop === "repairLarge" || drop === "repairSmall") this.spawnPickup(drop, e.x, e.z);
+    this.emit({
+      type: "enemy_destroyed",
+      time: this.elapsed,
+      enemyId: e.id,
+      kind: e.kind,
+      score: Math.round(profile.rewards.score * this.combo),
+      coins: profile.rewards.coins,
+      combo: this.combo,
+    });
     if (e.kind === "depot") this.explode(e.x, e.z, 5, 90, "ground", e.id);
   }
   private explode(
@@ -1008,10 +1289,10 @@ export class World {
     this.effect(
       x,
       z,
-      layer === "ground" ? "ground" : "explosion",
+      layer !== "air" ? "ground" : "explosion",
       1,
       radius,
-      layer === "ground" ? 0.2 : 4,
+      layer !== "air" ? 0.2 : 4,
     );
     let hits = 0;
     for (const e of [...this.enemies]) {
@@ -1028,9 +1309,56 @@ export class World {
     }
     return hits;
   }
-  spawnPickup(x: number, z: number, value = 1, xp = 10, repair = false) {
+  spawnPickup(kind: PickupKind, x: number, z: number, value?: number, xp?: number) {
     const item = this.pickups.acquire();
-    if (item) Object.assign(item, { x, z, value, xp, repair, life: 28 });
+    if (item) {
+      const spec = PICKUP[kind];
+      Object.assign(item, {
+        x,
+        z,
+        kind,
+        value: value ?? spec.coinValue,
+        xp: xp ?? spec.xp,
+        life: spec.life,
+      });
+    }
+  }
+  spawnHealthPickup(kind: "repairSmall" | "repairLarge") {
+    const p = this.player;
+    const bearing = p.heading + this.random.range(-HEALTH_SUPPLY.bearingMax, HEALTH_SUPPLY.bearingMax);
+    const range = kind === "repairLarge" ? HEALTH_SUPPLY.largeDistance : HEALTH_SUPPLY.smallDistance;
+    const d = this.random.range(range[0], range[1]);
+    this.spawnPickup(kind, p.x + Math.sin(bearing) * d, p.z + Math.cos(bearing) * d);
+    this.telemetry.record(this.elapsed, "health_pickup_spawn", { kind, distance: d });
+  }
+  private updatePickupSupply(dt: number) {
+    if (!this.supplyEnabled) return;
+    this.supplyTimer -= dt;
+    if (this.supplyTimer > 0) return;
+    const activeHealth = this.pickups.items.filter(
+      (item) => item.active && (item.kind === "repairSmall" || item.kind === "repairLarge"),
+    ).length;
+    if (activeHealth >= HEALTH_SUPPLY.fieldCap) {
+      this.supplyTimer = HEALTH_SUPPLY.capRetry;
+      return;
+    }
+    const ratio = this.player.health / this.playerMaxHealth;
+    const base = this.random.range(HEALTH_SUPPLY.interval[0], HEALTH_SUPPLY.interval[1]);
+    const factor = ratio < HEALTH_SUPPLY.critical
+      ? HEALTH_SUPPLY.criticalFactor
+      : ratio < HEALTH_SUPPLY.low
+        ? HEALTH_SUPPLY.lowFactor
+        : 1;
+    const kind = this.random.next() < (ratio < HEALTH_SUPPLY.lowChanceThreshold ? HEALTH_SUPPLY.largeChanceLow : HEALTH_SUPPLY.largeChance)
+      ? "repairLarge"
+      : "repairSmall";
+    this.spawnHealthPickup(kind);
+    this.supplyTimer = Math.max(
+      HEALTH_SUPPLY.minInterval,
+      base * factor,
+    );
+    if (ratio < HEALTH_SUPPLY.critical && activeHealth === 0)
+      this.supplyTimer = Math.min(this.supplyTimer, HEALTH_SUPPLY.pityDelay);
   }
   private updatePickups(dt: number) {
     const p = this.player;
@@ -1044,20 +1372,38 @@ export class World {
         continue;
       }
       const d = distance(c, p);
-      if (d < RULES.magnetRadius) {
-        const t = Math.min(1, dt * (5 + (RULES.magnetRadius - d) * 3));
+      const spec = PICKUP[c.kind];
+      if (d < spec.magnetRadius) {
+        const t = Math.min(1, dt * (5 + (spec.magnetRadius - d) * 3));
         c.x += (p.x - c.x) * t;
         c.z += (p.z - c.z) * t;
       }
-      if (d < RULES.pickupRadius) {
+      if (d < spec.pickupRadius) {
         c.active = false;
-        this.coins += c.value;
-        this.score += Math.round(c.value * 10 * this.combo);
-        this.awardXp(c.xp);
-        if (c.repair) this.repair(0.35);
-        this.combo = Math.min(3, this.combo + 0.05);
-        this.comboTimer = RULES.comboTimeout;
-        this.effect(c.x, c.z, "coin", 0.4, 0.6, 4);
+        if (c.kind === "coin") {
+          this.coins += c.value;
+          this.score += Math.round(c.value * 10 * this.combo);
+          this.awardXp(c.xp);
+          this.combo = Math.min(3, this.combo + 0.05);
+          this.comboTimer = RULES.comboTimeout;
+          this.effect(c.x, c.z, "coin", 0.4, 0.6, 4);
+          this.emit({ type: "pickup", time: this.elapsed, kind: c.kind, amount: c.value });
+        } else {
+          const missing = this.playerMaxHealth - p.health;
+          if (missing <= 0) {
+            this.coins += spec.coinValue;
+            this.score += spec.coinValue * 10;
+            this.message(`部件已修复 · 转入 ${spec.coinValue} 金币`, 2);
+          } else {
+            const amount = Math.min(missing, this.playerMaxHealth * spec.healRatio);
+            this.repairWithAmount(amount);
+            this.awardXp(spec.xp);
+            this.healPulse = 0.35;
+            this.effect(c.x, c.z, "heal", 0.5, 0.8, 4);
+            this.message(`${c.kind === "repairLarge" ? "大修理包" : "小修理包"} · +${Math.round(amount)} 修复量`, 2);
+            this.emit({ type: "pickup", time: this.elapsed, kind: c.kind, amount });
+          }
+        }
       }
     }
   }
@@ -1115,13 +1461,11 @@ export class World {
   }
   private upgradeWeight(u: Upgrade) {
     let w = u.rarity === "common" ? 5 : u.rarity === "rare" ? 2 : 0.7;
-    if (u.repair && this.player.health / this.player.stats.health < 0.45)
-      w *= 5;
     if (this.player.upgrades.includes("right_engine") && u.id === "left_engine")
       w *= 2;
     if (
       this.player.upgrades.includes("giant_wing") &&
-      ["动力", "轰炸", "维修"].includes(u.tag)
+      ["动力", "轰炸"].includes(u.tag)
     )
       w *= 2;
     if (
@@ -1154,8 +1498,7 @@ export class World {
     return true;
   }
   installUpgrade(u: Upgrade) {
-    const p = this.player,
-      healthBefore = p.stats.health;
+    const p = this.player;
     p.upgrades.push(u.id);
     if (u.add)
       for (const [key, val] of Object.entries(u.add))
@@ -1163,11 +1506,8 @@ export class World {
     if (u.multiply)
       for (const [key, val] of Object.entries(u.multiply))
         p.stats[key as keyof Stats] *= val;
-    p.health = clamp(
-      p.health + p.stats.health - healthBefore,
-      1,
-      p.stats.health,
-    );
+    // Newly installed parts enter at full local health and expand the total pool.
+    p.health = Math.max(1, p.health);
     p.energy = Math.min(p.energy, p.stats.energyMax);
     const newlyAdded: Part[] = [];
     u.parts.forEach((recipe, i) => {
@@ -1177,11 +1517,11 @@ export class World {
           (part) => part.id.startsWith(`${u.id}_`) && part.kind === recipe.kind,
         );
       if (existing) {
-        existing.health = Math.min(
-          existing.maxHealth,
-          existing.health + recipe.health * 0.3,
-        );
-        existing.destroyed = false;
+        if (!existing.destroyed)
+          existing.health = Math.min(
+            existing.maxHealth,
+            existing.health + recipe.health * 0.3,
+          );
         newlyAdded.push(existing);
         return;
       }
@@ -1206,12 +1546,15 @@ export class World {
       );
       part.weight = recipe.weight ?? 5;
       part.addedMass = part.weight * 10;
+      if (part.kind !== "wing" && part.kind !== "winglet")
+        part.visual = { ...(part.visual ?? { kind: part.kind, scale: 1, detachable: false }), detachable: false };
       p.parts.push(part);
       newlyAdded.push(part);
     });
     u.weapons?.forEach((id, i) => {
       if (id === "lock_missile" && this.mainLock) return;
       const part = newlyAdded[Math.min(i, newlyAdded.length - 1)];
+      if (!part || part.destroyed) return;
       const c =
         id === "nose_cannon_pair" && u.id === "nose_cannon"
           ? { ...WEAPONS[id], damage: WEAPONS[id].damage * 1.55, pierce: 1 }
@@ -1231,30 +1574,23 @@ export class World {
         part.radius = p.stats.wingspan * 0.16;
       }
     }
-    if (u.repair) this.repair(0.4);
     if (u.id === "modular_frame")
       for (const part of p.parts) {
         part.maxHealth *= 1.1;
         part.health *= 1.1;
       }
+    this.syncPlayerHealth();
     p.revision++;
   }
-  private repair(ratio: number) {
-    const p = this.player;
-    p.health = Math.min(p.stats.health, p.health + p.stats.health * ratio);
-    for (const part of p.parts) {
-      part.health = Math.min(
-        part.maxHealth,
-        part.health +
-          part.maxHealth * ratio +
-          (part.destroyed ? part.maxHealth * 0.3 : 0),
-      );
-      part.destroyed = false;
-    }
-    p.revision++;
+  private repairWithAmount(amount: number) {
+    repairPartsWithOverflow(this.player.parts, amount);
+    this.syncPlayerHealth();
+    this.player.revision++;
   }
   toggleBombing() {
     if (!["battle", "bombing"].includes(this.phase)) return;
+    this.player.boosting = false;
+    this.player.boost = 0;
     this.phase = this.phase === "battle" ? "bombing" : "battle";
     this.stability = 0;
     this.aimOffset = { x: 0, z: 0 };
@@ -1332,7 +1668,7 @@ export class World {
     for (const fire of this.fires) {
       fire.life -= dt;
       for (const e of this.enemies)
-        if (e.layer === "ground" && distance(e, fire) < fire.radius)
+        if (e.layer !== "air" && distance(e, fire) < fire.radius)
           this.damageEnemy(e, fire.dps * dt);
     }
     this.fires = this.fires.filter((f) => f.life > 0);
@@ -1358,7 +1694,7 @@ export class World {
       1,
       1 / this.bombWeapon.fireRate +
         p.stats.bombCooldown +
-        (1 - this.partFactor("bombBay")) * 2,
+        (1 - this.player.damage.bombFactor) * 2,
     );
     this.stability = 0.15;
     this.bombsDropped++;
@@ -1368,6 +1704,7 @@ export class World {
   }
   pause() {
     if (this.phase === "battle" || this.phase === "bombing") {
+      this.eventQueue.length = 0;
       this.resumePhase = this.phase;
       this.phase = "paused";
       this.clock.timeScale = 0;

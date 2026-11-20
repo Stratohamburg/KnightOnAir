@@ -1,7 +1,7 @@
 export interface EnemyConfig {
   id: string;
   name: string;
-  layer: "air" | "ground";
+  layer: "air" | "ground" | "water";
   health: number;
   speed: number;
   turnRate: number;
@@ -105,7 +105,6 @@ export const ENEMIES: Record<string, EnemyConfig> = Object.fromEntries(
       "#88877b",
       3.4,
     ],
-    ["aa", "防空炮", "ground", 90, 0, 70, 1, 22, 3.2, 35, 4, "#677560", 1],
     [
       "missile_truck",
       "导弹车",
@@ -120,21 +119,6 @@ export const ENEMIES: Record<string, EnemyConfig> = Object.fromEntries(
       6,
       "#72785f",
       1.1,
-    ],
-    [
-      "emplacement",
-      "机枪阵地",
-      "ground",
-      75,
-      0,
-      45,
-      0.9,
-      4,
-      2.5,
-      30,
-      3,
-      "#7d8067",
-      0.9,
     ],
     [
       "resource",
@@ -165,6 +149,66 @@ export const ENEMIES: Record<string, EnemyConfig> = Object.fromEntries(
       10,
       "#ab9970",
       1.7,
+    ],
+    [
+      "aa_truck",
+      "移动防空车",
+      "ground",
+      110,
+      1.6,
+      55,
+      1.5,
+      22,
+      3.2,
+      55,
+      8,
+      "#677560",
+      1.2,
+    ],
+    [
+      "fuel_truck",
+      "燃料车",
+      "ground",
+      120,
+      1.8,
+      35,
+      1.2,
+      0,
+      999,
+      80,
+      12,
+      "#b69263",
+      1.1,
+    ],
+    [
+      "armored_train",
+      "装甲列车",
+      "ground",
+      420,
+      2.2,
+      25,
+      2.4,
+      18,
+      4.5,
+      180,
+      20,
+      "#626a68",
+      1.8,
+    ],
+    [
+      "gunboat",
+      "炮艇",
+      "water",
+      180,
+      2,
+      35,
+      1.8,
+      20,
+      4,
+      120,
+      14,
+      "#52727a",
+      1.4,
     ],
   ].map((row) => {
     const [

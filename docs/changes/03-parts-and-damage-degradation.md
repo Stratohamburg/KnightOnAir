@@ -28,6 +28,33 @@
 | 炸弹舱禁止投弹 | `bombFactor = 0` 时 `canBomb = false` | §3.4.4 |
 | 任意组合保留“能跛行返航” | 滚转权限总和 ≥0.25、振荡 ≤0.35 rad、无尾旋 | §3.4.7 |
 
+### 0.1 单一战斗实体管线（强制约束）
+
+所有实体使用同一套运行时战斗接口。`Player`、空中 `Enemy`、地面单位和水面单位都实现 `CombatEntity` 所需的部件、核心生命、局部坐标、武器挂载和部件修订号。空中实体额外消费 `AirMotionState` 与 `ControlDamage`，地面和水面使用各自移动状态。实现中不得保留“玩家一套命中/损毁、敌人另一套命中/损毁”的平行路径。
+
+```ts
+interface CombatEntity {
+  id: number | string;
+  x: number; z: number; heading: number;
+  health: number; maxHealth: number;
+  parts: Part[];
+  damageTransfer: number;
+  damage: ControlDamage;
+  partRevision: number;
+  damageRevision: number;
+}
+
+function hitEntity(entity: CombatEntity, projectile: Projectile): HitPart | undefined;
+function applyPartDamage(entity: CombatEntity, part: Part, amount: number, hit: HitContext): void;
+function evaluateDamage(entity: CombatEntity): ControlDamage;
+```
+
+- `hitEntity` 统一完成 broadphase、世界线段到实体局部坐标的转换、部件圆命中、最早交点和穿透顺序。玩家子弹命中敌人、敌方弹道命中玩家、碰撞和爆炸都调用同一命中/伤害入口。
+- `applyPartDamage` 统一处理部件生命、核心伤害传递、`disabled/destroyed` 状态、挂载武器失效、`partRevision` 和 `part_destroyed` 事件。玩家和敌人的数值配置可以不同，计算步骤和状态转换不得按 owner 类型分叉。
+- `evaluateDamage` 统一从部件健康度计算共享伤害结果。空中实体消费其中的升力、推力、滚转权限、航向稳定、武器、锁定和投弹能力，玩家与空中敌人都进入同一个飞行更新。地面和水面实体不参与升力、滚转或尾翼飞行衰减，只消费发动机、轮组、武器、锁定和核心伤害结果，由各自移动模型映射为速度、路线和火力状态。
+- `CombatEntity` 的 `layer/capabilities` 只决定可用的物理通道。地面和水面不会使用默认升力值，也不会接入空中飞行包线。这个映射属于配置，不得复制一套敌人伤害算法。
+- 结算方差只允许存在于奖励、掉落、AI 目标选择和表现提示。命中检测、部件损毁、性能衰减、武器失效和核心归零的逻辑保持唯一。
+
 **细化但不冲突的四处**（评审认可后写回总览备注）：
 
 1. `engineFactor` 在 03 后由 `ControlDamage` 聚合，公式形状仍是 `0.5 + 0.5 × 推力项`，供 04 §3.3 的“加力倍率乘在损伤后的极速上”直接使用（§3.5.4）。
@@ -179,7 +206,7 @@ export interface PartRecipe {
 
 #### 3.2.3 角色、份额与权重约定
 
-| role | side 用法 | lift 默认 | thrust 默认 | damageTransfer（玩家/敌人） | 典型 detachable |
+| role | side 用法 | lift 默认 | thrust 默认 | damageTransfer 基线（按部件配置） | 典型 detachable |
 | --- | --- | --- | --- | --- | --- |
 | `core` | 0 | 0（机身升力由 floor 表达） | 0 | 核心本体 | 否 |
 | `wing` | -1 / +1 | 1.0（翼根）/ 0.8（巨型外翼）/ 0.3（翼尖） | 0 | 1.0 / 0.5 | 是 |
@@ -190,7 +217,7 @@ export interface PartRecipe {
 | `bay` | 0 | 0 | 0 | 1.0 / 0.2 | 否 |
 | `radar` | 0 | 0 | 0 | 1.0 / 0.1 | 否 |
 
-- 每侧升力份额：`wingEff_s = Σ(role ∈wing/float, side=s) lift_i × hc_i ÷ Σ lift_i`；`lift_s = 0.20 + 0.80 × wingEff_s`。没有该侧翼部件时 `lift_s = 1`（例如地面单位不参与飞行衰减）。
+- 每侧升力份额：`wingEff_s = Σ(role ∈wing/float, side=s) lift_i × hc_i ÷ Σ lift_i`；`lift_s = 0.20 + 0.80 × wingEff_s`。该公式只对空中实体生效。地面和水面实体不计算 `lift_s`，由各自移动模型消费轮组、发动机、船体或舵机状态。
 - 每侧推力份额：`thrust_s = Σ thrust_i × sideShare_i × hc_i ÷ Σ thrust_i × sideShare_i`，`side = 0` 的发动机把 `thrust_i` 各分 0.5 给左右；没有发动机部件的敌人两侧都取 1（“引擎可选精细化”）。
 - 玩家部件权重 `weight/addedMass` 只影响 `flightEnvelope` 的惯量/翼载，不参与左右偏置（偏置由份额与健康度决定）。
 - **大型多翼/多发（08 §3.4.7 利维坦流）**：新增翼层用 `role="wing"` + `visual.kind="wingDeck"` 表达，位置/半径由工厂按当前翼展扩展并生成 2–3 个 `hitCircles`；新增发动机短舱用 `role="engine"`、炮塔用 `role="turret"`；它们自动进入 `lift/thrust/weaponIds` 份额与 `flightEnvelope` 的质量/惯量计算，从而自然降低 `response` 并收紧 09 的投弹包线，不需要为利维坦写专属规则。
@@ -266,14 +293,15 @@ function hitPart(parts: Part[], seg): { part: Part; t: number } | undefined {
   }
   return candidate;
 }
-function hitEnemy(e: Enemy, v: Projectile) { return hitPart(e.parts, localSegment(e, v.prev, v)); }
-function hitPlayerPart(p: Player, v: Projectile) { return hitPart(p.parts, localSegment(p, v.prev, v)); }
+function hitEntity(entity: CombatEntity, v: Projectile) {
+  return hitPart(entity.parts, localSegment(entity, v.prev, v));
+}
 ```
 
 - **优先级**：穿透/爆炸前先做实体包围圆 broadphase（`distance(e, seg) > e.radius + maxPartRadius` 直接跳过）；部件按**最早交点 t** 命中（子弹从哪一侧先碰到哪块），`t` 相同则 core 优先，再按 `part.id` 字典序，保证确定性。
 - **多圆**：大翼展部件（玩家 `giant_wing`、轰炸机/精英翼、飞艇吊舱）用 `hitCircles`（根/中/尖 2–3 个圆）；普通翼仍单圆，命中面积与 0.3.0 一致，避免难度漂移。
-- **玩家**：`hitPlayer(v)` 改为返回 `{ part, t }`；`updateProjectiles`（`World.ts:870-875`）把命中部件传给 `damagePlayer(amount, x, z, source, part?)`。碰撞/持续伤害等无扫掠来源仍按“离伤害点最近的非 destroyed 部件”兜底（复用现有 `damagePlayer` 逻辑，`World.ts:937-942`）。
-- **敌人**：`updateProjectiles`（`World.ts:876-899`）把 `hitEnemy` 的部件传给 `damageEnemy`；`hitIds` 的语义改为“本弹已命中过的敌人 id”，同一敌人内由 `pierce` 决定能否再穿到下一块部件（§3.3.3）。
+- `updateProjectiles` 对玩家和敌人都调用 `hitEntity`，再把返回的 `{ part, t }` 传给同一个 `applyPartDamage`。碰撞、持续伤害等无扫掠来源也调用同一函数，只是命中部件由伤害点最近部件解析。
+- `hitIds` 的语义是“本弹已命中过的实体 id”，同一实体内由 `pierce` 决定能否再穿到下一块部件（§3.3.3）。
 
 #### 3.3.2 伤害分流
 
@@ -281,9 +309,7 @@ function hitPlayerPart(p: Player, v: Projectile) { return hitPart(p.parts, local
 function applyPartDamage(owner, part: Part, amount: number, opts) {
   if (part.role === "core") { core.health -= amount; syncHealth(owner); return; }
   part.health = max(0, part.health - amount);
-  const transfer = owner.kind === "player"
-    ? owner.stats.damageTransfer * part.damageTransfer   // 玩家：重甲/模块化机架继续乘算
-    : part.damageTransfer;                                // 敌人：部件自身值
+  const transfer = owner.damageTransfer * part.damageTransfer;
   core.health = max(0, core.health - amount * transfer);
   if (part.health === 0) {
     part.state = part.visual.detachable ? "destroyed" : "disabled";
@@ -296,8 +322,8 @@ function applyPartDamage(owner, part: Part, amount: number, opts) {
 }
 ```
 
-- 玩家：`stats.damageTransfer` 默认 0.7（`types.ts:69`），重甲/模块化机架按现有 `multiply`（`upgrades.ts:236-243、284-296`）继续降低传递；部件自身 `damageTransfer = 1.0`。
-- 敌人：`damageTransfer` 按 §3.2.3 表（翼 0.5、引擎 0.35、尾 0.2、武器 0.15、舱 0.2）。
+- `damageTransfer` 是部件配方上的数据。玩家可由机体/升级提供 `entity.damageTransfer` 修正，敌人可由防御配置提供同名修正，但两者都调用同一个乘法步骤。首轮基线仍为玩家核心传递系数 0.7，敌人翼 0.5、引擎 0.35、尾 0.2、武器 0.15、舱 0.2。
+- 实现禁止出现 `owner.kind === "player"` 与 `owner.kind === "enemy"` 的两套伤害分支。若需要重甲或装甲差异，使用 `CombatEntity.damageTransfer` 或 `Part.damageTransfer` 输入同一函数。
 - `stateFor(part)` 阈值沿用 02：`intact > 70%`、`damaged 40–70%`、`critical 1–40%`、`disabled 0%（不可脱落）`、`destroyed 0%（可脱落/被炸断）`。
 - **玩家核心**：`player.health` 与 core 部件每步同步（现有 `World.ts:387-391、950-954` 保留），死亡判定仍是 `player.health <= 0`；玩家可脱落部件的 `destroyed` 不会再自动重装（01 的修复包也明确不重装）。
 - **敌人核心**：core 生命 = `Enemy.health`；归零走现有击毁分支（`World.ts:974-998`：kills/score/xp/掉落/精英补给），HUD 血条与 `GameApp.updateLabels` 不需要改字段。
@@ -466,9 +492,14 @@ export interface ControlDamage {
   weaponFactor: number; lockFactor: number; bombFactor: number;
 }
 export interface DamageFrame {
-  kind: "player" | "enemy_air" | "enemy_ground";
+  layer: "air" | "ground" | "water";
   coreHealthRatio: number;                                   // 核心带伤进入 instability
 }
+
+type AirMotionConfig = Extract<CombatantConfig["frame"], { model: "air" }>;
+
+// `layer !== "air"` 时，升力、滚转、尾翼和投弹字段返回中性值或不参与移动结算，
+// 调用方只消费发动机、轮组/船体、武器、锁定和核心相关结果。
 
 // src/data/damageTuning.ts（新建，集中全部系数）
 export const DAMAGE = {
@@ -506,7 +537,7 @@ function refreshDamage(entity) {
 
 #### 3.5.1 包线（`flightEnvelope`，`FlightDynamics.ts:8-40`）
 
-- 签名改为 `flightEnvelope(p: Player, damage: ControlDamage)`；`wingFactor` 参数由 `liftAvg` 替代，`specificThrust = s.acceleration × engineFactor(damage)`。
+- 签名改为 `flightEnvelope(p: AirMotionConfig, damage: ControlDamage)`；`wingFactor` 参数由 `liftAvg` 替代，`specificThrust = s.acceleration × engineFactor(damage)`。仅 `layer === "air"` 的实体调用该函数。
 - `maxLoad` 公式保持，`response` 额外乘 `(0.70 + 0.30 × yawStability)`（尾翼损毁回正变慢）；`maxBank` 仍按 `acos(1/maxLoad)` 且 ≤87.5°。
 - 完好时 `liftAvg = 1、engineFactor = 1`，输出与 0.3.0 完全一致（现有银行角测试基线不变）。
 - **轰炸模式 bankLimit（与 09/D12 的接口）**：`flightEnvelope` 本身不感知轰炸模式；由 `World.updatePlayer` 把 `isBombing ? bombingBankLimit(p, damage) : Infinity` 传给 `updateFlightTurn`（动态值由 09 §3.3 按机型 + 损伤计算），后者取 `effectiveMaxBank = min(envelope.maxBank, bankLimit)` 并在 targetBank 与 bank 上双重 clamp。损伤后的 `maxBank` 更低时自然更严（只收紧）；退出轰炸模式后传 `Infinity`，立即恢复完整包线。
@@ -581,9 +612,9 @@ p.speed = clamp(p.speed, p.frame.cruiseSpeed, max(p.frame.cruiseSpeed, s.maxSpee
 - 移除 `World.ts:397` 的 `wingFactor` 与 `World.ts:404-409` 中乘 `wingFactor` 的部分；转向权限改由 `updateFlightTurn` 内部处理。
 - 转向损耗 `p.speed -= |delta| * 0.35`（`World.ts:434`）保留；风场/边界的软推不改。
 
-#### 3.5.5 敌人共用
+#### 3.5.5 空中敌人共用
 
-敌人 AI 用同一 `evaluateDamage`（§3.6.3），`e.bank` 仍按 `-atan2(speed × turnVelocity, g)` 计算（`World.ts:609-621`），只在 `targetBank` 上叠加 `rollBias/osc`，不引入第二套符号。
+空中敌人 AI 用同一 `evaluateDamage`（§3.6.3），`e.bank` 仍按 `-atan2(speed × turnVelocity, g)` 计算（`World.ts:609-621`），只在 `targetBank` 上叠加 `rollBias/osc`，不引入第二套符号。地面和水面敌人不调用 `flightEnvelope` 或 `updateFlightTurn`，它们把同一份部件损毁结果交给路线与移动积分器。
 
 ### 3.6 敌人部件、AI 与反馈
 
@@ -608,7 +639,9 @@ p.speed = clamp(p.speed, p.frame.cruiseSpeed, max(p.frame.cruiseSpeed, s.maxSpee
 | armored_train 装甲列车（06 新增） | 1.0H（400，3 节） | gun/炮塔 0.30H（120，每节） | engine/车体 0.25H（100，每节） | 0.15 |
 | depot 燃料设施（静态建筑） | 1.0H（240） | 可选储罐 0.30H（72） | — | 0.10 |
 
-#### 3.6.2 部件损毁后的敌人行为
+#### 3.6.2 部件损毁后的实体行为
+
+下表的升力、滚转、尾翼和飞行坡度效果只适用于空中实体。地面和水面实体沿用同一部件命中、核心传递和武器失效流程，再由轮组、发动机、船体或舵机部件把 `engineFactor`、`weaponFactor` 和核心状态映射为路线速度、转向能力和火力状态。
 
 | 部件 | 效果 | AI/表现 |
 | --- | --- | --- |
@@ -630,7 +663,7 @@ p.speed = clamp(p.speed, p.frame.cruiseSpeed, max(p.frame.cruiseSpeed, s.maxSpee
 - 航向（`World.ts:601`）：追加 `yawDriftSigned × dt` 与尾翼 wobble。
 - 开火（`World.ts:628-673`）：只有 `weaponFactor > 0.05` 才能进入 `warning`；`warning` 期间武器被击毁则取消本次开火；`fireInterval` 乘以 `(1 + 0.6 × (1 - weaponFactor))`；精英的 `count = 12 × 存活炮塔比例`。
 - 逃跑（`World.ts:560-570`）：`e.health < c.health × 0.2` 改为 `e.health < e.maxHealth × 0.25 || 已掉一翼`（两翼全掉必然逃）；`scout` 的召唤仍受 02 的上限约束。
-- 地面单位：`damage` 只用于 `weaponFactor`（武器失效）与 `engineFactor`（轮组/引擎失效 → 速度 ×0.5），不参与 bank/尾翼。
+- 地面和水面单位：仍由同一个 `evaluateDamage` 输出共享武器、核心和机动部件结果。它们不生成升力、滚转或尾翼飞行衰减。轮组、发动机、船体或舵机失效映射为路线速度和转向衰减，武器失效映射为停火，不新增地面或水面专用伤害分支。
 
 #### 3.6.4 与 02、05 的对接
 
@@ -714,7 +747,7 @@ destroyed 的瞬间        → 启动 detach：0.7–0.9s 内沿 -Y 下坠 + 自
 | `src/data/enemies.ts` | `EnemyConfig.parts?: PartRecipe[]`；轰炸机/俯冲/精英/地面单位补 recipe | 内容 |
 | `src/data/upgrades.ts` | `PartRecipe` 改为 re-export；条目保持 `kind/slot/health` 不变（工厂补 role/lift/thrust） | 内容 |
 | `src/simulation/FlightDynamics.ts` | `flightEnvelope(p, damage)`、`updateFlightTurn(..., bankLimit)` 非对称滚转/振荡/偏置与轰炸模式滚转 clamp；保留旧完好行为 | 模拟 |
-| `src/simulation/World.ts` | 构造部件改工厂；`updatePlayer` 用 `ControlDamage`；`hitPlayer` 返回部件；`damagePlayer/damageEnemy` 分流；`explode/pierce/DoT`；`updateEnemies` 部件 AI；`canBomb/dropBomb` 用 `bombFactor`；删 `partFactor`；`repair` 拆分 | 模拟 |
+| `src/simulation/World.ts` | 构造部件改工厂；所有实体统一调用 `hitEntity/applyPartDamage`；统一 `explode/pierce/DoT`；空中玩家与空中敌人消费 `ControlDamage`，地面/水面消费共享伤害结果并交给各自移动模型；`canBomb/dropBomb` 用 `bombFactor`；删 `partFactor`；`repair` 拆分 | 模拟 |
 | `src/rendering/ProceduralAircraft.ts` | 按 role/side 建组、脱落状态机、按部件材质/尾焰/烟雾 | 渲染 |
 | `src/rendering/Renderer.ts` | 敌人按部件建组/更新/脱落；烟雾覆盖双方；不新增瞄准线（05 删除 warningLines） | 渲染 |
 | `src/app/GameApp.ts` | 敌人标签保留核心血条；精英部件图标；玩家低血量/部件损失提示复用 05 事件 | UI |
@@ -728,9 +761,9 @@ destroyed 的瞬间        → 启动 detach：0.7–0.9s 内沿 -Y 下坠 + 自
 | --- | --- | --- | --- | --- |
 | T1 | 部件类型与工厂：`types/parts/data` 迁移，玩家/敌人部件可生成，旧 `kind/slot` 兼容 | `src/simulation/types.ts`、`src/simulation/parts.ts`、`src/data/parts.ts` | — | 现有 23 个升级仍可安装；敌人全部有 parts |
 | T2 | `DamageModel` + 调参表：全部公式、基线表、地板保护；纯函数单测 | `src/simulation/DamageModel.ts`、`src/data/damageTuning.ts`、`tests/damage-model.test.ts` | T1 | A3/A7/A8/A9/A10/A11 |
-| T3 | 命中与伤害分流：`hitPart`、`damagePlayer` 精确部件、`damageEnemy` 部件/核心、穿透/爆炸/DoT、`part_destroyed` 事件 | `src/simulation/World.ts`（命中/伤害/explode 段） | T1、T2 | A1/A2/A12、TTK |
+| T3 | 统一命中与伤害分流：`hitEntity`、`applyPartDamage`、部件/核心、穿透/爆炸/DoT、`part_destroyed` 事件 | `src/simulation/World.ts`（命中/伤害/explode 段） | T1、T2 | A1/A2/A12、TTK |
 | T4 | 飞行接入：`flightEnvelope/updateFlightTurn` 非对称、`updatePlayer` 顺序、`engineFactor` 与 04 契约、**`bankLimit` 投弹滚转 clamp（接 09 的动态包线）** | `src/simulation/FlightDynamics.ts`、`World.ts`（updatePlayer） | T2 | A4/A5/A6/A15 |
-| T5 | 敌人 AI 与数值：部件 recipe、`updateEnemies` 限速/转向/开火/逃跑、地面单位映射 | `src/data/enemies.ts`、`src/simulation/World.ts`（enemy AI） | T1、T3 | A12、A13；02 上限不回归 |
+| T5 | 敌人 AI 与数值：部件 recipe、行为分类目标点、统一限速/转向/开火/逃跑、地面单位映射 | `src/data/enemies.ts`、`src/simulation/World.ts`（enemy AI） | T1、T3、12 | A12、A13、A16；02 上限不回归 |
 | T6 | 玩家表现：ProceduralAircraft role 化、脱落动画、按部件烟/火 | `src/rendering/ProceduralAircraft.ts`、`Renderer.ts`（玩家段） | T1、T3 | 右翼脱落动画 0.9s；无 Three.js 依赖进模拟层 |
 | T7 | 敌人表现 + HUD/音效：部件分组、脱落、精英图标、`part` 音效 | `src/rendering/Renderer.ts`、`src/app/GameApp.ts`、`src/services/Audio.ts` | T3、T5 | D10 预算；05 事件消费 |
 | T8 | 维修/升级收口：`healCore/repair` 按 01、删除 `u.repair` 安装分支、`installUpgrade` 新字段、`partRevision` | `src/simulation/World.ts`、`src/data/upgrades.ts` | T1、01 | 修复包不重装；0.3.0 升级测试更新 |
@@ -742,8 +775,8 @@ destroyed 的瞬间        → 启动 detach：0.7–0.9s 内沿 -Y 下坠 + 自
 
 ### 6.1 自动化断言（固定种子/确定性）
 
-- **A1 部件存在性**：任意 `AIRFRAMES` 玩家均有 core + 左右翼 + tail + bay；任意 `ENEMIES` 空中敌人至少有 core + 左右翼三件；`damageEnemy` 瞄翼命中 `role === "wing"`，瞄中心命中 core。
-- **A2 分流与状态**：命中翼 → 翼 `health` 下降、core 下降 `amount × 0.5`（敌人）/`× stats.damageTransfer`（玩家）；`health === 0` 且 `detachable` → `state === "destroyed"` 并从 `hitPart` 排除；不可脱落 → `disabled` 仍可被命中；爆炸一次至少命中 2 块部件；pierce 1 命中同一敌人 2 块部件。
+- **A1 部件存在性**：任意 `AIRFRAMES` 玩家均有 core + 左右翼 + tail + bay；任意空中 `ENEMIES` 至少有 core + 左右翼三件；地面/水面 `ENEMIES` 至少有 core 与其武器或机动部件；`hitEntity` 瞄部件命中对应 role，瞄中心命中 core。
+- **A2 分流与状态**：同一 `applyPartDamage` 对玩家和敌人执行，命中翼后按 `owner.damageTransfer × part.damageTransfer` 向核心传递；`health === 0` 且 `detachable` → `state === "destroyed"` 并从 `hitPart` 排除；不可脱落 → `disabled` 仍可被命中；爆炸一次至少命中 2 块部件；pierce 1 命中同一实体 2 块部件。
 - **A3 右翼全毁基线**：`evaluateDamage` 返回 `liftRight = 0.20±0.01`、`liftLeft = 1.00`、`rollAuthorityLeft = 0.15±0.01`、`rollAuthorityRight = 0.90±0.01`、`turnAuthorityLeft = 0.352±0.02`、`turnAuthorityRight = 0.944±0.02`、`instability = 0.90`、`oscAmp = 0.27±0.02 rad`、`oscFreq = 1.95±0.05 Hz`、`rollBias = 0.08±0.01 rad 右`、`yawDrift = 0.03±0.005 rad/s 右`、`engineFactor = 0.94±0.01`。
 - **A4 左转难**：右翼全毁后按住左转输入 3s：`max |turnVelocity| ≤ 0.45 × 完好左转指令上限`；`bank > 0` 但峰值 `bank ≤ 0.95 × 完好转弯峰值`；左转累计航向变化明显小于完好。
 - **A5 右转不稳**：按住右转 3s：`bank < -0.5 rad`；稳态后 1.5s 内 bank 去趋势峰峰值 ∈ [0.15, 0.80] rad（振荡可见但不失控）；右转累计航向变化 ≥ 左转的 1.3 倍。
@@ -757,6 +790,7 @@ destroyed 的瞬间        → 启动 detach：0.7–0.9s 内沿 -Y 下坠 + 自
 - **A13 TTK**：核心直击的击杀所需伤害与 0.3.0 相同（`config.health` 不变）；持续打翼路线总伤害 ≤1.5H；不允许出现核心以外部件导致“打不死”的状态。
 - **A14 确定性与性能**：同种子在 30/60/120 FPS 下 `DamageModel` 输出与部件状态一致；8 空中 + 6 地面 + 140 弹的最坏帧，命中判定 + DamageModel 合计 <0.3ms/帧（Node 基准，取 600 帧平均）。
 - **A15 投弹滚转上限接口**：`updateFlightTurn(..., bankLimit = 09 计算的动态值, bombing=true)` 时，任意机体满侧向输入 2s 的 `|bank| ≤ min(envelope.maxBank, bankLimit) + 1°`；`bankLimit = Infinity、bombing=false` 时输出与 0.3.0 基线一致；右翼全毁 + 投弹时上限只会更小（取 `min(maxBank, 09 的动态值)`），不会因损伤反而放宽。
+- **A16 行为与战斗管线唯一性**：空中 `chase`、`intercept`、`escort`、`dive`、`standoff` 与地面/水面 `patrol`、`convoy` 的目标点或路线意图符合配置。空中行为进入同一个分离、`evaluateDamage`、飞行转向、速度和开火函数，地面/水面行为进入各自移动积分器。对同一 `Part[]` 和同一命中输入，玩家、空中敌人、地面实体和水面实体调用 `hitEntity/applyPartDamage` 得到相同的部件状态、核心传递和共享伤害结果，差异只能来自配置输入、运动层和奖励处理。地面实体不要求输出空中飞行包线。
 
 ### 6.2 真机/视觉验收
 

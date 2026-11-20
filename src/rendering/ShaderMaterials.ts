@@ -37,35 +37,61 @@ export function aircraftMaterial(
 export function terrainMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: { time: { value: 0 } },
-    vertexShader: `${noise} varying vec3 vWorld; varying float vHeight;
-      void main(){ vec4 world=modelMatrix*vec4(position,1.); float h=fbm(world.xz*.035)*1.7-1.2; world.y=h; vWorld=world.xyz; vHeight=h; gl_Position=projectionMatrix*viewMatrix*world; }`,
-    fragmentShader: `${noise} varying vec3 vWorld; varying float vHeight; uniform float time;
-      void main(){ vec2 p=vWorld.xz; float n=fbm(p*.15); vec2 cell=floor((p+vec2(sin(p.y*.015)*2.,0.))/7.);
-        float field=hash(cell); vec3 grass=mix(vec3(.16,.25,.12),vec3(.34,.39,.19),field);
-        vec3 col=grass*(.7+n*.5); float road=1.-smoothstep(.15,.4,abs(mod(p.x+p.y*.26,28.)-14.));
-        col=mix(col,vec3(.69,.65,.47),road*.55);
-        float river=abs(p.x-12.-sin(p.y*.018)*9.-sin(p.y*.047)*3.);
-        col=mix(col,vec3(.13,.32,.30),1.-smoothstep(2.2,2.8,river));
-        col+=sin(p.y*3.)*.008*smoothstep(4.,6.,river);
-        float fog=smoothstep(35.,125.,distance(cameraPosition,vWorld));
-        col=mix(col,vec3(.39,.50,.40),fog*.8);
+    vertexShader: `attribute float height; attribute float surfaceMask; attribute float roadMask; attribute float shoreMask;
+      varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore;
+      void main(){ vec4 world=modelMatrix*vec4(position,1.); vWorld=world.xyz; vNormal=normalize(normalMatrix*normal); vHeight=height; vSurface=surfaceMask; vRoad=roadMask; vShore=shoreMask; gl_Position=projectionMatrix*viewMatrix*world; }`,
+    fragmentShader: `${noise} varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore; uniform float time;
+      void main(){
+        vec3 grass=vec3(.40,.72,.28); vec3 sand=vec3(.91,.72,.42); vec3 water=vec3(.24,.74,.84); vec3 road=vec3(.82,.70,.50); vec3 rock=vec3(.38,.65,.53);
+        vec3 col = vSurface < .5 ? grass : vSurface < 1.5 ? road : vSurface < 2.5 ? sand : vSurface < 3.5 ? water : rock;
+        float light=max(0.,dot(normalize(vNormal),normalize(vec3(-.45,1.,.65))));
+        float band=light < .32 ? .76 : light < .68 ? .93 : 1.08;
+        float grain=fbm(vWorld.xz*.035)-.5;
+        col*=band + grain*.08;
+        col=mix(col,vec3(.95,.83,.60),vShore*.35);
+        col=mix(col,vec3(.92,.79,.58),vRoad*.18);
+        float fog=smoothstep(70.,240.,distance(cameraPosition,vWorld));
+        col=mix(col,vec3(.68,.86,.96),fog*.72);
         gl_FragColor=vec4(col,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
   });
 }
 export function cloudMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: { time: { value: 0 }, opacity: { value: 0.22 } },
-    vertexShader: `varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-    fragmentShader: `${noise} varying vec2 vUv; uniform float time,opacity;
-      void main(){vec2 p=vUv*2.-1.; float density=fbm(vUv*5.+vec2(time*.008,0.));
-        float edge=1.-smoothstep(.15,1.,length(p*vec2(.8,1.2))); float a=smoothstep(.27,.66,density)*edge*opacity;
-        gl_FragColor=vec4(mix(vec3(.75,.82,.77),vec3(.94,.96,.88),density),a);}`,
-    transparent: true,
-    depthWrite: false,
+    uniforms: {
+      topColor: { value: new THREE.Color("#fff6e5") },
+      middleColor: { value: new THREE.Color("#f3ebdd") },
+      shadowColor: { value: new THREE.Color("#b7d2ea") },
+      time: { value: 0 },
+    },
+    vertexShader: `varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal;
+      void main(){vLocal=position;vNormal=normalize(normalMatrix*normal);vec4 world=modelMatrix*vec4(position,1.);vWorld=world.xyz;gl_Position=projectionMatrix*viewMatrix*world;}`,
+    fragmentShader: `${noise} varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal;
+      uniform vec3 topColor,middleColor,shadowColor; uniform float time;
+      void main(){vec3 n=normalize(vNormal); float light=dot(n,normalize(vec3(-.45,1.,.65)))*.5+.5; float grain=fbm(vLocal.xz*.18+time*.004)-.5;
+        vec3 col=mix(shadowColor,middleColor,smoothstep(.28,.58,light)); col=mix(col,topColor,smoothstep(.62,.9,light));
+        float rim=pow(1.-max(0.,dot(n,normalize(cameraPosition-vWorld))),2.2); col+=vec3(1.,.83,.68)*rim*.12; col*=1.+grain*.05;
+        gl_FragColor=vec4(col,1.);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>}`,
+    transparent: false,
+    depthWrite: true,
+    depthTest: true,
+    side: THREE.FrontSide,
+  });
+}
+
+export function waterMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 } },
+    vertexShader: `varying vec3 vWorld; void main(){vec4 world=modelMatrix*vec4(position,1.);vWorld=world.xyz;gl_Position=projectionMatrix*viewMatrix*world;}`,
+    fragmentShader: `${noise} varying vec3 vWorld; uniform float time;
+      void main(){float wave=fbm(vWorld.xz*.045+vec2(time*.018,time*.012)); vec3 shallow=vec3(.38,.84,.9); vec3 deep=vec3(.16,.49,.72); vec3 col=mix(deep,shallow,wave); gl_FragColor=vec4(col,1.);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>}`,
     side: THREE.DoubleSide,
   });
 }

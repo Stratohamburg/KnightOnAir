@@ -13,6 +13,7 @@ export class VirtualStick {
   private base?: HTMLElement;
   private label?: HTMLElement;
   private energyAvailable = true;
+  private boostLocked = false;
   private bombing = false;
   private abort?: AbortController;
   attach(surface: HTMLElement) {
@@ -23,7 +24,7 @@ export class VirtualStick {
     this.base = surface.querySelector<HTMLElement>(".stick-base") ?? surface;
     this.label =
       surface.querySelector<HTMLElement>(".stick-label") ?? undefined;
-    this.feedback(0, 0, 0);
+    this.feedback(0, 0, 0, 0);
     const signal = this.abort.signal;
     surface.addEventListener(
       "pointerdown",
@@ -65,9 +66,10 @@ export class VirtualStick {
     if (down) this.keys.add(code);
     else this.keys.delete(code);
   }
-  setFlightState(energyAvailable: boolean, bombing: boolean) {
+  setFlightState(energyAvailable: boolean, bombing: boolean, boostLocked = false) {
     this.energyAvailable = energyAvailable;
     this.bombing = bombing;
+    this.boostLocked = boostLocked;
   }
   private radius() {
     const rect = this.base!.getBoundingClientRect();
@@ -96,31 +98,46 @@ export class VirtualStick {
     this.smoothX = damp(this.smoothX, x, 24, dt);
     this.smoothZ = damp(this.smoothZ, z, 24, dt);
     const rawLength = Math.hypot(x, z),
-      length = Math.hypot(this.smoothX, this.smoothZ);
+      length = Math.hypot(this.smoothX, this.smoothZ),
+      isKeyboard = Boolean(kx || kz),
+      travel = isKeyboard ? 1 : clamp((length - 0.12) / 0.88) ** 0.85,
+      magnitude = rawLength > 0.12 ? travel : 0,
+      boost = !this.bombing && !this.boostLocked && this.energyAvailable
+        ? isKeyboard && this.keys.has("ShiftLeft") || isKeyboard && this.keys.has("ShiftRight")
+          ? 1
+          : travel >= 0.84
+            ? clamp((travel - 0.84) / 0.16)
+            : 0
+        : 0;
     const active = rawLength > 0.12;
-    const magnitude = active ? clamp((length - 0.12) / 0.88) ** 0.85 : 0;
-    this.feedback(magnitude, x, z);
+    this.feedback(magnitude, boost, x, z, travel);
     return {
       // The fixed camera looks toward +Z, so screen right is world -X.
       x: -this.smoothX / (length || 1),
       z: this.smoothZ / (length || 1),
       active,
       magnitude,
+      boost,
+      travel,
     };
   }
-  private feedback(magnitude: number, x: number, z: number) {
+  private feedback(magnitude: number, boost: number, x: number, z: number, travel = 0) {
     if (!this.surface || !this.knob) return;
-    const throttle = this.energyAvailable
-      ? magnitude * (this.bombing ? 0.45 : 1)
-      : 0;
+    const throttle = this.energyAvailable ? magnitude * (this.bombing ? 0.45 : 1) : 0;
     const percent = Math.round(throttle * 100);
     const mode =
-      magnitude > 0 && !this.energyAvailable
-        ? "depleted"
+      this.boostLocked
+        ? "locked"
+        : !this.energyAvailable && !this.bombing
+          ? "depleted"
         : magnitude === 0
           ? "cruise"
           : this.bombing
             ? "trim"
+            : boost > 0
+              ? "boost"
+              : travel >= 0.74
+                ? "full"
             : percent === 100
               ? "full"
               : "accelerating";
@@ -128,14 +145,16 @@ export class VirtualStick {
     this.surface.style.setProperty("--throttle", String(percent));
     this.surface.setAttribute("aria-valuenow", String(percent));
     const message =
-      mode === "depleted"
-        ? "能量不足 · 松杆恢复"
+      mode === "locked" || mode === "depleted"
+        ? "能量不足 · 加力耗尽 · 回充中"
         : mode === "cruise"
           ? "巡航 · 油门 0%"
           : mode === "trim"
             ? `轰炸微调 · 油门 ${percent}%`
-            : mode === "full"
-              ? "满油门 · 加速 100%"
+          : mode === "boost"
+              ? `加力 ${Math.round(boost * 100)}% · 极速 +${Math.round(boost * 55)}%`
+              : mode === "full"
+                ? "满油门 · 再拉进入加力"
               : `加速 · 油门 ${percent}%`;
     this.surface.setAttribute("aria-valuetext", message);
     if (this.label && this.label.textContent !== message)
@@ -150,7 +169,7 @@ export class VirtualStick {
     this.pointer = null;
     this.rawX = 0;
     this.rawZ = 0;
-    this.feedback(0, 0, 0);
+    this.feedback(0, 0, 0, 0);
     this.surface?.classList.remove("active");
     if (this.knob) this.knob.style.transform = "";
   }
@@ -159,5 +178,8 @@ export class VirtualStick {
     this.keys.clear();
     this.smoothX = 0;
     this.smoothZ = 0;
+    this.energyAvailable = true;
+    this.boostLocked = false;
+    this.feedback(0, 0, 0, 0);
   }
 }

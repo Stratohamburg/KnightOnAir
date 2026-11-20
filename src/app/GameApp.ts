@@ -1,6 +1,6 @@
 import { AIRFRAMES, airframeById, type Airframe } from "../data/aircrafts";
 import { QUALITIES, type Quality } from "../data/config";
-import { ENEMIES } from "../data/enemies";
+import { combatantById } from "../data/combatants";
 import type { Upgrade } from "../data/upgrades";
 import type { Stats } from "../simulation/types";
 import { WEAPONS } from "../data/weapons";
@@ -10,7 +10,9 @@ import { SaveStore } from "../services/Save";
 import { GameAudio } from "../services/Audio";
 import { VirtualStick } from "../input/VirtualStick";
 import { clamp } from "../services/Random";
+import { actorAltitude, surfaceHeight } from "../simulation/Terrain";
 import { icon, planePreview } from "../ui/icons";
+import { CombatHud } from "../ui/CombatHud";
 
 type Tab = "sortie" | "equipment" | "shop" | "reservedA" | "reservedB";
 type Modal = "" | "settings" | "help" | "pause" | "upgrade";
@@ -57,6 +59,7 @@ export class GameApp {
   private finished = false;
   private previousFocus?: HTMLElement;
   private keyboardUsed = false;
+  private combatHud?: CombatHud;
 
   constructor(private root: HTMLElement) {
     this.displayWorld = new World(airframeById(this.save.data.equipped), 1);
@@ -244,17 +247,19 @@ export class GameApp {
     this.lastScore = 0;
     this.lastHealth = this.world.player.health;
     this.lastLock = 0;
-    this.ui.innerHTML = `<header class="battle-top"><div class="health-block"><div class="hud-title">${icon("shield")}<span>机体 <b id="health-text"></b></span></div><div class="hud-meter health-meter"><i id="health-fill"></i></div><div class="hud-title energy-title">${icon("bolt")}<span>能量 <b id="energy-text"></b></span></div><div class="hud-meter energy-meter"><i id="energy-fill"></i></div></div><div class="battle-clock"><span class="eyebrow">翡翠海岸</span><b id="battle-time">00:00</b><small id="battle-score">0 PTS</small></div><button class="icon-button pause-button" data-action="pause" aria-label="暂停游戏">${icon("pause")}</button></header>
+    this.ui.innerHTML = `<header class="battle-top"><div class="health-block"><div class="hud-title">${icon("shield")}<span>机体 <b id="health-text"></b></span></div><div class="hud-meter health-meter"><i id="health-fill"></i></div><div class="hud-title energy-title">${icon("bolt")}<span>加力储备 <b id="energy-text"></b></span></div><div class="hud-meter energy-meter"><i id="energy-fill"></i></div></div><div class="battle-clock"><span class="eyebrow">翡翠海岸</span><b id="battle-time">00:00</b><small id="battle-score">0 PTS</small></div><button class="icon-button pause-button" data-action="pause" aria-label="暂停游戏">${icon("pause")}</button></header>
       <div class="xp-bar"><i id="xp-fill"></i><span id="level-label">LV.01</span></div>
       <div class="battle-announcement" id="battle-notice" role="status" aria-live="polite"></div>
       <div class="battle-status"><span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span></div>
       <div class="control-deck"><div class="deck-top"><button class="upgrade-button" data-action="upgrade" id="upgrade-button" disabled>${icon("wrench")}<span>改装升级</span><b id="upgrade-count">0</b></button><button class="mode-button" data-action="bomb-mode" id="mode-button" aria-pressed="false">${icon("target")}<span>轰炸模式</span><i></i></button></div>
-      <div class="deck-main"><div class="control-readout"><span id="flight-mode">空战巡航</span><strong id="speed-label">0.0<small>m/s</small></strong><span id="energy-state">能量充足</span></div>
-      <div class="stick-surface" role="slider" aria-label="飞行摇杆，方向控制航向，推至外圈满油门加速" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="stick-base"><span class="stick-scale-label">外圈 · 满油门</span><span class="stick-throttle"></span><span class="stick-half"></span><span class="stick-cross"></span><span class="stick-knob">${icon("plane")}</span></div><span class="stick-label">巡航 · 油门 0%</span></div>
+      <div class="deck-main"><div class="control-readout"><span id="flight-mode">空战巡航</span><strong id="speed-label">0.0<small>m/s</small></strong><span id="energy-state">加力就绪</span></div>
+      <div class="stick-surface" role="slider" aria-label="飞行摇杆，方向控制航向，内圈普通油门，外圈加力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="stick-base"><span class="stick-scale-label">外圈 · 加力</span><span class="stick-throttle"></span><span class="stick-half"></span><span class="stick-cross"></span><span class="stick-knob">${icon("plane")}</span></div><span class="stick-label">巡航 · 油门 0%</span></div>
       <button class="bomb-button" data-action="bomb" id="bomb-button" aria-label="投弹" disabled><span class="bomb-progress"></span>${icon("bomb")}<strong id="bomb-label">待命</strong><small id="bomb-state">先开启轰炸</small></button></div>
       <div class="deck-footer"><span>KNIGHT ON AIR <i>第一关</i></span><button data-action="help" aria-label="飞行操作帮助">${icon("help")}</button><span id="quality-readout"></span></div></div>`;
     this.stick.attach(this.ui.querySelector(".stick-surface")!);
     this.stick.enabled = true;
+    this.combatHud?.dispose();
+    this.combatHud = new CombatHud(this.sceneHost);
     this.hudTimer = 1;
     this.modal = "";
     this.overlays.innerHTML = "";
@@ -262,7 +267,7 @@ export class GameApp {
   private updateHud() {
     const w = this.world!;
     const p = w.player;
-    this.stick.setFlightState(p.energy > 0, w.isBombing);
+    this.stick.setFlightState(p.energy > 0, w.isBombing, p.boostLocked);
     const text = (id: string, value: string) => {
       const el = this.ui.querySelector<HTMLElement>(`#${id}`);
       if (el && el.textContent !== value) el.textContent = value;
@@ -271,8 +276,9 @@ export class GameApp {
       const el = this.ui.querySelector<HTMLElement>(`#${id}`);
       if (el) el.style.width = `${clamp(value) * 100}%`;
     };
-    text("health-text", `${Math.ceil(p.health)} / ${p.stats.health}`);
-    fill("health-fill", p.health / p.stats.health);
+    const maxHealth = w.playerMaxHealth;
+    text("health-text", `${Math.ceil(p.health)} / ${maxHealth}`);
+    fill("health-fill", p.health / maxHealth);
     text("energy-text", `${Math.round((p.energy / p.stats.energyMax) * 100)}%`);
     fill("energy-fill", p.energy / p.stats.energyMax);
     text("battle-time", timeLabel(w.elapsed));
@@ -297,11 +303,13 @@ export class GameApp {
     speed.innerHTML = `${p.speed.toFixed(1)}<small>m/s</small>`;
     text(
       "energy-state",
-      p.energy < 8
-        ? "能量不足 · 松杆恢复"
-        : p.energy < p.stats.energyMax * 0.4
-          ? "建议松杆恢复"
-          : "能量充足",
+      p.boostLocked
+        ? "加力耗尽 · 回充中"
+        : p.boosting
+          ? `加力中 · 储备 ${Math.round((p.energy / p.stats.energyMax) * 100)}%`
+          : p.energy < p.stats.energyMax * 0.4
+            ? "加力储备偏低"
+            : "加力就绪",
     );
     const bomb = this.ui.querySelector<HTMLButtonElement>("#bomb-button")!;
     bomb.disabled = !w.canBomb;
@@ -341,8 +349,8 @@ export class GameApp {
     const notice = this.ui.querySelector<HTMLElement>("#battle-notice")!;
     notice.textContent = w.notice;
     notice.classList.toggle("visible", w.noticeTime > 0);
-    this.root.classList.toggle("low-health", p.health / p.stats.health < 0.3);
-    this.root.classList.toggle("low-energy", p.energy < 8);
+    this.root.classList.toggle("low-health", p.health / maxHealth < 0.3);
+    this.root.classList.toggle("low-energy", p.boostLocked || p.energy < 8);
     if (p.health < this.lastHealth) this.audio.play("hit");
     this.lastHealth = p.health;
     if (w.score > this.lastScore && p.health >= this.lastHealth)
@@ -357,9 +365,11 @@ export class GameApp {
     if (!r) return;
     let html = "";
     for (const e of w.enemies.slice(0, 30)) {
-      const pos = r.project(e.x, e.layer === "air" ? 5 : 2, e.z);
+      const enemyY = e.layer === "air" ? actorAltitude(e.x, e.z, 20, 491) : surfaceHeight(e.x, e.z, 491) + 1;
+      const pos = r.project(e.x, enemyY, e.z);
       if (!pos.visible) continue;
-      html += `<div class="enemy-label ${e.layer}" style="left:${pos.x}px;top:${pos.y}px"><span>${e.kind === "elite" ? "◆ " : ""}${ENEMIES[e.kind].name}</span><div><i style="width:${Math.max(0, (e.health / e.maxHealth) * 100)}%"></i></div>${e.warning > 0 ? "<b>攻击预警</b>" : ""}</div>`;
+      const cloudOccluded = r.isCloudOccluded(e.x, enemyY, e.z);
+      html += `<div class="enemy-label ${e.layer}${cloudOccluded ? " cloud-occluded" : ""}" style="left:${pos.x}px;top:${pos.y}px;opacity:${cloudOccluded ? 0.16 : 1}"><span>${e.kind === "elite" ? "◆ " : ""}${combatantById(e.configId ?? e.kind)?.name ?? e.kind}</span><div><i style="width:${Math.max(0, (e.health / e.maxHealth) * 100)}%"></i></div></div>`;
     }
     const lock = w.mainLock,
       target = w.enemies.find((e) => e.id === lock?.targetId);
@@ -373,15 +383,6 @@ export class GameApp {
       if (pos.visible)
         html += `<div class="aim-label ${w.canBomb ? "ready" : ""}" style="left:${pos.x}px;top:${pos.y + 35}px">${w.canBomb ? "准许投弹" : `稳定 ${Math.round(w.stability * 100)}%`}</div>`;
     }
-    // A fixed viewport warning makes approaching offscreen threats readable.
-    const edgeThreat = w.enemies.find(
-      (e) =>
-        e.layer === "air" &&
-        !r.project(e.x, 4, e.z).visible &&
-        Math.hypot(e.x - w.player.x, e.z - w.player.z) < 35,
-    );
-    if (edgeThreat)
-      html += `<div class="edge-warning">${edgeThreat.x < w.player.x ? "‹" : "›"} 空中目标接近</div>`;
     this.labels.innerHTML = html;
   }
   private showResult() {
@@ -395,6 +396,8 @@ export class GameApp {
     this.stick.reset();
     this.modal = "";
     this.labels.innerHTML = "";
+    this.combatHud?.dispose();
+    this.combatHud = undefined;
     this.ui.removeAttribute("inert");
     this.root.classList.remove("in-battle", "low-health", "low-energy");
     this.root.classList.add("result-active");
@@ -411,13 +414,11 @@ export class GameApp {
   }
   private upgradeComparison(u: Upgrade) {
     const p = this.world!.player;
-    if (u.repair)
-      return `生命 ${Math.ceil(p.health)} → ${Math.min(p.stats.health, Math.ceil(p.health + p.stats.health * 0.4))}`;
     const names: Partial<Record<keyof Stats, string>> = {
       maxSpeed: "极速",
       acceleration: "加速",
       turnRate: "转向",
-      energyMax: "能量",
+      energyMax: "加力储备",
       health: "生命",
       wingspan: "翼展",
       length: "机长",
@@ -676,6 +677,8 @@ export class GameApp {
       "KeyD",
       "ArrowUp",
       "ArrowDown",
+      "ShiftLeft",
+      "ShiftRight",
       "ArrowLeft",
       "ArrowRight",
     ];
@@ -731,7 +734,17 @@ export class GameApp {
       }
       if (this.screen === "battle" && this.world) {
         this.world.frame(dt, this.stick.read(dt));
+        const events = this.world.consumeEvents();
+        this.combatHud?.consume(events);
+        for (const event of events) {
+          if (event.type === "enemy_destroyed") this.audio.play("kill");
+          else if (event.type === "enemy_fire" || event.type === "ground_attack" || event.type === "missile_lock_warning") this.audio.play("alert");
+          else if (event.type === "part_disabled") this.audio.play("part");
+          else if (event.type === "player_hit") this.audio.play("hit");
+          else if (event.type === "pickup" && event.kind !== "coin") this.audio.play("heal");
+        }
         this.renderer?.render(this.world, dt, { display: false });
+        this.combatHud?.update(this.world, this.renderer, dt);
         this.hudTimer += dt;
         if (this.hudTimer > 0.09) {
           this.updateHud();

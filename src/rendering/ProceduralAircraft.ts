@@ -118,7 +118,7 @@ export class ProceduralAircraft {
       const mat = aircraftMaterial(f.color);
       this.materials.set(part.id, mat);
       const side = part.slot === "leftWing" ? -1 : 1;
-      if (part.id === "core") {
+      if (part.role === "body" || part.kind === "body") {
         this.mesh(
           fuselageGeometry(s.length, f.engines === 4 ? 0.75 : 0.48),
           mat,

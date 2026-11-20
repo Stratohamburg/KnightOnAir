@@ -2,7 +2,7 @@ import { AIRFRAMES, airframeById } from "../data/aircrafts";
 import type { Quality } from "../data/config";
 import type { World } from "../simulation/World";
 export interface SaveData {
-  version: 1;
+  version: 2;
   equipped: string;
   unlocked: string[];
   bestScore: number;
@@ -15,7 +15,7 @@ export interface SaveData {
   vibration: boolean;
 }
 const defaults = (): SaveData => ({
-  version: 1,
+  version: 2,
   equipped: AIRFRAMES[0].id,
   unlocked: [AIRFRAMES[0].id],
   bestScore: 0,
@@ -38,10 +38,10 @@ export class SaveStore {
       this.storage ??=
         typeof localStorage === "undefined" ? undefined : localStorage;
       if (!this.storage) this.available = false;
-      const raw = this.storage?.getItem("knight-on-air.v1");
+      const raw = this.storage?.getItem("knight-on-air.v2");
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (!saved || saved.version !== 1) return;
+      if (!saved || saved.version !== 2) return;
       const base = defaults();
       for (const key of [
         "bestScore",
@@ -73,7 +73,7 @@ export class SaveStore {
   }
   persist() {
     try {
-      this.storage?.setItem("knight-on-air.v1", JSON.stringify(this.data));
+      this.storage?.setItem("knight-on-air.v2", JSON.stringify(this.data));
     } catch {
       this.available = false;
     }

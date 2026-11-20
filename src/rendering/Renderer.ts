@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { RULES, QUALITIES, type Quality } from "../data/config";
-import { ENEMIES } from "../data/enemies";
+import { combatantById } from "../data/combatants";
 import { Random, clamp, damp, RAD } from "../services/Random";
 import { World } from "../simulation/World";
+import { actorAltitude, sampleTerrain, surfaceHeight } from "../simulation/Terrain";
 import type { Player, Enemy } from "../simulation/types";
 import {
   ProceduralAircraft,
@@ -12,33 +13,32 @@ import {
 import {
   aircraftMaterial,
   terrainMaterial,
-  cloudMaterial,
   crosshairMaterial,
   effectMaterial,
   projectileMaterial,
 } from "./ShaderMaterials";
+import { TerrainChunks } from "./TerrainChunks";
+import { CloudField } from "./CloudField";
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
+  readonly overlayScene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly canvas: HTMLCanvasElement;
   private aircraft?: ProceduralAircraft;
-  private terrain: THREE.Mesh[] = [];
-  private clouds: THREE.Mesh[] = [];
-  private cloudMat = cloudMaterial();
+  private terrainChunks: TerrainChunks;
+  private cloudField: CloudField;
   private terrainMat = terrainMaterial();
   private enemies = new Map<number, THREE.Group>();
   private bulletMeshes: THREE.Mesh[] = [];
   private pickups: THREE.InstancedMesh;
-  private repairs: THREE.InstancedMesh;
   private effects: THREE.Mesh[] = [];
   private bombs: THREE.Mesh[] = [];
   private bombPath: THREE.Line;
   private crosshair: THREE.Mesh;
   private lockFan: THREE.Mesh;
   private targetRing: THREE.Mesh;
-  private warningLines: THREE.Line[] = [];
   private groundMarkers: THREE.Mesh[] = [];
   private shadows: THREE.Mesh[] = [];
   private smoke: THREE.Mesh[] = [];
@@ -50,6 +50,7 @@ export class Renderer {
   private anchor = new THREE.Vector3();
   private time = 0;
   private crashTime = 0;
+  private cameraBombing = 0;
   private fpsTime = 0;
   private fpsFrames = 0;
   private slowFrames = 0;
@@ -85,30 +86,13 @@ export class Renderer {
     const sun = new THREE.DirectionalLight("#fff1ca", 3);
     sun.position.set(-15, 28, -8);
     this.scene.add(sun);
-    this.scene.fog = new THREE.Fog("#a8b7a5", 40, 115);
-    const groundGeometry = new THREE.PlaneGeometry(64, 64, 22, 22);
-    groundGeometry.rotateX(-Math.PI / 2);
-    for (let i = 0; i < 9; i++) {
-      const mesh = new THREE.Mesh(groundGeometry, this.terrainMat);
-      mesh.frustumCulled = false;
-      this.terrain.push(mesh);
-      this.scene.add(mesh);
-    }
-    const cloudGeometry = new THREE.PlaneGeometry(23, 16);
-    cloudGeometry.rotateX(-Math.PI / 2);
-    const random = new Random(491);
-    for (let i = 0; i < 14; i++) {
-      const cloud = new THREE.Mesh(cloudGeometry, this.cloudMat);
-      cloud.position.set(
-        random.range(-55, 55),
-        random.range(6, 11),
-        random.range(-55, 55),
-      );
-      cloud.rotation.y = random.range(0, 6.28);
-      cloud.userData = { offsetX: cloud.position.x, offsetZ: cloud.position.z };
-      this.clouds.push(cloud);
-      this.scene.add(cloud);
-    }
+    this.overlayScene.add(new THREE.HemisphereLight("#fff6e5", "#526b61", 2.2));
+    this.overlayScene.add(new THREE.DirectionalLight("#fff1ca", 2.4));
+    this.scene.fog = new THREE.Fog("#cfefff", 70, 240);
+    this.overlayScene.fog = this.scene.fog;
+    this.renderer.autoClear = false;
+    this.terrainChunks = new TerrainChunks(this.scene, this.terrainMat, 491);
+    this.cloudField = new CloudField(this.scene, 491);
     const playerBullet = projectileMaterial("#ffe5a1"),
       enemyBullet = projectileMaterial("#f98769"),
       missileMat = projectileMaterial("#c6f4d4");
@@ -135,16 +119,9 @@ export class Renderer {
       }),
       RULES.maxPickups,
     );
-    this.repairs = new THREE.InstancedMesh(
-      new THREE.OctahedronGeometry(0.35),
-      new THREE.MeshBasicMaterial({ color: "#adf2c4" }),
-      RULES.maxPickups,
-    );
     this.pickups.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.repairs.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.pickups.frustumCulled = false;
-    this.repairs.frustumCulled = false;
-    this.scene.add(this.pickups, this.repairs);
+    this.scene.add(this.pickups);
     for (let i = 0; i < RULES.maxEffects; i++) {
       const mesh = new THREE.Mesh(
         new THREE.PlaneGeometry(1, 1),
@@ -159,7 +136,7 @@ export class Renderer {
     this.crosshair.rotation.x = -Math.PI / 2;
     this.crosshair.visible = false;
     this.crosshair.renderOrder = 5;
-    this.scene.add(this.crosshair);
+    this.overlayScene.add(this.crosshair);
     const fanGeometry = new THREE.BufferGeometry();
     fanGeometry.setAttribute(
       "position",
@@ -179,7 +156,7 @@ export class Renderer {
     );
     this.lockFan.frustumCulled = false;
     this.lockFan.renderOrder = 4;
-    this.scene.add(this.lockFan);
+    this.overlayScene.add(this.lockFan);
     this.targetRing = new THREE.Mesh(
       new THREE.RingGeometry(0.8, 0.86, 32),
       new THREE.MeshBasicMaterial({
@@ -192,7 +169,7 @@ export class Renderer {
     );
     this.targetRing.rotation.x = -Math.PI / 2;
     this.targetRing.renderOrder = 6;
-    this.scene.add(this.targetRing);
+    this.overlayScene.add(this.targetRing);
     const lineMat = new THREE.LineDashedMaterial({
       color: "#f4d89c",
       dashSize: 0.3,
@@ -210,7 +187,7 @@ export class Renderer {
     this.bombPath = new THREE.Line(pathGeometry, lineMat);
     this.bombPath.frustumCulled = false;
     this.bombPath.visible = false;
-    this.scene.add(this.bombPath);
+    this.overlayScene.add(this.bombPath);
     for (let i = 0; i < 8; i++) {
       const bomb = new THREE.Mesh(
         new THREE.SphereGeometry(0.18, 6, 4),
@@ -219,28 +196,9 @@ export class Renderer {
       bomb.scale.set(1, 1.8, 1);
       bomb.visible = false;
       this.bombs.push(bomb);
-      this.scene.add(bomb);
+      this.overlayScene.add(bomb);
     }
-    for (let i = 0; i < RULES.maxEnemies + RULES.maxGround; i++) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(new Float32Array(6), 3).setUsage(
-          THREE.DynamicDrawUsage,
-        ),
-      );
-      const line = new THREE.Line(
-        geometry,
-        new THREE.LineBasicMaterial({
-          color: "#f5a180",
-          transparent: true,
-          opacity: 0.65,
-        }),
-      );
-      line.frustumCulled = false;
-      line.visible = false;
-      this.warningLines.push(line);
-      this.scene.add(line);
+    for (let i = 0; i < RULES.maxTotal; i++) {
       const marker = new THREE.Mesh(
         new THREE.RingGeometry(1.2, 1.25, 24),
         new THREE.MeshBasicMaterial({
@@ -271,7 +229,7 @@ export class Renderer {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
       mesh.visible = false;
       this.smoke.push(mesh);
-      this.scene.add(mesh);
+      this.overlayScene.add(mesh);
     }
     for (let i = 0; i < 8; i++) {
       const mat = effectMaterial();
@@ -300,7 +258,7 @@ export class Renderer {
     if (this.aircraft?.player === p) return;
     this.crashTime = 0;
     if (this.aircraft) {
-      this.scene.remove(this.aircraft.group);
+      this.overlayScene.remove(this.aircraft.group);
       this.aircraft.dispose();
     }
     for (const mesh of this.enemies.values()) {
@@ -311,7 +269,7 @@ export class Renderer {
     }
     this.enemies.clear();
     this.aircraft = new ProceduralAircraft(p);
-    this.scene.add(this.aircraft.group);
+    this.overlayScene.add(this.aircraft.group);
     this.anchor.set(p.x, 0, p.z);
     this.viewTarget.copy(this.anchor);
   }
@@ -338,10 +296,11 @@ export class Renderer {
   }
   private createEnemy(e: Enemy) {
     const root = new THREE.Group(),
-      config = ENEMIES[e.kind];
+      config = combatantById(e.configId ?? e.kind);
+    if (!config) return root;
     let material = this.materialCache.get(e.kind);
     if (!material) {
-      material = aircraftMaterial(config.color);
+      material = aircraftMaterial(config.visual.color);
       this.materialCache.set(e.kind, material);
     }
     const dark =
@@ -403,7 +362,7 @@ export class Renderer {
         0,
         0.3,
       );
-      if (e.kind === "aa" || e.kind === "emplacement") {
+      if (e.kind === "aa_truck") {
         add(new THREE.CylinderGeometry(0.4, 0.6, 0.3, 8), dark, 0, 0.7);
         const barrel = add(
           new THREE.BoxGeometry(0.16, 0.16, 1.5),
@@ -437,7 +396,7 @@ export class Renderer {
         );
       }
     }
-    root.scale.setScalar(e.layer === "air" ? config.scale : 1);
+    root.scale.setScalar(e.layer === "air" ? config.visual.scale : 1);
     this.scene.add(root);
     this.enemies.set(e.id, root);
     return root;
@@ -447,24 +406,22 @@ export class Renderer {
       cz = Math.round(z / 64) * 64;
     if (cx === this.groundOrigin.x && cz === this.groundOrigin.z) return;
     this.groundOrigin = { x: cx, z: cz };
-    this.terrain.forEach((mesh, i) =>
-      mesh.position.set(
-        cx + ((i % 3) - 1) * 64,
-        0,
-        cz + (Math.floor(i / 3) - 1) * 64,
-      ),
-    );
+    this.terrainChunks.update(x, z);
     const random = new Random(89 + cx * 13 + cz * 11);
     for (let i = 0; i < 210; i++) {
       const cluster = Math.floor(i / 14),
         bx = Math.sin(cluster * 12.7) * 70 + cx,
         bz = Math.cos(cluster * 6.5) * 70 + cz;
+      const treeX = bx + random.range(-5, 5);
+      const treeZ = bz + random.range(-5, 5);
+      const terrain = sampleTerrain(treeX, treeZ, 491);
       this.dummy.position.set(
-        bx + random.range(-5, 5),
-        0.1,
-        bz + random.range(-5, 5),
+        treeX,
+        terrain.height + 1.2,
+        treeZ,
       );
-      this.dummy.scale.setScalar(random.range(0.65, 1.3));
+      const blocked = terrain.surface === "water" || terrain.roadMask > 0.3 || Math.abs(terrain.slopeX) + Math.abs(terrain.slopeZ) > 0.85;
+      this.dummy.scale.setScalar(blocked ? 0.001 : random.range(0.65, 1.3));
       this.dummy.rotation.set(0, random.range(0, 6.28), 0);
       this.dummy.updateMatrix();
       this.forest.setMatrixAt(i, this.dummy.matrix);
@@ -493,23 +450,37 @@ export class Renderer {
     }
     this.anchor.x = damp(this.anchor.x, x + (display ? 0 : p.vx * 0.09), 7, dt);
     this.anchor.z = damp(this.anchor.z, z + (display ? 0 : p.vz * 0.09), 7, dt);
+    this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
     const displayDistance = 26 * Math.max(1, p.stats.wingspan / 7.8);
-    const dist = display ? displayDistance - launch * 3 : RULES.camera.distance;
-    const pitch = RULES.camera.pitch * RAD;
+    const dist = display
+      ? displayDistance - launch * 3
+      : RULES.camera.distance + this.cameraBombing * 4;
+    const pitch = (RULES.camera.pitch + this.cameraBombing * 10) * RAD;
+    const fov = RULES.camera.fov - this.cameraBombing * 14;
+    if (Math.abs(this.camera.fov - fov) > 0.01) {
+      this.camera.fov = fov;
+      this.camera.updateProjectionMatrix();
+    }
     const aspectZoom = this.camera.aspect < 0.55 ? 1.12 : 1;
+    const groundY = surfaceHeight(this.anchor.x, this.anchor.z);
     this.camera.position.set(
       this.anchor.x,
-      3 + Math.sin(pitch) * dist * aspectZoom,
+      groundY + 10 + Math.sin(pitch) * dist * aspectZoom,
       this.anchor.z - Math.cos(pitch) * dist * aspectZoom,
     );
+    const aimX = world?.aim.x ?? this.anchor.x;
+    const aimZ = world?.aim.z ?? this.anchor.z + 1.5;
     this.viewTarget.set(
-      this.anchor.x,
+      display ? this.anchor.x : this.anchor.x * (1 - this.cameraBombing * 0.55) + aimX * this.cameraBombing * 0.55,
       display ? 0 : 2,
-      this.anchor.z + (display ? -2 - (displayDistance - 26) * 0.17 : 1.5),
+      display
+        ? this.anchor.z - 2 - (displayDistance - 26) * 0.17
+        : this.anchor.z * (1 - this.cameraBombing * 0.55) + aimZ * this.cameraBombing * 0.55,
     );
     this.camera.lookAt(this.viewTarget);
     this.aircraft.update(this.time, sceneDt, options.highlight, display);
     this.aircraft.group.position.x = x;
+    this.aircraft.group.position.y = actorAltitude(x, z, 20);
     this.aircraft.group.position.z = z;
     if (display) {
       this.aircraft.group.rotation.z = Math.sin(this.time * 0.8) * 0.045;
@@ -521,31 +492,24 @@ export class Renderer {
       this.aircraft.group.rotation.z += this.crashTime * 0.9;
     }
     this.updateTerrain(x, z);
-    this.cloudMat.uniforms.time.value = this.time;
     this.terrainMat.uniforms.time.value = this.time;
-    this.clouds.forEach((cloud, i) => {
-      cloud.visible = i < QUALITIES[this.quality].clouds;
-      cloud.position.x =
-        x +
-        ((((cloud.userData.offsetX + this.time * 0.23 - x) % 100) + 150) %
-          100) -
-        50;
-      cloud.position.z =
-        z +
-        ((((cloud.userData.offsetZ + this.time * 0.3 - z) % 100) + 150) % 100) -
-        50;
-    });
+    this.terrainChunks.updateTime(this.time);
+    this.cloudField.setQuality(QUALITIES[this.quality].clouds);
+    this.cloudField.update(this.time, x, z);
     this.shadows.forEach((s) => (s.visible = false));
     if (QUALITIES[this.quality].shadows) {
       const shadow = this.shadows[0];
       shadow.visible = true;
-      shadow.position.set(x + 1.4, 0.05, z + 0.5);
+      shadow.position.set(x + 1.4, surfaceHeight(x, z, 491) + 0.05, z + 0.5);
       shadow.scale.set(p.stats.wingspan * 1.25, p.stats.length * 1.2, 1);
     }
     if (world && !display) this.updateBattle(world);
     else this.hideBattle();
     this.updateSmoke(p, x, z, world?.wind.gust ?? 0);
+    this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
+    this.renderer.clearDepth();
+    this.renderer.render(this.overlayScene, this.camera);
     this.fpsTime += dt;
     this.fpsFrames++;
     if (this.fpsTime >= 1) {
@@ -579,8 +543,7 @@ export class Renderer {
   }
   private updateBattle(world: World) {
     const p = world.player;
-    let wi = 0,
-      gi = 0,
+    let gi = 0,
       si = 1;
     const living = new Set(world.enemies.map((e) => e.id));
     for (const [id, mesh] of this.enemies)
@@ -594,36 +557,31 @@ export class Renderer {
     for (const e of world.enemies) {
       const mesh = this.enemies.get(e.id) ?? this.createEnemy(e);
       mesh.visible = true;
-      mesh.position.set(e.x, e.layer === "air" ? 4 : -0.1, e.z);
+      mesh.position.set(
+        e.x,
+        e.layer === "air" ? actorAltitude(e.x, e.z, 20) : surfaceHeight(e.x, e.z) + 0.2,
+        e.z,
+      );
       mesh.rotation.set(0, e.heading, e.bank);
-      if (e.layer === "ground") {
+      if (e.layer !== "air") {
         const marker = this.groundMarkers[gi++];
-        marker.visible = world.isBombing || e.warning > 0;
-        marker.position.set(e.x, 0.12, e.z);
+        marker.visible = world.isBombing;
+        marker.position.set(e.x, surfaceHeight(e.x, e.z, 491) + 0.12, e.z);
         marker.scale.setScalar(e.radius * 1.25);
-      }
-      if (e.warning > 0) {
-        const line = this.warningLines[wi++];
-        const y = e.layer === "air" ? 4 : 0.8;
-        const attr = line.geometry.getAttribute("position");
-        attr.setXYZ(0, e.x, y, e.z);
-        attr.setXYZ(1, e.aimX, 4, e.aimZ);
-        attr.needsUpdate = true;
-        line.visible = true;
       }
       if (e.layer === "air" && QUALITIES[this.quality].shadows && si < 40) {
         const shadow = this.shadows[si++];
         shadow.visible = true;
-        shadow.position.set(e.x + 1.4, 0.05, e.z + 0.5);
+        shadow.position.set(e.x + 1.4, surfaceHeight(e.x, e.z, 491) + 0.05, e.z + 0.5);
         shadow.scale.set(e.radius * 4, e.radius * 3, 1);
       }
     }
-    for (let i = wi; i < this.warningLines.length; i++)
-      this.warningLines[i].visible = false;
     for (let i = gi; i < this.groundMarkers.length; i++)
       this.groundMarkers[i].visible = false;
     world.projectiles.items.forEach((v, i) => {
       const mesh = this.bulletMeshes[i];
+      const targetScene = v.team === "player" ? this.overlayScene : this.scene;
+      if (mesh.parent !== targetScene) targetScene.add(mesh);
       mesh.visible = v.active;
       if (!v.active) return;
       mesh.position.set(v.x, v.y, v.z);
@@ -637,27 +595,21 @@ export class Renderer {
             : "playerBullet",
       )!;
     });
-    let ci = 0,
-      ri = 0;
+    let ci = 0;
     for (const item of world.pickups.items) {
       if (!item.active) continue;
       this.dummy.position.set(
         item.x,
-        4 + Math.sin(this.time * 3 + item.x) * 0.12,
+        surfaceHeight(item.x, item.z, 491) + 1.5 + Math.sin(this.time * 3 + item.x) * 0.12,
         item.z,
       );
       this.dummy.rotation.set(0, this.time * 2, 0);
-      this.dummy.scale.setScalar(item.value > 2 ? 1.4 : 1);
+      this.dummy.scale.setScalar(item.kind === "repairLarge" ? 1.35 : item.kind === "repairSmall" ? 1.05 : 1);
       this.dummy.updateMatrix();
-      (item.repair ? this.repairs : this.pickups).setMatrixAt(
-        item.repair ? ri++ : ci++,
-        this.dummy.matrix,
-      );
+      this.pickups.setMatrixAt(ci++, this.dummy.matrix);
     }
     this.pickups.count = ci;
-    this.repairs.count = ri;
     this.pickups.instanceMatrix.needsUpdate = true;
-    this.repairs.instanceMatrix.needsUpdate = true;
     world.effects.items.forEach((e, i) => {
       const mesh = this.effects[i];
       mesh.visible = e.active && i < QUALITIES[this.quality].particles;
@@ -680,7 +632,7 @@ export class Renderer {
     });
     const aimMat = this.crosshair.material as THREE.ShaderMaterial;
     this.crosshair.visible = world.isBombing;
-    this.crosshair.position.set(world.aim.x, 0.3, world.aim.z);
+    this.crosshair.position.set(world.aim.x, surfaceHeight(world.aim.x, world.aim.z, 491) + 0.3, world.aim.z);
     aimMat.uniforms.progress.value = world.stability;
     aimMat.uniforms.ready.value = world.canBomb ? 1 : 0;
     const lock = world.mainLock;
@@ -705,11 +657,15 @@ export class Renderer {
       fanAttr.setXYZ(i * 3 + 2, Math.sin(b) * 13, 0, Math.cos(b) * 13);
     }
     fanAttr.needsUpdate = true;
-    this.lockFan.position.set(p.x, 3.7, p.z);
+    this.lockFan.position.set(p.x, actorAltitude(p.x, p.z, 20, 491), p.z);
     const target = world.enemies.find((e) => e.id === lock?.targetId);
     this.targetRing.visible = Boolean(target);
     if (target) {
-      this.targetRing.position.set(target.x, 4.1, target.z);
+      this.targetRing.position.set(
+        target.x,
+        target.layer === "air" ? actorAltitude(target.x, target.z, 20, 491) : surfaceHeight(target.x, target.z, 491) + 0.5,
+        target.z,
+      );
       this.targetRing.scale.setScalar(1.3 - progress * 0.35);
       (this.targetRing.material as THREE.MeshBasicMaterial).color.copy(color);
     }
@@ -718,9 +674,11 @@ export class Renderer {
       mesh.visible = Boolean(bomb);
       if (bomb) {
         const t = clamp(bomb.age / RULES.bombFallTime);
+        const startY = actorAltitude(bomb.startX, bomb.startZ, 20, 491);
+        const endY = surfaceHeight(bomb.x, bomb.z, 491) + 0.1;
         mesh.position.set(
           THREE.MathUtils.lerp(bomb.startX, bomb.x, t),
-          4 * (1 - t * t),
+          THREE.MathUtils.lerp(startY, endY, t * t),
           THREE.MathUtils.lerp(bomb.startZ, bomb.z, t),
         );
       }
@@ -728,12 +686,14 @@ export class Renderer {
     this.bombPath.visible = world.isBombing;
     if (world.isBombing) {
       const attr = this.bombPath.geometry.getAttribute("position");
+      const startY = actorAltitude(p.x, p.z, 20, 491);
+      const endY = surfaceHeight(world.aim.x, world.aim.z, 491) + 0.1;
       for (let i = 0; i < 17; i++) {
         const t = i / 16;
         attr.setXYZ(
           i,
           THREE.MathUtils.lerp(p.x, world.aim.x, t),
-          4 * (1 - t * t),
+          THREE.MathUtils.lerp(startY, endY, t * t),
           THREE.MathUtils.lerp(p.z, world.aim.z, t),
         );
       }
@@ -744,7 +704,7 @@ export class Renderer {
       const fire = world.fires[i];
       mesh.visible = Boolean(fire);
       if (fire) {
-        mesh.position.set(fire.x, 0.2, fire.z);
+        mesh.position.set(fire.x, surfaceHeight(fire.x, fire.z, 491) + 0.2, fire.z);
         mesh.scale.setScalar(fire.radius * 2);
         const mat = mesh.material as THREE.ShaderMaterial;
         mat.uniforms.time.value = this.time;
@@ -784,12 +744,10 @@ export class Renderer {
     this.bulletMeshes.forEach((m) => (m.visible = false));
     this.effects.forEach((m) => (m.visible = false));
     this.enemies.forEach((m) => (m.visible = false));
-    this.warningLines.forEach((m) => (m.visible = false));
     this.groundMarkers.forEach((m) => (m.visible = false));
     this.bombs.forEach((m) => (m.visible = false));
     this.fireMeshes.forEach((m) => (m.visible = false));
     this.pickups.count = 0;
-    this.repairs.count = 0;
     this.crosshair.visible = false;
     this.lockFan.visible = false;
     this.targetRing.visible = false;
@@ -806,6 +764,10 @@ export class Renderer {
         Math.abs(this.projected.y) < 1,
     };
   }
+  isCloudOccluded(x: number, y: number, z: number) {
+    this.projected.set(x, y, z);
+    return this.cloudField.occludes(this.camera.position, this.projected);
+  }
   get diagnostics() {
     return {
       fps: this.fps,
@@ -817,7 +779,16 @@ export class Renderer {
   }
   dispose() {
     this.aircraft?.dispose();
+    this.terrainChunks.dispose();
+    this.cloudField.dispose();
     this.scene.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
+        o.geometry.dispose();
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => m.dispose());
+      }
+    });
+    this.overlayScene.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
         o.geometry.dispose();
         const mats = Array.isArray(o.material) ? o.material : [o.material];

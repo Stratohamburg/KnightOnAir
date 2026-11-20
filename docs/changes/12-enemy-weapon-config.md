@@ -1,5 +1,7 @@
 # 12 · 敌人与武器配置扩展
 
+> 2026-11-20 架构修订：本文原有的 `EnemyConfigV2` 作为内容迁移参考保留。0.4 实施时采用 [统一战斗架构与实施路线](../ARCHITECTURE_0_4.md) 定义的 `CombatantConfig + NpcProfile` 配置 v3。物理、部件和挂载字段进入共享载体配置，行为、刷新和奖励进入 NPC 配置。本文的时代、武器和敌人名录需要按 v3 拆分后才可录入。
+
 > 状态：提案（**未实施**，只描述配置/字段与内容表；不改现有实现/基线文档）
 > 基线：0.3.0（`5b22187`）；现有 11 种敌人（含将删除的 `aa`/`emplacement`）、11 种武器。
 > 关系：[02 刷新](02-enemy-spawn-and-separation.md) 用 `spawnRole/slotCost`；[03 部件](03-parts-and-damage-degradation.md) 用 `parts/ControlDamage`；[05 雷达/反馈](05-radar-alert-and-target-feedback.md) 用武器开火事件；[06 地面/水面](06-ground-routes-and-terrain.md) 用 `aa_truck/fuel_truck/armored_train/gunboat`；[08 时代/外观](08-q-art-and-era-progression.md) 用 `era/visual`。
@@ -41,12 +43,14 @@ interface EnemyConfig {
 type EnemyLayer = "air" | "ground" | "water";
 type EnemyRole = "recon"|"interceptor"|"fighter"|"heavyFighter"|"bomber"|"escort"|"dive"|"gunship"|"elite"|"convoy"|"value"|"static";
 type SpawnRole = "pursuit"|"harass"|"heavy"|"support"|"value"|"static"|"convoy"|"interceptor"|"bomber";
-type AiKind = "chase"|"crossing"|"strafe"|"escort"|"dive"|"patrol"|"convoy"|"standoff"|"flee";
+type AiKind = "chase"|"patrol"|"intercept"|"crossing"|"strafe"|"escort"|"dive"|"convoy"|"standoff"|"static"|"flee";
 
 interface EnemyBehavior {
   ai: AiKind;
+  targetPolicy: "player"|"route"|"intercept"|"escort"|"groundTarget"|"none";
   preferredRange: [number, number];   // 保持/开火距离
   disengageRange: number;             // 超出即脱离/返航
+  engageRadius: number;                // patrol/route 单位进入此范围才切换到攻击
   warning: number;                    // 开火前摇（05 事件用）
   fireInterval: [number, number];     // 两次攻击间隔
   burst: number;                      // 每次开火发数
@@ -90,13 +94,77 @@ interface EnemyConfigV2 {
 }
 ```
 
+### 2.0 v3 配置拆分与分层运动管线
+
+实施时，`EnemyConfigV2` 的扁平结构只用于迁移检查。正式配置拆成共享载体和 NPC 行为两层。`CombatantConfig.frame` 按 `layer` 使用联合结构，空中字段与地面/水面字段分别校验。
+
+```ts
+type MotionConfig =
+  | {
+      model: "air";
+      mass: number;
+      length: number;
+      wingspan: number;
+      wingArea: number;
+      maxSpeed: number;
+      cruiseSpeed: number;
+      acceleration: number;
+      turnRate: number;
+      energyMax: number;
+      energyRecover: number;
+    }
+  | {
+      model: "ground" | "water";
+      mass: number;
+      length: number;
+      radius: number;
+      maxSpeed: number;
+      acceleration: number;
+      turnRate: number;
+      routeKinds: ("road" | "rail" | "water")[];
+    };
+
+interface CombatantConfig {
+  id: string;
+  layer: "air" | "ground" | "water";
+  frame: MotionConfig;
+  parts: PartRecipe[];
+  mounts: EnemyWeaponMount[];
+}
+```
+
+`model: "air"` 的载体由空中玩家控制器、空中 NPC 控制器或未来网络控制器生成意图，并进入同一个 `integrateAirActor`。`model: "ground"` 和 `model: "water"` 的载体由路线、车道或水路控制器生成意图，并进入各自移动积分器。三层都使用同一个部件命中、伤害传递、武器失效、弹道和事件管线。
+
+`behavior.ai` 是敌人的目标策略，不是另一套物理系统。每个敌人每步按以下顺序运行：
+
+```text
+behavior → 目标点/目标方向/路线意图 → 分离、编队或车距修正（02）
+         → 按 layer 进入空中飞行积分器或地面/水面移动积分器
+         → 同一武器挂点与开火前摇 → 同一命中与伤害结算
+```
+
+| 行为 | 目标策略 | 典型职责 | 目标点规则 |
+| --- | --- | --- | --- |
+| `chase` | `player` | 追击机、普通战斗机 | 直接追玩家预测位置，进入 `preferredRange` 后攻击，超出 `disengageRange` 返航或重置攻击段。 |
+| `patrol` | `route` | 侦察机、巡逻艇、巡逻车 | 沿路线或航点行驶。玩家进入 `engageRadius` 才转入攻击，离开后回到路线，不持续追出巡逻区。 |
+| `intercept` | `intercept` | 截击机、拦截编队 | 根据玩家速度和 `leadTime` 计算交会点，切入玩家前方航线。通过交会点后重新计算，不直接贴着玩家转圈。 |
+| `escort` | `escort` | 护航机、护航艇 | 以精英或指定长机为锚点保持槽位，只有脱离槽位或受到攻击时短暂拦截玩家。 |
+| `crossing` / `strafe` | `player` 或 `route` | 横切攻击机、炮艇机 | 保持横向或侧射航线，攻击段结束后沿离场方向脱离。 |
+| `dive` | `player` | 俯冲攻击机 | 先在攻击线外等待，再进入一次俯冲段，结束后强制拉开距离。 |
+| `standoff` | `player` | 大型轰炸机、空中堡垒 | 保持远距离和指定方位，只在武器射界内开火。 |
+| `convoy` | `route` | 资源车队、列车 | 沿道路、铁路或水路移动，优先保持车距和路线，不追玩家。 |
+| `static` | `none` | 燃料设施、固定目标 | 不生成移动意图，只参与共享命中、部件损毁、武器和事件管线。 |
+| `flee` | `route` 或 `player` | 受损或任务完成单位 | 沿离场点撤退。它仍使用当前层的移动积分器和共享损毁结果，只更换目标方向。 |
+
+`patrol`、`intercept` 和 `chase` 的差异只存在于目标点或路线意图如何产生。空中行为必须经过 02 的分离、03 的部件损毁控制包线和同一 `integrateAirActor`。地面与水面行为经过各自路线积分器，但同样使用 03 的共享部件、伤害和武器结果。部件损毁后，行为策略不被替换为另一套伤害逻辑。比如拦截机失去一侧机翼仍执行 `intercept`，但由同一 `ControlDamage` 限制转弯和速度，无法完成交会时才按行为规则进入 `flee`。
+
 ### 2.1 改动清单（文件级）
 
 | 文件 | 改动 |
 | --- | --- |
 | `src/data/enemies.ts` | `EnemyConfig` v2 字段、现有 9 种迁移、14 种新增、删除 `aa/emplacement` |
 | `src/data/weapons.ts` | `WeaponConfig` v2 字段、现有 11 种迁移、18 种新增 |
-| `src/simulation/World.ts` | 按 `offense` 挂点开火，替代 `light_cannon` 临时改参数；按 `behavior` 驱动 AI |
+| `src/simulation/World.ts` | 按 `offense` 挂点开火，替代 `light_cannon` 临时改参数；按 `behavior` 生成目标方向，再统一经过分离、损毁包线和运动更新 |
 | `src/simulation/types.ts` | `Enemy` 读入 parts/behavior/route/altBand 字段 |
 | `src/rendering/Renderer.ts` | 按 `visual.modelKey/eraSkin` 构建敌人外观 |
 | `tests/enemy-weapon-config.test.ts` | 数据校验/挂点/目标层/时代覆盖断言 |

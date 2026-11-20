@@ -23,7 +23,6 @@ export interface Upgrade {
   conflicts?: string[];
   requires?: string[];
   max?: number;
-  repair?: boolean;
 }
 const engine = (slot: Slot): PartRecipe => ({
   kind: "engine",
@@ -319,19 +318,6 @@ export const UPGRADES: Upgrade[] = [
     parts: [{ kind: "bombBay", slot: "bottom", health: 30 }],
   },
   {
-    id: "repair",
-    name: "应急维修组件",
-    rarity: "common",
-    tag: "维修",
-    description: "恢复核心和所有部件，并重装已损毁挂点。",
-    benefit: "恢复 40% 生命 · 修复部件",
-    cost: "消耗一次升级机会",
-    preview: "center",
-    parts: [],
-    repair: true,
-    max: 999,
-  },
-  {
     id: "ammo",
     name: "强化弹药箱",
     rarity: "common",
@@ -356,6 +342,20 @@ export const UPGRADES: Upgrade[] = [
     add: { energyMax: 10 },
     multiply: { energyRecover: 1.15 },
     parts: [{ kind: "cooler", slot: "center", health: 22 }],
+    max: 999,
+  },
+  {
+    id: "armor_belt",
+    name: "快拆装甲带",
+    rarity: "common",
+    tag: "结构",
+    description: "可快速更换的机身装甲带，持续提高结构强度。",
+    benefit: "生命上限 +12",
+    cost: "转向 −1%",
+    preview: "center",
+    add: { health: 12 },
+    multiply: { turnRate: 0.99 },
+    parts: [{ kind: "armor", slot: "center", health: 20 }],
     max: 999,
   },
 ];

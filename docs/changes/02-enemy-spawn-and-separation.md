@@ -208,13 +208,17 @@ export function separationForce(e: Enemy, all: readonly Enemy[]) {
 
 // 转向混合：避让 > 追击 > 攻击（复用现有 World.ts:589-601 的转向与阻尼）
 const chase = Math.atan2(p.x - e.x, p.z - e.z);            // 含 breaking/fleeing/bomber 等状态偏移
-const sep = separationForce(e, world.enemies);
+const sep = separationForce(e, world.airActors);
 const blend = sep.hard > 0 ? SEP.hardWeight : SEP.weight * sep.level;
 const target = blendAngle(chase, Math.atan2(sep.x, sep.z), blend) + headOnOffset(e, d);
 const desiredTurn = clamp(angleDelta(target, e.heading) * 2.2,
   -c.turnRate * RAD * (1 + sep.hard * SEP.maxTurnBonus),
   +c.turnRate * RAD * (1 + sep.hard * SEP.maxTurnBonus));
 ```
+
+`target` 必须先由 12 的行为分类生成，再按 `layer` 进入运动管线。空中 `chase` 追玩家预测点，`intercept` 计算玩家未来交会点，`escort` 跟随长机槽位，`dive/crossing/standoff` 使用各自攻击段目标。地面和水面 `patrol/convoy` 生成路线或航点意图，由 06 的路线与车距系统消费。空中避让只修正目标方向和速度，不直接改写实体位置，也不替换行为类别。这样行为分类负责“想去哪里”，空中分离负责“如何不撞上其他敌人”，地面和水面车距负责路线间隔，03 的共享损毁结果负责“受损后还能使用哪些能力”。
+
+行为和部件必须解耦，但按层使用运动接口。空中敌人失去翼、发动机或尾翼后仍保留原 `ai`，由统一 `ControlDamage` 限制飞行转向、速度、稳定和开火能力。地面和水面敌人失去轮组、发动机、船体或舵机后，由同一份伤害结果限制路线速度、转向和开火能力。只有当该行为的目标无法在对应移动模型内完成时，行为状态才转为 `flee` 或 `breaking`。不得在 `updateEnemies` 中为某个行为重新实现一套命中、部件或性能衰减公式。
 
 **优先级规则（避让 > 追击 > 攻击）**：① `hard > 0`：混合权重 0.9、转向权限 +25%、**不开始新的攻击前摇**（`warning===0` 门控加 `hard < 0.6`；已开始的 warning 继续结算，避免吞子弹）；速度上被后方逼近时 ×1.15 让开、被慢机挡在前方时 ×0.85，但不低于 0.85 倍配置速度（防“空中刹车”）。② 无硬避让时按 0.65×level 混合；现有状态机偏移角先作用于追击角再混合。③ **对头让行**：`d < 12` 且接近时按确定性侧向（叉积符号，共线用 `e.id % 2`）偏 0.35 权重，`avoidSide` 保持 1.2s 防抖。④ **近身配额**：距玩家 <15 的空中单位 ≤4，名额满时其余在 `standoffRadius = 20` 外围绕/离场（目标角加 0.9rad 侧偏），避免全部糊在玩家头顶。⑤ **头顶不打转**：单机 `d < 12` 连续 attacking >2.5s 时强制 1.5s `breaking` 离场（复用 `:566` 的 breaking 偏移）再进入。
 

@@ -855,6 +855,7 @@ button:active:not(:disabled) {
   z-index: 1;
 }
 .enemy-label {
+  transition: opacity 0.18s ease;
   position: absolute;
   transform: translate(-50%, -100%);
   font-size: 7px;
@@ -900,17 +901,70 @@ button:active:not(:disabled) {
 .aim-label.ready {
   color: #c9ffcb;
 }
-.edge-warning {
-  position: absolute;
-  top: 30%;
-  right: 8px;
-  writing-mode: vertical-rl;
-  color: #f4d9a1;
-  font-size: 8px;
-  letter-spacing: 2px;
-}
 .in-battle .scene-host {
   height: calc(100% - var(--deck));
+}
+.combat-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+}
+.combat-radar {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  width: 112px;
+  height: 112px;
+  border: 1px solid #c8e5c144;
+  border-radius: 50%;
+  background: radial-gradient(circle, #16372c33 0 48%, transparent 49%), linear-gradient(#c8e5c133, #c8e5c133) center / 1px 100% no-repeat, linear-gradient(90deg, #c8e5c133, #c8e5c133) center / 100% 1px no-repeat;
+}
+.radar-contact {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 1px;
+  background: #e8e9d9;
+}
+.radar-contact.firing {
+  background: #ef8864;
+  box-shadow: 0 0 0 4px #ef886455;
+}
+.combat-edges {
+  position: absolute;
+  inset: 12px;
+}
+.edge-indicator {
+  position: absolute;
+  color: #ef8864;
+  font-size: 12px;
+  font-style: normal;
+  text-shadow: 0 1px 5px #163027;
+}
+.combat-feed {
+  position: absolute;
+  top: 128px;
+  right: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-end;
+  color: #ffe4a5;
+  font-size: 9px;
+  text-shadow: 0 1px 5px #163027;
+}
+.combat-feed div {
+  padding: 4px 7px;
+  border-left: 2px solid #ef8864;
+  background: #16372c99;
+}
+.combat-alert .combat-radar {
+  border-color: #ef8864;
+  box-shadow: 0 0 20px #ef886444;
 }
 .in-battle .scene-vignette {
   bottom: var(--deck);
@@ -1277,6 +1331,25 @@ button:active:not(:disabled) {
 }
 .stick-surface[data-mode="full"] .stick-label {
   color: #ffdc95;
+}
+.stick-surface[data-mode="boost"] {
+  --throttle-color: #ff7a4d;
+}
+.stick-surface[data-mode="boost"] .stick-base,
+.stick-surface[data-mode="locked"] .stick-base {
+  border-color: #ff7a4d;
+  box-shadow: 0 0 22px #ff7a4d44, inset 0 0 26px #ff7a4d22;
+}
+.stick-surface[data-mode="boost"] .stick-knob {
+  background: linear-gradient(130deg, #ff9b63, #a64231);
+  border-color: #ffd0a5;
+}
+.stick-surface[data-mode="boost"] .stick-label {
+  color: #ff9b73;
+}
+.stick-surface[data-mode="locked"] .stick-label,
+.stick-surface[data-mode="depleted"] .stick-label {
+  color: #f1a78a;
 }
 .stick-surface[data-mode="trim"] {
   --throttle-color: #a6d9e7;
