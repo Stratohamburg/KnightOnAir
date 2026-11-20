@@ -4,10 +4,13 @@ import {
   type CombatantConfig,
   assertCombatantConfigIntegrity,
   npcProfileById,
+  type NpcProfile,
+  type EraId,
 } from "../data/combatants";
-import { WEAPONS, type WeaponConfig } from "../data/weapons";
+import { WEAPONS, type WeaponConfig, type TargetLayer } from "../data/weapons";
 import { UPGRADES, upgradeById, type Upgrade } from "../data/upgrades";
-import type { Airframe } from "../data/aircrafts";
+import { eraOf, type Airframe } from "../data/aircrafts";
+import { ERAS } from "../data/eras";
 import {
   Random,
   RAD,
@@ -31,10 +34,10 @@ import {
 } from "./DamageModel";
 import { hitEntity as hitCombatEntity } from "./HitTest";
 import { HEALTH_SUPPLY, PICKUP } from "../data/pickups";
-import { surfaceHeight as sampleSurfaceHeight } from "./Terrain";
+import { isWater, surfaceHeight as sampleSurfaceHeight } from "./Terrain";
 import { separationTarget } from "./Separation";
 import { createDefaultRoutes, nearestRouteDistance, routeHeading, routePosition } from "./Routes";
-import { playerIntent } from "./Controllers";
+import { npcIntent, playerIntent, type NetworkController } from "./Controllers";
 import { partFromRecipe } from "./parts";
 import {
   NO_INPUT,
@@ -77,6 +80,10 @@ export class World {
   private pickupTimer = 0;
   private eliteAt = 90;
   private deathTimer = 0;
+  private nextSpawnAttempt = 0;
+  private readonly replayControllers = new Map<number, { profile: NpcProfile; controller: NetworkController }>();
+  private pendingSpawns: { kind: string; bearing: number; expires: number }[] = [];
+  isSpawnVisible?: (x: number, y: number, z: number, radius: number) => boolean;
   enemies: Enemy[] = [];
   readonly actors: CombatEntity[] = [];
   readonly projectiles = new ObjectPool<Projectile>(
@@ -155,7 +162,8 @@ export class World {
   private supplyEnabled: boolean;
   private readonly eventQueue: WorldEvent[] = [];
   readonly events: readonly WorldEvent[] = this.eventQueue;
-  notice = "第一关 · 翡翠海岸";
+  notice: string;
+  readonly era: EraId;
   noticeTime = 4;
   healPulse = 0;
   boostStatePulse = 0;
@@ -167,6 +175,8 @@ export class World {
     seed = Date.now(),
     private options: { director?: boolean; supply?: boolean } = {},
   ) {
+    this.era = eraOf(frame);
+    this.notice = ERAS[this.era].label + " · " + ERAS[this.era].mission;
     this.supplyEnabled = options.supply ?? options.director !== false;
     this.random = new Random(seed);
     assertCombatantConfigIntegrity();
@@ -220,8 +230,10 @@ export class World {
     this.actors.push(this.player);
     this.telemetry.record(0, "session_start", { frame: frame.id, seed });
     // First encounter approaches from beyond the viewport; the opening coins teach steering.
-    this.spawnEnemy("scout", -4, 38);
-    this.spawnEnemy("hunter", 4, 46);
+    ERAS[this.era].opening.forEach((kind, index) => {
+      if (options.director === false) this.spawnEnemy(kind, index ? 4 : -4, index ? 46 : 38);
+      else this.requestSpawn(kind, index ? .09 : -.10);
+    });
     this.supplyTimer = this.supplyEnabled
       ? this.random.range(HEALTH_SUPPLY.firstDelay[0], HEALTH_SUPPLY.firstDelay[1])
       : Number.POSITIVE_INFINITY;
@@ -281,11 +293,13 @@ export class World {
   ) {
     const weaponConfig = WEAPONS[mount.weaponId];
     if (!weaponConfig) return;
+    const part = entity.parts.find((value) => value.id === mount.partId);
+    if (!part) return;
     const weapon: RuntimeWeapon = {
-      config: { ...weaponConfig, count: mount.count, arc: mount.arc, ...(mount.overrides ?? {}) },
+      config: { ...weaponConfig, count: mount.count, arc: mount.arc, targetLayers: mount.targetLayers, ...(mount.overrides ?? {}) },
       partId: mount.partId,
-      x: mount.x ?? 0,
-      z: mount.z ?? 0,
+      x: mount.x ?? part.x,
+      z: mount.z ?? part.z,
       cooldown: entity === this.player ? 0 : this.random.range(1.5, 3.5),
       targetId: 0,
       lockProgress: 0,
@@ -293,8 +307,6 @@ export class World {
       heading: entity.heading + mount.baseAngle,
       baseAngle: mount.baseAngle,
     };
-    const part = entity.parts.find((value) => value.id === mount.partId);
-    if (!part) return;
     part.weaponIds = [...(part.weaponIds ?? []), weapon.config.id];
     entity.weapons.push(weapon);
     if (config.layer !== "air" && weapon.config.damage <= 0) entity.weapons.pop();
@@ -393,19 +405,31 @@ export class World {
       (this.phase === "upgrade" && this.upgradeMode === "bombing")
     );
   }
-  get bombWeapon() {
+  get bombWeapon(): WeaponConfig | undefined {
     const config = combatantById(this.player.configId);
     const mount = config?.mounts.find((value) => value.partId === "bay");
-    const id = this.player.upgrades.includes("napalm") ? "napalm_bomb" : mount?.weaponId ?? this.player.frame.bomb;
-    return WEAPONS[id];
+    if (this.player.upgrades.includes("napalm")) return WEAPONS[this.era === "ww2" ? "ww2_incendiary" : "napalm_bomb"];
+    if (!mount && this.player.upgrades.includes("bomb_bay"))
+      return WEAPONS[this.era === "pioneer" ? "pioneer_light_bomb" : this.era === "ww1" ? "ww1_light_bomb" : this.era === "ww2" ? "ww2_medium_bomb" : "gravity_bomb"];
+    return mount ? WEAPONS[mount.weaponId] : undefined;
   }
   get canBomb() {
     return (
       this.phase === "bombing" &&
+      !!this.bombWeapon &&
       this.stability >= RULES.bombThreshold &&
       this.bombCooldown <= 0 &&
-      this.player.damage.bombFactor > 0
+      this.player.damage.bombFactor > 0 &&
+      this.validBombAim
     );
+  }
+  private get validBombAim() {
+    const p = this.player;
+    const dx = this.aim.x - p.x, dz = this.aim.z - p.z;
+    const front = dx * Math.sin(p.heading) + dz * Math.cos(p.heading);
+    const side = dx * Math.cos(p.heading) - dz * Math.sin(p.heading);
+    return front >= 4 - 1e-6 && front <= 14 + 1e-6 &&
+      Math.abs(side) <= front * Math.tan(10 * RAD) + 1e-6;
   }
   get mainLock() {
     return this.player.weapons.find((w) => w.config.lockTime > 0);
@@ -491,7 +515,7 @@ export class World {
         ? Math.atan2(input.x, input.z)
         : p.heading;
     const throttle = input.active
-      ? (input.travel === undefined ? input.magnitude : Math.min(1, input.travel / 0.74)) * (this.isBombing ? 0.45 : 1)
+      ? clamp(input.travel ?? input.magnitude) * (this.isBombing ? 0.45 : 1)
       : 0;
     const request = !this.isBombing && RULES.boost.enabled && input.active
       ? clamp(input.boost ?? 0)
@@ -522,6 +546,9 @@ export class World {
       this.energyWasEmpty = true;
     }
     if (p.energy > RULES.boost.rearm) this.energyWasEmpty = false;
+    const wingRetention = Math.min(nextDamage.liftLeft, nextDamage.liftRight);
+    const bombingBank = (17 + 18 * clamp((p.frame.turnRate - 145) / 160)) * RAD *
+      Math.min(1, wingRetention, nextDamage.response);
     integrateAirActor(
       p,
       playerIntent({
@@ -534,18 +561,19 @@ export class World {
       {
         mass: p.frame.mass + p.parts.reduce((sum, part) => sum + part.addedMass, 0),
         wingspan: s.wingspan,
-        wingArea: p.frame.wingArea,
+        wingArea: p.frame.wingArea + p.parts.reduce((sum, part) =>
+          part.id.startsWith("giant_wing_") ? sum + (part.lift ?? 1) * 2.4 : sum, 0),
         acceleration: s.acceleration,
         maxSpeed: s.maxSpeed,
         cruiseSpeed: p.frame.cruiseSpeed,
         turnRate: s.turnRate * (this.isBombing ? 0.65 : 1),
+        bankLimit: this.isBombing ? bombingBank : undefined,
         speedMultiplier: RULES.boost.speedMultiplier,
         thrustMultiplier: RULES.boost.thrustMultiplier,
       },
       nextDamage,
       dt,
     );
-    p.bank = clamp(p.bank + nextDamage.rollBias * dt * 2, -87.5 * RAD, 87.5 * RAD);
     const wind = this.wind.sample(p.x, p.z);
     p.vx += wind.x * s.windResponse;
     p.vz += wind.z * s.windResponse;
@@ -559,57 +587,34 @@ export class World {
     this.spawnTimer -= dt;
     this.groundTimer -= dt;
     this.pickupTimer -= dt;
-    const airCount = this.enemies.filter((e) => e.layer === "air").length;
-    if (
-      this.spawnTimer <= 0 &&
-      airCount < Math.min(14, 4 + Math.floor(t / 25))
-    ) {
-      const pool =
-        t < 30
-          ? ["scout", "hunter"]
-          : t < 60
-            ? ["hunter", "scout", "striker"]
-            : ["hunter", "bomber", "escort", "striker"];
-      const count =
-        p.health / this.playerMaxHealth < 0.35
-          ? 1
-          : 2 + Math.min(2, Math.floor(t / 70));
-      const angle = p.heading + this.random.range(-1.1, 1.1);
-      for (let i = 0; i < count; i++)
-          this.spawnEnemy(
-          this.random.pick(pool),
-          p.x + Math.sin(angle) * (34 + i * 4) + (i - 1) * 3,
-          p.z + Math.cos(angle) * (34 + i * 4),
-            true,
-        );
-      this.spawnTimer = this.random.range(8, 12) * (airCount > 9 ? 1.5 : 1);
+    const plan = ERAS[this.era];
+    const phase = t < 30 ? "intro" : t < 60 ? "skirmish" : t < 110 ? "pressure" : "mixed";
+    if (this.spawnTimer <= 0) {
+      const pool = plan.air.filter((id) => npcProfileById(id, this.era)?.spawn.phases.includes(phase));
+      const count = p.health / this.playerMaxHealth < .35 ? 1 : 2 + Math.min(2, Math.floor(t / 70));
+      const bearing = p.heading + this.random.range(-1.1, 1.1);
+      for (let index = 0; index < count && pool.length; index++)
+        this.requestSpawn(this.random.pick(pool), bearing + (index - (count - 1) / 2) * .24);
+      this.spawnTimer = this.random.range(8, 12);
     }
-    if (
-      this.groundTimer <= 0 &&
-      this.enemies.filter((e) => e.layer !== "air").length <
-        RULES.maxGround - 2
-    ) {
-      const a = p.heading + this.random.range(-0.6, 0.6),
-        d = this.random.range(34, 46);
-      const kind =
-        t < 30
-          ? "resource"
-          : t < 60
-            ? this.random.pick(["aa_truck", "resource"])
-            : this.random.pick(["aa_truck", "missile_truck", "resource", "depot"]);
-      this.spawnEnemy(kind, p.x + Math.sin(a) * d, p.z + Math.cos(a) * d, true);
+    if (this.groundTimer <= 0) {
+      const pool = plan.surface.filter((id) => npcProfileById(id, this.era)?.spawn.phases.includes(phase));
+      if (pool.length) {
+        const kind = this.random.pick(pool);
+        const profile = npcProfileById(kind, this.era)!;
+        const count = profile.behavior.kind === "convoy" && kind !== "armored_train" && kind !== "supply_train" ? 2 : 1;
+        const bearing = p.heading + this.random.range(-.55, .55);
+        for (let index = 0; index < count; index++) this.requestSpawn(kind, bearing + index * .22);
+      }
       this.groundTimer = t < 30 ? 10 : 7;
     }
-    if (t >= this.eliteAt - 2 && t < this.eliteAt)
-      this.message("大型信号接近 · 精英空艇", 2.1);
-    if (t >= this.eliteAt) {
-      this.spawnEnemy(
-        "elite",
-        p.x + Math.sin(p.heading) * 40,
-        p.z + Math.cos(p.heading) * 40,
-        true,
-      );
+    if (plan.elite.length && t >= this.eliteAt) {
+      this.requestSpawn(this.random.pick(plan.elite), p.heading);
       this.eliteAt += 90;
+    }
+    if (t >= this.nextSpawnAttempt) {
+      this.nextSpawnAttempt = t + .35;
+      this.placePendingSpawns(t);
     }
     if (this.pickupTimer <= 0) {
       for (let i = 0; i < 5; i++) {
@@ -620,23 +625,90 @@ export class World {
       this.pickupTimer = 7;
     }
   }
+  private placePendingSpawns(t: number) {
+    const p = this.player;
+    this.pendingSpawns = this.pendingSpawns.filter((request) => {
+      if (request.expires < t) return false;
+      const profile = npcProfileById(request.kind, this.era);
+      const config = profile && combatantById(profile.combatantId);
+      if (!profile || !config || !this.hasSpawnBudget(profile, config.layer)) return true;
+      // Search beyond the current camera when a candidate remains visible at nominal range.
+      for (const distance of [36, 42, 46, 54, 64, 76]) {
+        for (const offset of [0, -.34, .34, -.85, .85, Math.PI]) {
+          const angle = request.bearing + offset;
+          if (this.spawnEnemy(request.kind, p.x + Math.sin(angle) * distance, p.z + Math.cos(angle) * distance, true))
+            return false;
+        }
+      }
+      return true;
+    });
+  }
+  private requestSpawn(kind: string, bearing: number) {
+    if (this.pendingSpawns.length < 28)
+      this.pendingSpawns.push({ kind, bearing, expires: this.elapsed + 20 });
+  }
+  private hasSpawnBudget(profile: NpcProfile, layer: TargetLayer) {
+    const active = this.enemies.filter((enemy) => enemy.health > 0);
+    const grouped = active.filter((enemy) =>
+      layer === "air"
+        ? enemy.layer === "air" && !!npcProfileById(enemy.kind, this.era)?.elite === !!profile.elite
+        : enemy.layer !== "air",
+    );
+    const cap = layer === "air"
+      ? profile.elite ? RULES.maxElite : ERAS[this.era].caps.air
+      : ERAS[this.era].caps.surface;
+    const slots = grouped.reduce((sum, enemy) => sum + (npcProfileById(enemy.kind, this.era)?.spawn.slotCost ?? 1), 0);
+    return active.length < RULES.maxTotal && slots + profile.spawn.slotCost <= cap &&
+      grouped.filter((enemy) => enemy.profileId === profile.id).length < profile.spawn.maxAlive;
+  }
   spawnEnemy(kind: string, x: number, z: number, safePlacement = false) {
-    const profile = npcProfileById(kind);
+    const profile = npcProfileById(kind, this.era);
     if (!profile) return;
-    kind = profile.id;
+    kind = profile.kind ?? kind;
     const config = combatantById(profile.combatantId);
     if (!config) return;
-    const layerCount = this.enemies.filter((enemy) => enemy.layer === config.layer).length;
-    const airOrdinary = this.enemies.filter((enemy) => enemy.layer === "air" && enemy.kind !== "elite").length;
-    if (config.layer === "air" && (kind === "elite" ? layerCount >= RULES.maxEnemies + RULES.maxElite : airOrdinary >= RULES.maxEnemies)) return;
-    if (config.layer !== "air" && layerCount >= RULES.maxGround) return;
-    if (kind === "elite" && this.enemies.some((enemy) => enemy.kind === "elite")) return;
-    if (this.enemies.length >= RULES.maxTotal) return;
-    if (safePlacement) {
-      const playerDistance = distance({ x, z }, this.player);
-      if (playerDistance < 34 || playerDistance > 46) return;
-      if (this.enemies.some((enemy) => enemy.layer === config.layer && distance({ x, z }, enemy) < 10)) return;
+    if (!this.hasSpawnBudget(profile, config.layer)) return;
+    const route = profile.behavior.targetPolicy === "route"
+      ? this.routes.find((candidate) => candidate.id === profile.behavior.patrolRoute)
+      : undefined;
+    const routeDistance = route ? nearestRouteDistance(route, x, z) : undefined;
+    if (route && routeDistance !== undefined) {
+      const point = routePosition(route, routeDistance);
+      x = point.x;
+      z = point.z;
     }
+    if (safePlacement) {
+      const radius = config.combat.collisionRadius;
+      const playerDistance = distance({ x, z }, this.player);
+      if (playerDistance < 32 || playerDistance > 78) return;
+      if (this.isSpawnVisible?.(x, (config.layer === "air" ? RULES.flightAltitude : this.surfaceHeight(x, z) + 1), z, radius * 1.7 + 2))
+        return;
+      if (this.enemies.some((enemy) => enemy.health > 0 && (enemy.layer === "air") === (config.layer === "air") &&
+          distance({ x, z }, enemy) < Math.max(7, radius + enemy.radius + 2))) return;
+    }
+    const enemy = this.createOpponent(profile, config, kind, x, z);
+    enemy.routeId = route?.id;
+    enemy.routeDistance = routeDistance;
+    return enemy;
+  }
+
+  spawnReplayOpponent(frame: Airframe, controller: NetworkController, x: number, z: number) {
+    const config = combatantById(frame.id);
+    if (!config || config.frame.model !== "air") throw new Error("Unknown replay airframe " + frame.id);
+    const profile: NpcProfile = {
+      id: "replay:" + frame.id, combatantId: frame.id,
+      behavior: { kind: "chase", targetPolicy: "player", preferredRange: [0, 40],
+        engageRadius: 40, disengageRange: 60, leadTime: .35, breakChance: 0 },
+      spawn: { phases: [], weight: 0, maxAlive: 1, slotCost: 1 },
+      rewards: { xp: 0, coins: 0, score: 0 },
+    };
+    const enemy = this.createOpponent(profile, config, frame.id, x, z);
+    enemy.controllerId = profile.id;
+    this.replayControllers.set(enemy.id, { profile, controller });
+    return enemy;
+  }
+
+  private createOpponent(profile: NpcProfile, config: CombatantConfig, kind: string, x: number, z: number) {
     const parts = this.partsFromConfig(config);
     const totalHealth = totalPartHealth(parts);
     const totalMaxHealth = totalPartMaxHealth(parts);
@@ -682,40 +754,17 @@ export class World {
       routeDistance: undefined,
       laneOffset: undefined,
     };
-    for (const mount of config.mounts) this.addConfiguredWeapon(enemy, mount, config);
-    const routeKind = profile.behavior.patrolRoute?.includes("water")
-      ? "water"
-      : profile.behavior.patrolRoute?.includes("rail")
-        ? "rail"
-        : "road";
-    const routeCandidate = config.layer === "water"
-      ? this.routes.find((candidate) => candidate.kind === "water")
-      : routeKind === "rail"
-        ? this.routes.find((candidate) => candidate.kind === "rail")
-        : config.layer === "ground"
-          ? this.routes.find((candidate) => candidate.kind === "road")
-          : undefined;
-    const candidateDistance = routeCandidate
-      ? nearestRouteDistance(routeCandidate, x, z)
-      : 0;
-    const candidatePoint = routeCandidate
-      ? routePosition(routeCandidate, candidateDistance)
-      : undefined;
-    const route = routeCandidate && candidatePoint && distance(candidatePoint, { x, z }) < 20
-      ? routeCandidate
-      : undefined;
-    enemy.routeId = route?.id;
-    enemy.routeDistance = route ? nearestRouteDistance(route, x, z) : undefined;
-    enemy.laneOffset = route ? this.random.range(-0.55, 0.55) : undefined;
-    const e = enemy;
-    this.enemies.push(e);
-    this.actors.push(e);
-    return e;
+    for (const mount of config.mounts)
+      if (WEAPONS[mount.weaponId].category !== "area") this.addConfiguredWeapon(enemy, mount, config);
+    this.enemies.push(enemy);
+    this.actors.push(enemy);
+    return enemy;
   }
   private updateEnemies(dt: number) {
     const p = this.player;
     for (const e of [...this.enemies]) {
-      const profile = npcProfileById(e.kind);
+      const replay = this.replayControllers.get(e.id);
+      const profile = replay?.profile ?? npcProfileById(e.kind, this.era);
       const config = profile ? combatantById(profile.combatantId) : undefined;
       if (!profile || !config) continue;
       const behavior = profile.behavior,
@@ -730,79 +779,39 @@ export class World {
       e.slow = Math.max(0, e.slow - dt);
       e.armorBreak = Math.max(0, e.armorBreak - dt);
       if (e.health <= 0) continue;
-      let target = e.layer !== "air"
-        ? e.heading + Math.sin(e.age * 0.23 + e.id) * 0.14
-        : Math.atan2(p.x - e.x, p.z - e.z);
-      if (e.layer === "air") {
-        e.state =
-          d > 22
-            ? "entering"
-            : e.health < e.maxHealth * 0.2
-              ? "fleeing"
-              : e.age % 9 > 5.5
-                ? "breaking"
-                : "attacking";
-        if (e.state === "breaking") target += 1.15;
-        if (e.state === "fleeing") target += Math.PI * 0.7;
-        if (behavior.kind === "crossing") {
-          target += d < 16 ? 1.5 : 0.3;
-          if (e.age > 8 && !e.called) {
-            e.called = true;
-            this.spawnEnemy(
-              "hunter",
-              p.x + Math.sin(p.heading + 0.5) * 38,
-              p.z + Math.cos(p.heading + 0.5) * 38,
-              true,
-            );
-          }
-        }
-        if (behavior.kind === "standoff") target = Math.sin(e.age * 0.2) * 0.4 + Math.PI;
-        if (behavior.kind === "escort") {
-          const elite = this.enemies.find((v) => v.kind === "elite");
-          if (elite)
-            target = Math.atan2(
-              elite.x + Math.sin(e.age) * 7 - e.x,
-              elite.z + Math.cos(e.age) * 7 - e.z,
-            );
-        }
-        if (e.kind === "elite") target += d < 17 ? 1.3 : 0;
+      const anchor = behavior.escortAnchorTag
+        ? this.enemies.find((other) => other.id !== e.id && other.health > 0 &&
+            combatantById(other.configId ?? other.kind)?.tags.includes(behavior.escortAnchorTag!))
+        : undefined;
+      const intent = replay?.controller.sample(this.elapsed) ?? npcIntent(profile, e, p, e.age, anchor);
+      let target = intent.targetHeading ?? e.heading;
+      if (e.layer === "air")
+        target = separationTarget(target, e, this.enemies.filter((other) => other.layer === "air" && other.health > 0));
+      if (profile.reinforcement && !e.called && e.age > 8 && this.options.director !== false) {
+        e.called = true;
+        this.requestSpawn(profile.reinforcement, p.heading + .5);
       }
+      const targetSpeed = config.frame.maxSpeed *
+        (e.layer === "air" ? (replay ? 1 : .72 + intent.throttle * .28) : e.damage.engineFactor) *
+        (e.slow > 0 ? .6 : 1);
       if (e.layer === "air") {
-        target = separationTarget(
-          target,
-          e,
-          this.enemies.filter((other) => other.layer === "air" && other.health > 0),
-        );
-      }
-      const targetSpeed =
-        config.frame.maxSpeed *
-        (e.damage ? e.damage.engineFactor : 1) *
-        (e.slow > 0 ? 0.6 : 1) *
-        (e.health < e.maxHealth * 0.4 ? 0.8 : 1) *
-        (behavior.kind === "dive" && e.age % 7 < 1.2 ? 1.8 : 1);
-      if (e.layer === "air") {
-        e.speed = targetSpeed;
-        const factor = Math.max(0.2, e.damage.engineFactor);
         integrateAirActor(
           e,
           {
+            ...intent,
             targetHeading: target,
-            throttle: 0,
-            boost: 0,
-            fire: false,
-            bomb: false,
-            brake: false,
           },
           {
             mass: config.frame.model === "air" ? config.frame.mass : 100,
             wingspan: config.frame.model === "air" ? config.frame.wingspan : 1,
             wingArea: config.frame.model === "air" ? config.frame.wingArea : 1,
-            acceleration: 0,
-            maxSpeed: Math.max(0.1, targetSpeed / factor),
-            cruiseSpeed: Math.max(0, targetSpeed / factor),
+            acceleration: config.frame.acceleration,
+            maxSpeed: Math.max(.1, targetSpeed),
+            cruiseSpeed: replay && config.frame.model === "air" ? config.frame.cruiseSpeed :
+              Math.max(0, targetSpeed * .5 * e.damage.engineFactor),
             turnRate: config.frame.turnRate,
-            speedMultiplier: 1,
-            thrustMultiplier: 1,
+            speedMultiplier: replay ? RULES.boost.speedMultiplier : 1,
+            thrustMultiplier: replay ? RULES.boost.thrustMultiplier : 1,
           },
           e.damage,
           dt,
@@ -810,7 +819,19 @@ export class World {
       } else {
         const route = e.routeId ? this.routes.find((candidate) => candidate.id === e.routeId) : undefined;
         if (route && e.routeDistance !== undefined) {
-          e.routeDistance = (e.routeDistance + (e.speed * dt) / 12) % route.points.length;
+          const travel = e.speed * dt;
+          for (const other of this.enemies) {
+            if (other === e || other.routeId !== route.id || other.routeDistance === undefined || other.health <= 0) continue;
+            const gap = route.loop ? (other.routeDistance - e.routeDistance + route.length) % route.length
+              : other.routeDistance - e.routeDistance;
+            if (gap > 0) e.speed = Math.min(e.speed, Math.max(0, (gap - e.radius - other.radius - 2) / dt));
+          }
+          e.routeDistance += Math.min(travel, e.speed * dt);
+          if (route.loop) e.routeDistance %= route.length;
+          else if (e.routeDistance >= route.length) {
+            e.age = 66;
+            continue;
+          }
           const point = routePosition(route, e.routeDistance);
           const heading = routeHeading(route, e.routeDistance);
           const side = e.laneOffset ?? 0;
@@ -824,7 +845,7 @@ export class World {
           e.vz = Math.cos(e.heading) * e.speed;
         } else {
           const turnError = angleDelta(target, e.heading);
-        const desiredTurn = clamp(turnError * 2.2, -config.frame.turnRate * RAD, config.frame.turnRate * RAD);
+          const desiredTurn = clamp(turnError * 2.2, -config.frame.turnRate * RAD, config.frame.turnRate * RAD);
           e.turnVelocity = damp(e.turnVelocity, desiredTurn, 5, dt);
           e.heading = angleDelta(e.heading + e.turnVelocity * dt, 0);
           e.speed = damp(e.speed, targetSpeed, 1.5, dt);
@@ -841,13 +862,14 @@ export class World {
       const angle = Math.abs(
         angleDelta(Math.atan2(p.x - e.x, p.z - e.z), e.heading),
       );
-      const canAttack =
-        config.combat.weaponDamage > 0 &&
-        d < (e.layer !== "air" ? 30 : 22) &&
-        (e.layer !== "air" || angle < 0.6 || e.kind === "elite");
+      const aimWithinWeapon = (weapon: RuntimeWeapon) =>
+        this.weaponMountActive(e, weapon) && this.isWeaponTarget(e.factionId ?? "enemy", p, weapon.config.targetLayers) && d <= weapon.config.range &&
+        (e.layer !== "air" || profile.radial || angle <=
+          (weapon.config.category === "turret" ? weapon.config.turretArc : weapon.config.arc) * RAD / 2);
+      const canAttack = intent.fire && e.weapons.some(aimWithinWeapon);
       if (e.cooldown <= 0 && canAttack && e.warning === 0) {
         e.warning =
-          e.layer !== "air" ? (e.kind === "missile_truck" ? 1.3 : 0.8) : 0.7;
+          e.layer !== "air" ? (e.weapons.some((weapon) => weapon.config.homing > 0) ? 1.3 : 0.8) : 0.7;
         e.aimX = p.x + p.vx * 0.35;
         e.aimZ = p.z + p.vz * 0.35;
       }
@@ -857,24 +879,20 @@ export class World {
           e.warning = 0;
           e.cooldown = config.combat.fireInterval * (e.health < e.maxHealth * 0.4 ? 1.5 : 1);
           const a = Math.atan2(e.aimX - e.x, e.aimZ - e.z);
-          const weapon = e.weapons[0];
-          const active = weapon && this.weaponMountActive(e, weapon);
-          const count = active ? weapon.config.count : 0;
-          if (weapon && active)
+          const weapons = e.weapons.filter(aimWithinWeapon);
+          const count = weapons.reduce((sum, weapon) => sum + weapon.config.count, 0);
+          for (const weapon of weapons) {
+            const cos = Math.cos(e.heading), sin = Math.sin(e.heading);
+            const x = e.x + weapon.x * cos + weapon.z * sin;
+            const z = e.z - weapon.x * sin + weapon.z * cos;
             this.fireWeaponSalvo(
-              weapon,
-              e.x,
-              e.z,
-              a,
-              "enemy",
-              0,
-              e.layer !== "air" ? "flak" : "bullet",
-              e.kind === "elite"
-                ? (index, total) => a + (index * Math.PI * 2) / total
-                : (index, total) => a + (index - (total - 1) / 2) * 0.075,
+              weapon, x, z, a, "enemy", 0,
+              weapon.config.homing ? "missile" : e.layer !== "air" ? "flak" : "bullet",
+              profile.radial ? (index, total) => a + index * Math.PI * 2 / total : undefined,
             );
+          }
           const eventType = e.layer !== "air" ? "ground_attack" : "enemy_fire";
-          this.emit({
+          if (count > 0) this.emit({
             type: eventType,
             time: this.elapsed,
             enemyId: e.id,
@@ -884,7 +902,7 @@ export class World {
             count,
             threat: Math.max(0, 1 - d / 45),
           });
-          if (e.kind === "missile_truck")
+          if (weapons.some((weapon) => weapon.config.homing > 0))
             this.emit({
               type: "missile_lock_warning",
               time: this.elapsed,
@@ -902,8 +920,14 @@ export class World {
       (e) => e.health > 0 && distance(e, p) < 85 && e.age < 65,
     );
     const live = new Set(this.enemies);
+    const activeIds = new Set(this.enemies.map((enemy) => enemy.id));
+    for (const id of this.replayControllers.keys())
+      if (!activeIds.has(id)) this.replayControllers.delete(id);
     for (let i = this.actors.length - 1; i > 0; i--)
       if (!live.has(this.actors[i] as Enemy)) this.actors.splice(i, 1);
+  }
+  private isWeaponTarget(factionId: string, actor: CombatEntity, layers: WeaponConfig["targetLayers"]) {
+    return actor.factionId !== factionId && actor.health > 0 && (layers ?? ["air"]).includes(actor.layer);
   }
   private targetFor(w: RuntimeWeapon) {
     const p = this.player,
@@ -911,7 +935,7 @@ export class World {
     let best: Enemy | undefined,
       score = -Infinity;
     for (const e of this.enemies) {
-      if (e.layer !== "air" || e.health <= 0) continue;
+      if (!this.isWeaponTarget(p.factionId, e, c.targetLayers)) continue;
       const d = distance(e, p);
       if (d > c.range) continue;
       const predict = Math.min(0.7, (d / c.speed) * 0.35);
@@ -1043,10 +1067,12 @@ export class World {
     Object.assign(v, {
       id: this.nextId++,
       team,
+      targetLayers: config.targetLayers,
+      armorPierce: config.armorPierce,
       kind: kind ?? (config.homing > 0 ? "missile" : "bullet"),
       x,
       z,
-      y: RULES.playerHeight,
+      y: RULES.flightAltitude,
       prevX: x,
       prevZ: z,
       heading,
@@ -1119,24 +1145,26 @@ export class World {
       v.x += (Math.sin(v.heading) * v.speed + wind.x * 0.15) * dt;
       v.z += (Math.cos(v.heading) * v.speed + wind.z * 0.15) * dt;
       if (v.team === "enemy") {
-        const hit = hitCombatEntity(this.player, v);
+        const hit = this.isWeaponTarget(v.team, p, v.targetLayers) && hitCombatEntity(p, v);
         if (hit) {
           v.active = false;
           this.damageEntity(this.player, hit.part, v.damage, v.x, v.z, v.kind, "player");
         }
       } else {
         for (const e of this.enemies) {
-          if (e.layer !== "air" || e.health <= 0 || v.hitIds.includes(e.id))
+          if (!this.isWeaponTarget(v.team, e, v.targetLayers) || v.hitIds.includes(e.id))
             continue;
           const hit = hitCombatEntity(e, v);
           if (!hit) continue;
-          this.damageEntity(e, hit.part, v.damage, v.x, v.z, "player", "enemy");
+          const armor = hit.part.kind === "armor" ? .65 : 1;
+          const penetration = v.armorPierce ?? 0;
+          this.damageEntity(e, hit.part, v.damage * (armor + (1 - armor) * penetration), v.x, v.z, "player", "enemy");
           v.hitIds.push(e.id);
           e.burn = Math.max(e.burn, v.burn > 0 ? 3 : 0);
           e.slow = Math.max(e.slow, v.slow);
           e.armorBreak = Math.max(e.armorBreak, v.armorBreak);
           if (v.explosion)
-            this.explode(v.x, v.z, v.explosion, v.damage * 0.5, "air", e.id);
+            this.explode(v.x, v.z, v.explosion, v.damage * 0.5, v.targetLayers ?? ["air"], e.id, e.layer);
           if (v.pierce-- > 0) continue;
           if (v.bounce-- > 0) {
             const normal = Math.atan2(v.x - e.x, v.z - e.z);
@@ -1223,7 +1251,7 @@ export class World {
       const e = entity as Enemy;
       e.flash = 1;
       if (appliedDamage > 1)
-        this.effect(x, z, "hit", 0.22, 0.5, e.layer !== "air" ? 0.6 : 4);
+        this.effect(x, z, "hit", 0.22, 0.5, e.layer !== "air" ? this.surfaceHeight(x, z) + .6 : RULES.flightAltitude);
       this.emit({ type: "enemy_hit", time: this.elapsed, enemyId: e.id, amount: appliedDamage, part: part.id });
       if (e.health <= 0) this.finishEnemy(e);
     }
@@ -1243,7 +1271,7 @@ export class World {
   }
   private finishEnemy(e: Enemy) {
     if (e.health > 0) return;
-    const profile = npcProfileById(e.kind);
+    const profile = this.replayControllers.get(e.id)?.profile ?? npcProfileById(e.kind, this.era);
     const config = profile ? combatantById(profile.combatantId) : undefined;
     if (!profile || !config) return;
     this.kills++;
@@ -1255,7 +1283,7 @@ export class World {
       e.layer !== "air" ? "ground" : "explosion",
       1,
       config.combat.collisionRadius * 2,
-      e.layer !== "air" ? 0.3 : 4,
+      e.layer !== "air" ? this.surfaceHeight(e.x, e.z) + .3 : RULES.flightAltitude,
     );
     for (let i = 0; i < Math.min(profile.rewards.coins, 6); i++)
       this.spawnPickup(
@@ -1276,15 +1304,16 @@ export class World {
       coins: profile.rewards.coins,
       combo: this.combo,
     });
-    if (e.kind === "depot") this.explode(e.x, e.z, 5, 90, "ground", e.id);
+    if (["depot", "fuel_truck"].includes(e.kind)) this.explode(e.x, e.z, 5, 90, ["ground"], e.id);
   }
   private explode(
     x: number,
     z: number,
     radius: number,
     damage: number,
-    layer: Enemy["layer"],
+    layers: readonly TargetLayer[],
     exclude = 0,
+    layer = layers[0],
   ) {
     this.effect(
       x,
@@ -1292,7 +1321,7 @@ export class World {
       layer !== "air" ? "ground" : "explosion",
       1,
       radius,
-      layer !== "air" ? 0.2 : 4,
+      layer !== "air" ? this.surfaceHeight(x, z) + .2 : RULES.flightAltitude,
     );
     let hits = 0;
     for (const e of [...this.enemies]) {
@@ -1300,7 +1329,7 @@ export class World {
       if (
         e.health > 0 &&
         e.id !== exclude &&
-        e.layer === layer &&
+        layers.includes(e.layer) &&
         d <= radius + e.radius
       ) {
         this.damageEnemy(e, damage * Math.max(0.3, 1 - d / (radius * 1.42)));
@@ -1310,6 +1339,9 @@ export class World {
     return hits;
   }
   spawnPickup(kind: PickupKind, x: number, z: number, value?: number, xp?: number) {
+    if (kind !== "coin" && this.pickups.items.filter(
+      (item) => item.active && item.kind !== "coin",
+    ).length >= HEALTH_SUPPLY.fieldCap) return;
     const item = this.pickups.acquire();
     if (item) {
       const spec = PICKUP[kind];
@@ -1323,9 +1355,11 @@ export class World {
       });
     }
   }
-  spawnHealthPickup(kind: "repairSmall" | "repairLarge") {
+  spawnHealthPickup(kind: "repairSmall" | "repairLarge", supplemental = false) {
     const p = this.player;
-    const bearing = p.heading + this.random.range(-HEALTH_SUPPLY.bearingMax, HEALTH_SUPPLY.bearingMax);
+    const offset = supplemental ? this.random.range(.7, HEALTH_SUPPLY.bearingMax) * (this.random.next() < .5 ? -1 : 1)
+      : this.random.range(-.5, .5);
+    const bearing = p.heading + offset;
     const range = kind === "repairLarge" ? HEALTH_SUPPLY.largeDistance : HEALTH_SUPPLY.smallDistance;
     const d = this.random.range(range[0], range[1]);
     this.spawnPickup(kind, p.x + Math.sin(bearing) * d, p.z + Math.cos(bearing) * d);
@@ -1353,6 +1387,8 @@ export class World {
       ? "repairLarge"
       : "repairSmall";
     this.spawnHealthPickup(kind);
+    if (activeHealth === 0 && HEALTH_SUPPLY.fieldCap > 1)
+      this.spawnHealthPickup("repairSmall", true);
     this.supplyTimer = Math.max(
       HEALTH_SUPPLY.minInterval,
       base * factor,
@@ -1367,7 +1403,7 @@ export class World {
     for (const c of this.pickups.items) {
       if (!c.active) continue;
       c.life -= dt;
-      if (c.life <= 0 || distance(c, p) > 70) {
+      if (c.life <= 0 || distance(c, p) > (c.kind === "coin" ? 70 : HEALTH_SUPPLY.keepDistance)) {
         c.active = false;
         continue;
       }
@@ -1386,7 +1422,7 @@ export class World {
           this.awardXp(c.xp);
           this.combo = Math.min(3, this.combo + 0.05);
           this.comboTimer = RULES.comboTimeout;
-          this.effect(c.x, c.z, "coin", 0.4, 0.6, 4);
+          this.effect(c.x, c.z, "coin", 0.4, 0.6);
           this.emit({ type: "pickup", time: this.elapsed, kind: c.kind, amount: c.value });
         } else {
           const missing = this.playerMaxHealth - p.health;
@@ -1399,7 +1435,7 @@ export class World {
             this.repairWithAmount(amount);
             this.awardXp(spec.xp);
             this.healPulse = 0.35;
-            this.effect(c.x, c.z, "heal", 0.5, 0.8, 4);
+            this.effect(c.x, c.z, "heal", 0.5, 0.8);
             this.message(`${c.kind === "repairLarge" ? "大修理包" : "小修理包"} · +${Math.round(amount)} 修复量`, 2);
             this.emit({ type: "pickup", time: this.elapsed, kind: c.kind, amount });
           }
@@ -1428,13 +1464,14 @@ export class World {
     const p = this.player;
     const available = UPGRADES.filter(
       (u) =>
-        p.upgrades.filter((id) => id === u.id).length < (u.max ?? 1) &&
+        (u.repeatable || p.upgrades.filter((id) => id === u.id).length < (u.max ?? this.refitLimit(u))) &&
+        (u.weapons?.every((id) => !this.refitWeapon(id).eras || this.refitWeapon(id).eras!.includes(this.era)) ?? true) &&
+        (this.era === "jet" || !["reactor", "nose_radar"].includes(u.id)) &&
         !u.conflicts?.some((id) => p.upgrades.includes(id)) &&
         (!u.requires || u.requires.every((id) => p.upgrades.includes(id))) &&
         (!u.weapons?.length ||
           p.weapons.length + u.weapons.length <=
-            p.frame.hardpoints +
-              (p.upgrades.includes("modular_frame") ? 3 : 0)),
+            this.weaponCapacity),
     );
     const weighted = available
       .map((u) => ({
@@ -1458,6 +1495,27 @@ export class World {
       choices: this.choices.map((u) => u.id).join(","),
     });
     return true;
+  }
+  private refitWeapon(id: string) {
+    if (this.era === "pioneer" || this.era === "ww1") {
+      if (id === "nose_cannon_pair") return WEAPONS.ww1_twin_mg;
+      if (id === "light_cannon") return WEAPONS.ww1_wing_gun;
+    }
+    if (id === "rocket_pod" && this.era === "jet") return WEAPONS.jet_rocket_pod;
+    if (id === "rocket_pod" && this.era === "ww2") return WEAPONS.ww2_rocket_battery;
+    return WEAPONS[id];
+  }
+  private refitLimit(upgrade: Upgrade) {
+    const frame = this.player.frame;
+    const headroom = frame.refit?.headroom ?? (frame.hardpoints >= 8 ? .8 : this.era === "ww1" ? .55 : .35);
+    if (headroom >= .5 && upgrade.parts.some((part) => ["wing", "engine", "gun", "cannon", "turret"].includes(part.kind)))
+      return Math.max(2, Math.floor(frame.hardpoints * headroom / 3));
+    return 1;
+  }
+  private get weaponCapacity() {
+    const player = this.player;
+    const extra = player.parts.filter((part) => part.id.startsWith("giant_wing_") && part.health > 0).length;
+    return player.frame.hardpoints + extra + (player.upgrades.includes("modular_frame") ? 3 : 0);
   }
   private upgradeWeight(u: Upgrade) {
     let w = u.rarity === "common" ? 5 : u.rarity === "rare" ? 2 : 0.7;
@@ -1506,35 +1564,35 @@ export class World {
     if (u.multiply)
       for (const [key, val] of Object.entries(u.multiply))
         p.stats[key as keyof Stats] *= val;
+    if (u.id === "armor_belt") {
+      const body = p.parts.find((part) => part.id === "center_body")!;
+      body.maxHealth += u.add?.health ?? 0;
+      stateFor(body);
+    }
     // Newly installed parts enter at full local health and expand the total pool.
-    p.health = Math.max(1, p.health);
     p.energy = Math.min(p.energy, p.stats.energyMax);
     const newlyAdded: Part[] = [];
     u.parts.forEach((recipe, i) => {
       const existing =
-        u.max &&
+        u.repeatable &&
         p.parts.find(
           (part) => part.id.startsWith(`${u.id}_`) && part.kind === recipe.kind,
         );
       if (existing) {
-        if (!existing.destroyed)
-          existing.health = Math.min(
-            existing.maxHealth,
-            existing.health + recipe.health * 0.3,
-          );
         newlyAdded.push(existing);
         return;
       }
       const side =
         recipe.slot === "leftWing" ? -1 : recipe.slot === "rightWing" ? 1 : 0;
-      const x = recipe.x ?? side * p.stats.wingspan * 0.32;
+      const copies = p.parts.filter((part) => part.id.startsWith(u.id + "_") && part.slot === recipe.slot).length;
+      const x = (recipe.x ?? side * p.stats.wingspan * 0.32) + side * copies * .45;
       const z =
         recipe.z ??
         (recipe.slot === "nose"
           ? p.stats.length * 0.42
           : recipe.slot === "tail"
             ? -p.stats.length * 0.4
-            : 0);
+            : 0) - copies * .45;
       const part = this.part(
         `${u.id}_${p.upgrades.length}_${i}`,
         recipe.kind,
@@ -1545,7 +1603,9 @@ export class World {
         recipe.kind === "wing" ? 1.1 : 0.5,
       );
       part.weight = recipe.weight ?? 5;
-      part.addedMass = part.weight * 10;
+      part.addedMass = part.weight * 10 * (p.frame.refit?.massPenalty ?? 1);
+      if (part.role === "wing") part.lift = (part.lift ?? 1) * (p.frame.refit?.wing ?? 1);
+      if (part.role === "engine") part.thrust = (part.thrust ?? 1) * (p.frame.refit?.engine ?? 1);
       if (part.kind !== "wing" && part.kind !== "winglet")
         part.visual = { ...(part.visual ?? { kind: part.kind, scale: 1, detachable: false }), detachable: false };
       p.parts.push(part);
@@ -1555,12 +1615,12 @@ export class World {
       if (id === "lock_missile" && this.mainLock) return;
       const part = newlyAdded[Math.min(i, newlyAdded.length - 1)];
       if (!part || part.destroyed) return;
-      const c =
-        id === "nose_cannon_pair" && u.id === "nose_cannon"
-          ? { ...WEAPONS[id], damage: WEAPONS[id].damage * 1.55, pierce: 1 }
-          : WEAPONS[id];
+      const baseWeapon = this.refitWeapon(id);
+      const c = u.id === "nose_cannon"
+        ? { ...baseWeapon, damage: baseWeapon.damage * 1.55, pierce: 1 }
+        : baseWeapon;
       this.addWeapon(
-        c,
+        { ...c, damage: c.damage * (p.frame.refit?.weapon ?? 1) },
         part.id,
         part.x,
         part.z + 0.4,
@@ -1588,7 +1648,7 @@ export class World {
     this.player.revision++;
   }
   toggleBombing() {
-    if (!["battle", "bombing"].includes(this.phase)) return;
+    if (!["battle", "bombing"].includes(this.phase) || !this.bombWeapon) return;
     this.player.boosting = false;
     this.player.boost = 0;
     this.phase = this.phase === "battle" ? "bombing" : "battle";
@@ -1604,54 +1664,35 @@ export class World {
   }
   private updateBombing(dt: number, input: Intent) {
     this.bombCooldown = Math.max(0, this.bombCooldown - dt);
-    const p = this.player,
-      lead = 2.6 + p.speed * 0.55;
+    const p = this.player;
+    const headingSin = Math.sin(p.heading), headingCos = Math.cos(p.heading);
+    const lateral = input.active ? input.x * headingCos - input.z * headingSin : 0;
+    const longitudinal = input.active ? input.x * headingSin + input.z * headingCos : 0;
+    const lead = clamp(7 + p.speed * .55 + longitudinal * 3, 4, 14);
+    this.aimOffset.z = damp(this.aimOffset.z || lead, lead, 5, dt);
+    this.aimOffset.x = damp(this.aimOffset.x, clamp(lateral, -1, 1) * this.aimOffset.z * Math.tan(10 * RAD), 5, dt);
+    this.aim.x = p.x + headingSin * this.aimOffset.z + headingCos * this.aimOffset.x;
+    this.aim.z = p.z + headingCos * this.aimOffset.z - headingSin * this.aimOffset.x;
     if (this.isBombing) {
-      if (input.active) {
-        this.aimOffset.x = clamp(
-          this.aimOffset.x + input.x * input.magnitude ** 1.6 * 3 * dt,
-          -5,
-          5,
-        );
-        this.aimOffset.z = clamp(
-          this.aimOffset.z + input.z * input.magnitude ** 1.6 * 3 * dt,
-          -5,
-          5,
-        );
-      }
       const motion = input.active ? input.magnitude : 0;
-      const gain =
-        (1 - motion * 1.8) * RULES.bombSettleRate * p.stats.bombSettle;
-      this.stability = clamp(
-        this.stability + (gain - this.wind.gust * 0.08 - p.hitFlash * 0.7) * dt,
-      );
+      const gain = (1 - motion * 1.8) * RULES.bombSettleRate * p.stats.bombSettle;
+      this.stability = clamp(this.stability + (gain - this.wind.gust * .08 - p.hitFlash * .7) * dt);
     } else this.stability = 0;
-    this.aim.x = damp(
-      this.aim.x,
-      p.x + Math.sin(p.heading) * lead + this.aimOffset.x,
-      4,
-      dt,
-    );
-    this.aim.z = damp(
-      this.aim.z,
-      p.z + Math.cos(p.heading) * lead + this.aimOffset.z,
-      4,
-      dt,
-    );
     for (const bomb of this.bombs) {
       bomb.age += dt;
       if (bomb.age >= RULES.bombFallTime) {
-        const hits = this.explode(
+        const waterOnly = bomb.weapon.targetLayers?.length === 1 && bomb.weapon.targetLayers[0] === "water";
+        const hits = waterOnly && !isWater(bomb.x, bomb.z, this.terrainSeed) ? 0 : this.explode(
           bomb.x,
           bomb.z,
           bomb.weapon.explosion,
           bomb.weapon.damage,
-          "ground",
+          bomb.weapon.targetLayers ?? ["ground", "water"],
         );
         this.bombsHit += Number(hits > 0);
         this.telemetry.record(this.elapsed, "bomb_impact", { hits });
         this.message(
-          hits > 0 ? `直接命中 · ${hits} 个地面目标` : "投弹完成 · 落点无目标",
+          hits > 0 ? `直接命中 · ${hits} 个目标` : "投放完成 · 落点无目标",
           2,
         );
         if (bomb.weapon.duration)
@@ -1677,7 +1718,8 @@ export class World {
     this.telemetry.record(this.elapsed, "bomb_attempt", {
       stability: this.stability,
     });
-    if (!this.canBomb) {
+    const weapon = this.bombWeapon;
+    if (!this.canBomb || !weapon) {
       this.message("准心尚未稳定或炸弹正在装填", 2);
       return false;
     }
@@ -1687,12 +1729,13 @@ export class World {
       z: this.aim.z,
       startX: p.x,
       startZ: p.z,
+      startY: RULES.flightAltitude,
       age: 0,
-      weapon: this.bombWeapon,
+      weapon,
     });
     this.bombCooldown = Math.max(
       1,
-      1 / this.bombWeapon.fireRate +
+      1 / weapon.fireRate +
         p.stats.bombCooldown +
         (1 - this.player.damage.bombFactor) * 2,
     );
@@ -1744,7 +1787,7 @@ export class World {
     kind: Effect["kind"],
     life: number,
     radius: number,
-    y = 4,
+    y: number = RULES.flightAltitude,
   ) {
     const e = this.effects.acquire();
     if (e)

@@ -1,4 +1,10 @@
+import type { EraId } from "./aircrafts";
+
+export type TargetLayer = "air" | "ground" | "water";
 export interface WeaponConfig {
+  eras?: EraId[];
+  targetLayers?: TargetLayer[];
+  armorPierce?: number;
   id: string;
   name: string;
   category: "directional" | "turret" | "area";
@@ -57,6 +63,26 @@ const weapon = (
 });
 export const WEAPONS: Record<string, WeaponConfig> = Object.fromEntries(
   [
+    weapon("ww1_sync_mg", "同步机枪", { damage: 4, fireRate: 9, speed: 22, range: 20, arc: 20, eras: ["pioneer", "ww1"] }),
+    weapon("ww1_twin_mg", "双联同步机枪", { damage: 5.6, fireRate: 8, speed: 22, range: 20, count: 2, arc: 22, eras: ["pioneer", "ww1"] }),
+    weapon("ww1_wing_gun", "翼上机枪", { damage: 4, fireRate: 8, speed: 22, range: 21, spread: 2, eras: ["pioneer", "ww1"] }),
+    weapon("pioneer_light_bomb", "早期轻型炸弹", { category: "area", damage: 48, fireRate: .25, explosion: 3.5, eras: ["pioneer"], targetLayers: ["ground"] }),
+    weapon("ww1_light_bomb", "轻型炸弹", { category: "area", damage: 64, fireRate: .25, explosion: 3.5, eras: ["ww1"], targetLayers: ["ground"] }),
+    weapon("early_torpedo", "早期鱼雷", { category: "area", damage: 192, fireRate: .14, explosion: 5, eras: ["ww1"], targetLayers: ["water"] }),
+    weapon("ww2_torpedo", "航空鱼雷", { category: "area", damage: 228, fireRate: .14, explosion: 6, eras: ["ww2"], targetLayers: ["water"] }),
+    weapon("ww2_medium_bomb", "中型炸弹", { category: "area", damage: 171, fireRate: .19, explosion: 6, eras: ["ww1", "ww2"], targetLayers: ["ground", "water"] }),
+    weapon("ww2_autocannon", "航空机炮", { damage: 13.3, armorPierce: .25, fireRate: 5, speed: 28, range: 26, arc: 20, eras: ["ww2"] }),
+    weapon("ww2_heavy_cannon", "重型航空机炮", { damage: 28.5, armorPierce: .45, fireRate: 2.2, speed: 30, range: 28, arc: 18, pierce: 1, eras: ["ww2"] }),
+    weapon("ww2_rocket_battery", "翼下火箭阵列", { damage: 28.5, fireRate: .8, speed: 14.3, range: 28.5, count: 6, arc: 18, spread: 5, explosion: 2.6, eras: ["ww2"], targetLayers: ["air", "ground", "water"] }),
+    weapon("aa_autocannon", "防空机关炮", { category: "turret", damage: 8, fireRate: 6, speed: 27, range: 30, arc: 14 }),
+    weapon("naval_gun", "舰炮", { category: "turret", damage: 35, fireRate: .6, speed: 30, range: 40, arc: 16, turretArc: 180, eras: ["ww1", "ww2", "jet"] }),
+    weapon("jet_autocannon", "喷气式机炮", { damage: 16, armorPierce: .35, fireRate: 7, speed: 34, range: 30, arc: 20, eras: ["jet"] }),
+    weapon("jet_heavy_cannon", "喷气式重炮", { damage: 40, armorPierce: .5, fireRate: 1.8, speed: 36, range: 32, arc: 18, pierce: 1, eras: ["jet"] }),
+    weapon("jet_air_missile", "拦截导弹", { damage: 85, fireRate: .5, speed: 14, range: 42, arc: 18, lockTime: 1, explosion: 3, homing: 170, homingLife: 4, eras: ["jet"] }),
+    weapon("ww2_incendiary", "航空燃烧弹", { category: "area", damage: 57, fireRate: .125, explosion: 3.5, duration: 6, burn: 30, eras: ["ww2"], targetLayers: ["ground"] }),
+    weapon("jet_rocket_pod", "喷气机火箭巢", { damage: 28, fireRate: .8, speed: 16, range: 30, count: 8, arc: 18, spread: 5, explosion: 2.4, eras: ["jet"], targetLayers: ["air", "ground", "water"] }),
+    weapon("flak_88", "重型防空炮", { damage: 45, fireRate: .8, speed: 30, range: 40, explosion: 3.5, eras: ["ww2", "jet"], targetLayers: ["air"] }),
+    weapon("howitzer", "自行火炮", { damage: 90, fireRate: .5, speed: 30, range: 50, explosion: 5, eras: ["pioneer", "ww1", "ww2", "jet"], targetLayers: ["ground"] }),
     weapon("light_cannon", "轻型机炮", {
       damage: 6,
       fireRate: 8,
@@ -108,6 +134,8 @@ export const WEAPONS: Record<string, WeaponConfig> = Object.fromEntries(
       pierce: 1,
     }),
     weapon("rocket_pod", "火箭巢", {
+      eras: ["ww2", "jet"],
+      targetLayers: ["air", "ground", "water"],
       damage: 24,
       fireRate: 0.8,
       speed: 15,
@@ -118,7 +146,9 @@ export const WEAPONS: Record<string, WeaponConfig> = Object.fromEntries(
       explosion: 2.2,
     }),
     weapon("lock_missile", "锁定导弹", {
+      eras: ["jet"],
       damage: 75,
+      armorPierce: .4,
       fireRate: 0.5,
       speed: 12,
       range: 40,
@@ -141,6 +171,7 @@ export const WEAPONS: Record<string, WeaponConfig> = Object.fromEntries(
       explosion: 7.5,
     }),
     weapon("napalm_bomb", "凝固汽油弹", {
+      eras: ["ww2", "jet"],
       category: "area",
       damage: 45,
       fireRate: 0.125,

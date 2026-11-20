@@ -23,6 +23,7 @@ export interface Upgrade {
   conflicts?: string[];
   requires?: string[];
   max?: number;
+  repeatable?: boolean;
 }
 const engine = (slot: Slot): PartRecipe => ({
   kind: "engine",
@@ -328,7 +329,7 @@ export const UPGRADES: Upgrade[] = [
     preview: "top",
     multiply: { damage: 1.12, turnRate: 0.98 },
     parts: [{ kind: "ammo", slot: "top", health: 20 }],
-    max: 999,
+    repeatable: true,
   },
   {
     id: "cooler",
@@ -342,7 +343,7 @@ export const UPGRADES: Upgrade[] = [
     add: { energyMax: 10 },
     multiply: { energyRecover: 1.15 },
     parts: [{ kind: "cooler", slot: "center", health: 22 }],
-    max: 999,
+    repeatable: true,
   },
   {
     id: "armor_belt",
@@ -355,8 +356,8 @@ export const UPGRADES: Upgrade[] = [
     preview: "center",
     add: { health: 12 },
     multiply: { turnRate: 0.99 },
-    parts: [{ kind: "armor", slot: "center", health: 20 }],
-    max: 999,
+    parts: [],
+    repeatable: true,
   },
 ];
 export const upgradeById = (id: string) => UPGRADES.find((u) => u.id === id);

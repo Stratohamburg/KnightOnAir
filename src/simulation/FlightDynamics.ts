@@ -15,6 +15,7 @@ export interface AirActorConfig {
   turnRate: number;
   speedMultiplier?: number;
   thrustMultiplier?: number;
+  bankLimit?: number;
 }
 
 export interface AirActorState extends AirMotionState {
@@ -111,7 +112,7 @@ export function integrateAirActor(
       (105 / wingLoading) ** 1.4 *
       (1800 / Math.max(1, config.mass)) ** 0.3 *
       wingFactor;
-  const bankLimit = Math.min(87.5 * RAD, Math.acos(1 / Math.max(1, maxLoad)));
+  const bankLimit = Math.min(config.bankLimit ?? 87.5 * RAD, Math.acos(1 / Math.max(1, maxLoad)));
   const targetBank = clamp(
     -Math.atan2(actor.speed * desiredTurn, FLIGHT_GRAVITY) + damage.rollBias,
     -bankLimit,
@@ -127,7 +128,9 @@ export function integrateAirActor(
   const rollAuthority = targetBank > actor.bank ? damage.rollAuthorityLeft : damage.rollAuthorityRight;
   actor.rollVelocity += ((targetBank - actor.bank) * response ** 2 * rollAuthority - 2 * response * actor.rollVelocity) * dt;
   actor.rollVelocity = clamp(actor.rollVelocity, -response * 0.35, response * 0.35);
-  actor.bank = clamp(actor.bank + actor.rollVelocity * dt, -87.5 * RAD, 87.5 * RAD);
+  const bank = actor.bank + actor.rollVelocity * dt;
+  actor.bank = clamp(bank, -bankLimit, bankLimit);
+  if (bank !== actor.bank) actor.rollVelocity = 0;
   actor.turnVelocity = clamp(
     (-FLIGHT_GRAVITY * Math.tan(actor.bank)) / Math.max(1, actor.speed),
     -turnLimit,

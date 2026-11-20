@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIRFRAMES } from "../src/data/aircrafts";
+import { AIRFRAMES, STARTER_FRAME_ID } from "../src/data/aircrafts";
 import {
   COMBATANT_CONFIGS,
   CONFIG_DIAGNOSTICS,
@@ -12,8 +12,8 @@ import { World } from "../src/simulation/World";
 describe("configuration v3", () => {
   it("loads every combatant and NPC profile without diagnostics", () => {
     expect(CONFIG_DIAGNOSTICS).toEqual([]);
-    expect(Object.keys(COMBATANT_CONFIGS)).toHaveLength(17);
-    expect(Object.keys(NPC_PROFILES)).toHaveLength(13);
+    expect(AIRFRAMES).toHaveLength(17);
+    expect(Object.keys(COMBATANT_CONFIGS)).toHaveLength(AIRFRAMES.length + Object.keys(NPC_PROFILES).length);
     for (const frame of AIRFRAMES) {
       const config = COMBATANT_CONFIGS[frame.id];
       expect(config.parts.some((part) => part.role === "body")).toBe(true);
@@ -40,7 +40,8 @@ describe("configuration v3", () => {
       setItem: (key: string, value: string) => stored.set(key, value),
     };
     const fresh = new SaveStore(storage);
-    expect(fresh.data.equipped).toBe("swift_01");
+    expect(fresh.data.equipped).toBe(STARTER_FRAME_ID);
+    expect(stored.has("knight-on-air.v1")).toBe(true);
     fresh.persist();
     expect(stored.has("knight-on-air.v2")).toBe(true);
     expect(JSON.parse(stored.get("knight-on-air.v2")!).version).toBe(2);

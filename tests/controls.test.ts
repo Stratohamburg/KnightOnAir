@@ -137,7 +137,7 @@ describe("screen-relative flight controls", () => {
   });
   it("keeps the knob under the finger and releases directional input on cancellation", () => {
     const { surface, stick } = touchStick(1, 0);
-    expect(surface.knob.style.transform).toMatch(/^translate\(64px, 0px\)$/);
+    expect(surface.knob.style.transform).toBe("translate(64px, 0px)");
     expect(surface.classes.has("active")).toBe(true);
     surface.pointer("pointercancel");
     expect(stick.read(1 / 60).active).toBe(false);
@@ -148,10 +148,15 @@ describe("screen-relative flight controls", () => {
   it("matches the throttle ring, percentage and full-power highlight to the acceleration request", () => {
     const { surface, stick } = touchStick(0.5, 0);
     let intent = stick.read(1);
-    expect(intent.magnitude).toBeCloseTo(0.49, 2);
-    expect(surface.attributes.get("aria-valuenow")).toBe("49");
-    expect(surface.label.textContent).toBe("加速 · 油门 49%");
+    expect(intent.magnitude).toBeCloseTo(0.43, 2);
+    expect(surface.attributes.get("aria-valuenow")).toBe("43");
+    expect(surface.label.textContent).toBe("油门 43%");
     expect(surface.knob.style.transform).toBe("translate(32px, 0px)");
+    surface.pointer("pointermove", 1, 0);
+    intent = stick.read(1);
+    expect(intent.magnitude).toBeCloseTo(1);
+    expect(intent.boost).toBe(0);
+    expect(surface.dataset.mode).toBe("full");
     surface.pointer("pointermove", 2, 0);
     intent = stick.read(1);
     expect(intent.magnitude).toBeCloseTo(1, 7);
@@ -163,17 +168,24 @@ describe("screen-relative flight controls", () => {
     expect(surface.dataset.mode).toBe("cruise");
     expect(surface.properties.get("--throttle")).toBe("0");
   });
-  it("shows the actual bombing trim limit and depleted energy instead of full acceleration", () => {
-    const { surface, stick } = touchStick(0, -1);
+  it("uses only the normal ring while bombing and keeps ordinary throttle during boost recharge", () => {
+    const { surface, stick } = touchStick(1.4, 0);
+    expect(stick.read(1).boost).toBeCloseTo(1);
     stick.setFlightState(true, true);
-    stick.read(1);
+    expect(stick.read(1).active).toBe(false);
+    surface.pointer("pointerdown", 1.4, 0);
+    expect(stick.read(1).boost).toBe(0);
+    expect(surface.knob.style.transform).toBe("translate(64px, 0px)");
     expect(surface.dataset.mode).toBe("trim");
+    expect(surface.dataset.bombing).toBe("true");
     expect(surface.label.textContent).toBe("轰炸微调 · 油门 45%");
-    stick.setFlightState(false, false);
-    stick.read(1);
-    expect(surface.dataset.mode).toBe("depleted");
-    expect(surface.properties.get("--throttle")).toBe("0");
-    expect(surface.label.textContent).toContain("能量不足");
+    stick.setFlightState(false, false, true);
+    surface.pointer("pointerdown", 1.4, 0);
+    const intent = stick.read(1);
+    expect(intent.boost).toBeCloseTo(1);
+    expect(surface.dataset.mode).toBe("locked");
+    expect(surface.properties.get("--throttle")).toBe("100");
+    expect(surface.label.textContent).toContain("加力回充");
     stick.reset();
     expect(surface.dataset.mode).toBe("cruise");
   });

@@ -36,13 +36,13 @@ export function aircraftMaterial(
 }
 export function terrainMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: { time: { value: 0 } },
+    uniforms: { time: { value: 0 }, grass: { value: new THREE.Color("#68ad76") }, road: { value: new THREE.Color("#94c779") } },
     vertexShader: `attribute float height; attribute float surfaceMask; attribute float roadMask; attribute float shoreMask;
       varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore;
       void main(){ vec4 world=modelMatrix*vec4(position,1.); vWorld=world.xyz; vNormal=normalize(normalMatrix*normal); vHeight=height; vSurface=surfaceMask; vRoad=roadMask; vShore=shoreMask; gl_Position=projectionMatrix*viewMatrix*world; }`,
-    fragmentShader: `${noise} varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore; uniform float time;
+    fragmentShader: `${noise} varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore; uniform float time; uniform vec3 grass,road;
       void main(){
-        vec3 grass=vec3(.40,.72,.28); vec3 sand=vec3(.91,.72,.42); vec3 water=vec3(.24,.74,.84); vec3 road=vec3(.82,.70,.50); vec3 rock=vec3(.38,.65,.53);
+        vec3 sand=vec3(.91,.72,.42); vec3 water=vec3(.24,.74,.84); vec3 rock=vec3(.38,.65,.53);
         vec3 col = vSurface < .5 ? grass : vSurface < 1.5 ? road : vSurface < 2.5 ? sand : vSurface < 3.5 ? water : rock;
         float light=max(0.,dot(normalize(vNormal),normalize(vec3(-.45,1.,.65))));
         float band=light < .32 ? .76 : light < .68 ? .93 : 1.08;
@@ -68,7 +68,15 @@ export function cloudMaterial() {
       time: { value: 0 },
     },
     vertexShader: `varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal;
-      void main(){vLocal=position;vNormal=normalize(normalMatrix*normal);vec4 world=modelMatrix*vec4(position,1.);vWorld=world.xyz;gl_Position=projectionMatrix*viewMatrix*world;}`,
+      void main(){vLocal=position;
+      vec4 local=vec4(position,1.);
+      vec3 n=normal;
+      #ifdef USE_INSTANCING
+        local=instanceMatrix*local;
+        n=mat3(instanceMatrix)*n;
+      #endif
+      vNormal=normalize(mat3(modelMatrix)*n);
+      vec4 world=modelMatrix*local;vWorld=world.xyz;gl_Position=projectionMatrix*viewMatrix*world;}`,
     fragmentShader: `${noise} varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal;
       uniform vec3 topColor,middleColor,shadowColor; uniform float time;
       void main(){vec3 n=normalize(vNormal); float light=dot(n,normalize(vec3(-.45,1.,.65)))*.5+.5; float grain=fbm(vLocal.xz*.18+time*.004)-.5;
@@ -86,10 +94,10 @@ export function cloudMaterial() {
 
 export function waterMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: { time: { value: 0 } },
+    uniforms: { time: { value: 0 }, tint: { value: new THREE.Color("#399db4") } },
     vertexShader: `varying vec3 vWorld; void main(){vec4 world=modelMatrix*vec4(position,1.);vWorld=world.xyz;gl_Position=projectionMatrix*viewMatrix*world;}`,
-    fragmentShader: `${noise} varying vec3 vWorld; uniform float time;
-      void main(){float wave=fbm(vWorld.xz*.045+vec2(time*.018,time*.012)); vec3 shallow=vec3(.38,.84,.9); vec3 deep=vec3(.16,.49,.72); vec3 col=mix(deep,shallow,wave); gl_FragColor=vec4(col,1.);
+    fragmentShader: `${noise} varying vec3 vWorld; uniform float time; uniform vec3 tint;
+      void main(){float wave=fbm(vWorld.xz*.045+vec2(time*.018,time*.012)); vec3 shallow=tint*1.9; vec3 deep=tint*.72; vec3 col=mix(deep,shallow,wave); gl_FragColor=vec4(col,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>}`,
     side: THREE.DoubleSide,
@@ -136,7 +144,11 @@ export function crosshairMaterial() {
 export function projectileMaterial(color: THREE.ColorRepresentation) {
   return new THREE.ShaderMaterial({
     uniforms: { color: { value: new THREE.Color(color) }, time: { value: 0 } },
-    vertexShader: `varying vec3 vP;void main(){vP=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+    vertexShader: `varying vec3 vP;void main(){vP=position; vec4 local=vec4(position,1.);
+      #ifdef USE_INSTANCING
+        local=instanceMatrix*local;
+      #endif
+      gl_Position=projectionMatrix*modelViewMatrix*local;}`,
     fragmentShader: `uniform vec3 color;uniform float time;varying vec3 vP;void main(){gl_FragColor=vec4(color*(1.+.18*sin(vP.z*8.+time*20.)),1.);}`,
   });
 }

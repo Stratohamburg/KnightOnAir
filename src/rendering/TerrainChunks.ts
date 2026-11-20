@@ -45,17 +45,21 @@ export class TerrainChunks {
     this.scene.add(this.farMountains);
   }
 
+  setWaterColor(color: string) {
+    this.water.material.uniforms.tint.value.set(color);
+  }
+
   private buildRouteProps(seed: number) {
     const routes = createDefaultRoutes(seed);
     const sleeper = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1.6, 0.12, 0.18),
       new THREE.MeshStandardMaterial({ color: "#725a45", roughness: 1, flatShading: true }),
-      80,
+      640,
     );
     const rail = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.08, 0.08, 1.6),
       new THREE.MeshStandardMaterial({ color: "#526b7d", metalness: 0.3, roughness: 0.7, flatShading: true }),
-      80,
+      1280,
     );
     const bridge = new THREE.InstancedMesh(
       new THREE.BoxGeometry(2.4, 0.18, 0.9),
@@ -65,12 +69,12 @@ export class TerrainChunks {
     const roadside = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.22, 0.75, 0.18),
       new THREE.MeshStandardMaterial({ color: "#d7b777", roughness: 1, flatShading: true }),
-      64,
+      256,
     );
     const facility = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1.6, 0.35, 0.8),
       new THREE.MeshStandardMaterial({ color: "#c98a4a", roughness: 1, flatShading: true }),
-      16,
+      112,
     );
     const object = new THREE.Object3D();
     let sleeperCount = 0;
@@ -79,18 +83,18 @@ export class TerrainChunks {
     let roadsideCount = 0;
     let facilityCount = 0;
     for (const route of routes) {
-      for (let i = 0; i < route.points.length; i++) {
-        const point = routePosition(route, i);
-        const y = surfaceHeight(point.x, point.z, seed);
-        const heading = routeHeading(route, i);
+      if (route.kind === "water") continue;
+      const spacing = route.kind === "rail" ? 1.4 : 8;
+      for (let at = 0; at < route.length; at += spacing) {
+        const point = routePosition(route, at);
+        const y = point.y;
+        const heading = routeHeading(route, at);
         if (route.kind === "rail") {
-          for (const side of [-0.55, 0.55]) {
-            object.position.set(point.x + Math.cos(heading) * side, y + 0.16, point.z - Math.sin(heading) * side);
-            object.rotation.set(0, heading, 0);
-            object.scale.set(1, 1, 1);
-            object.updateMatrix();
-            if (sleeperCount < sleeper.count) sleeper.setMatrixAt(sleeperCount++, object.matrix);
-          }
+          object.position.set(point.x, y + .1, point.z);
+          object.rotation.set(0, heading, 0);
+          object.scale.set(1, 1, 1);
+          object.updateMatrix();
+          if (sleeperCount < sleeper.count) sleeper.setMatrixAt(sleeperCount++, object.matrix);
           for (const side of [-0.55, 0.55]) {
             object.position.set(point.x + Math.cos(heading) * side, y + 0.28, point.z - Math.sin(heading) * side);
             object.rotation.set(0, heading, 0);
@@ -98,7 +102,7 @@ export class TerrainChunks {
             if (railCount < rail.count) rail.setMatrixAt(railCount++, object.matrix);
           }
           if (isWater(point.x, point.z, seed) && bridgeCount < bridge.count) {
-            object.position.set(point.x, y + 2.2, point.z);
+            object.position.set(point.x, y - .05, point.z);
             object.rotation.set(0, heading, 0);
             object.updateMatrix();
             bridge.setMatrixAt(bridgeCount++, object.matrix);
@@ -111,8 +115,8 @@ export class TerrainChunks {
             object.updateMatrix();
             if (roadsideCount < roadside.count) roadside.setMatrixAt(roadsideCount++, object.matrix);
           }
-          if (i % 4 === 0 && facilityCount < facility.count) {
-            object.position.set(point.x, y + 0.18, point.z);
+          if (at % 32 === 0 && facilityCount < facility.count) {
+            object.position.set(point.x + Math.cos(heading) * 5, y + 0.18, point.z - Math.sin(heading) * 5);
             object.rotation.set(0, heading, 0);
             object.updateMatrix();
             facility.setMatrixAt(facilityCount++, object.matrix);

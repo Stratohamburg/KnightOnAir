@@ -57,10 +57,11 @@ const fbm = (x: number, z: number, seed: number, octaves: number) => {
   return total / weight;
 };
 
-const routeDistance = (x: number, z: number, seed: number) => {
-  const wave = Math.sin(z * 0.035 + seed * 0.013) * 15 + Math.sin(z * 0.009 - seed * 0.021) * 9;
-  return Math.abs(x - wave);
-};
+export const roadX = (z: number, seed: number) =>
+  Math.sin(z * .035 + seed * .013) * 15 + Math.sin(z * .009 - seed * .021) * 9;
+export const riverZ = (x: number, seed: number) =>
+  -Math.sin(x * .022 + seed * .01) * 18 - Math.sin(x * .06) * 4;
+const routeDistance = (x: number, z: number, seed: number) => Math.abs(x - roadX(z, seed));
 
 const baseHeight = (x: number, z: number, seed: number) => {
   const warpX = (fbm(x * 0.004, z * 0.004, seed + 11, 2) - 0.5) * 18;
@@ -75,10 +76,10 @@ const baseHeight = (x: number, z: number, seed: number) => {
 
 export function terrainHeight(x: number, z: number, seed = TERRAIN.seed) {
   let height = baseHeight(x, z, seed);
-  const river = Math.abs(z + Math.sin(x * 0.022 + seed * 0.01) * 18 + Math.sin(x * 0.06) * 4);
+  const river = Math.abs(z - riverZ(x, seed));
   const riverMask = 1 - clamp((river - 2) / 5, 0, 1);
-  height -= riverMask * 6;
-  const road = 1 - clamp((routeDistance(x, z, seed) - 2) / 4.5, 0, 1);
+  height += (-3 - height) * riverMask;
+  const road = (1 - riverMask) * (1 - clamp((routeDistance(x, z, seed) - 2) / 4.5, 0, 1));
   const roadBase = baseHeight(x, z, seed);
   height = height * (1 - road * 0.8) + roadBase * road * 0.8;
   return clamp(height, -3.5, TERRAIN.farPeak);
@@ -110,8 +111,4 @@ export function sampleTerrain(x: number, z: number, seed = TERRAIN.seed): Terrai
   const water = isWater(x, z, seed);
   const surfaceMask = water ? 3 : shoreMask > 0.1 ? 2 : roadMask > 0.45 ? 1 : Math.abs(slopeX) + Math.abs(slopeZ) > 0.55 ? 4 : 0;
   return { height, slopeX, slopeZ, surface: water ? "water" : "land", surfaceMask, roadMask, shoreMask };
-}
-
-export function actorAltitude(x: number, z: number, clearance = 20, seed = TERRAIN.seed) {
-  return surfaceHeight(x, z, seed) + clamp(clearance, 4, 80);
 }

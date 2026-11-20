@@ -32,18 +32,8 @@ export class CloudField {
   private readonly groups: THREE.Group[] = [];
   private readonly icoGeometry = new THREE.IcosahedronGeometry(1, 1);
   private readonly boxGeometry = new THREE.BoxGeometry(1, 1, 1);
-  private readonly materials = [
-    cloudMaterial(),
-    cloudMaterial(),
-  ];
-  private readonly shellMaterial = new THREE.MeshBasicMaterial({
-    color: "#fff6e5",
-    transparent: true,
-    opacity: 0.1,
-    depthWrite: false,
-    depthTest: true,
-    side: THREE.BackSide,
-  });
+  private readonly material = cloudMaterial();
+  private readonly shadowMatrix = new THREE.Object3D();
   private readonly shadowGeometry = new THREE.PlaneGeometry(1, 1);
   private readonly shadowMaterial = new THREE.MeshBasicMaterial({
     color: "#57758b",
@@ -95,25 +85,21 @@ export class CloudField {
       };
       this.clusters.push(data);
       const group = new THREE.Group();
-      for (const puff of puffs) {
-        const mesh = new THREE.Mesh(
-          puff.kind === "ico" ? this.icoGeometry : this.boxGeometry,
-          this.materials[puff.kind === "ico" ? 0 : 1],
-        );
-        mesh.position.set(puff.x, puff.y, puff.z);
-        mesh.scale.set(puff.radius * 1.25, puff.radius * 0.65, puff.radius);
-        mesh.rotation.y = puff.rotation;
-        mesh.userData.tint = puff.tint;
-        group.add(mesh);
-        const shell = new THREE.Mesh(
-          puff.kind === "ico" ? this.icoGeometry : this.boxGeometry,
-          this.shellMaterial,
-        );
-        shell.position.copy(mesh.position);
-        shell.scale.copy(mesh.scale).multiplyScalar(1.08);
-        shell.rotation.copy(mesh.rotation);
-        shell.renderOrder = 1;
-        group.add(shell);
+      for (const kind of ["ico", "box"] as const) {
+        const members = puffs.filter((puff) => puff.kind === kind);
+        if (!members.length) continue;
+        const geometry = kind === "ico" ? this.icoGeometry : this.boxGeometry;
+        const batch = new THREE.InstancedMesh(geometry, this.material, members.length);
+        const transform = new THREE.Object3D();
+        members.forEach((puff, index) => {
+          transform.position.set(puff.x, puff.y, puff.z);
+          transform.scale.set(puff.radius * 1.25, puff.radius * .65, puff.radius);
+          transform.rotation.y = puff.rotation;
+          transform.updateMatrix();
+          batch.setMatrixAt(index, transform.matrix);
+        });
+        batch.computeBoundingSphere();
+        group.add(batch);
       }
       group.visible = id < 7;
       this.groups.push(group);
@@ -126,7 +112,7 @@ export class CloudField {
   }
 
   update(time: number, playerX: number, playerZ: number) {
-    const shadowMatrix = new THREE.Object3D();
+    const shadowMatrix = this.shadowMatrix;
     let shadowCount = 0;
     for (let i = 0; i < this.groups.length; i++) {
       const data = this.clusters[i];
@@ -139,7 +125,7 @@ export class CloudField {
       const nearFade = THREE.MathUtils.smoothstep(distance, 8, 18);
       const edgeFade = 1 - THREE.MathUtils.smoothstep(distance, 62, 80);
       group.scale.setScalar(Math.max(0, Math.min(1, nearFade * edgeFade)));
-      if (group.visible && group.scale.x > 0.01 && shadowCount < this.shadows.count) {
+      if (group.visible && group.scale.x > 0.01 && shadowCount < this.shadows.instanceMatrix.count) {
         shadowMatrix.position.set(x + 2.5, surfaceHeight(x, z, this.seed) + 0.06, z + 1);
         shadowMatrix.scale.set(data.radius * 1.6, data.radius * 1.2, 1);
         shadowMatrix.updateMatrix();
@@ -174,7 +160,11 @@ export class CloudField {
     this.boxGeometry.dispose();
     this.shadowGeometry.dispose();
     this.shadowMaterial.dispose();
-    this.shellMaterial.dispose();
-    this.materials.forEach((material) => material.dispose());
+    this.material.dispose();
+    this.scene.remove(this.shadows);
+    this.shadows.dispose();
+    for (const group of this.groups)
+      for (const mesh of group.children)
+        if (mesh instanceof THREE.InstancedMesh) mesh.dispose();
   }
 }

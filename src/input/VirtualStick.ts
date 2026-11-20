@@ -1,3 +1,4 @@
+import { RULES } from "../data/config";
 import { clamp, damp } from "../services/Random";
 import type { Intent } from "../simulation/types";
 export class VirtualStick {
@@ -24,6 +25,8 @@ export class VirtualStick {
     this.base = surface.querySelector<HTMLElement>(".stick-base") ?? surface;
     this.label =
       surface.querySelector<HTMLElement>(".stick-label") ?? undefined;
+    this.surface.dataset.bombing = String(this.bombing);
+    this.surface.style.setProperty("--outer-ratio", String(RULES.boost.outerRadius));
     this.feedback(0, 0, 0, 0);
     const signal = this.abort.signal;
     surface.addEventListener(
@@ -68,8 +71,16 @@ export class VirtualStick {
   }
   setFlightState(energyAvailable: boolean, bombing: boolean, boostLocked = false) {
     this.energyAvailable = energyAvailable;
-    this.bombing = bombing;
     this.boostLocked = boostLocked;
+    if (this.bombing === bombing) return;
+    this.bombing = bombing;
+    this.smoothX = 0;
+    this.smoothZ = 0;
+    this.resetPointer();
+    if (this.surface) {
+      this.surface.dataset.bombing = String(bombing);
+      this.surface.setAttribute("aria-label", bombing ? "轰炸微调摇杆" : "飞行摇杆，外圈加力");
+    }
   }
   private radius() {
     const rect = this.base!.getBoundingClientRect();
@@ -80,7 +91,8 @@ export class VirtualStick {
     const radius = this.radius();
     const x = (e.clientX - rect.left - rect.width / 2) / radius,
       z = -(e.clientY - rect.top - rect.height / 2) / radius;
-    const len = Math.max(1, Math.hypot(x, z));
+    const outer = this.bombing ? 1 : RULES.boost.outerRadius;
+    const len = Math.max(1, Math.hypot(x, z) / outer);
     this.rawX = x / len;
     this.rawZ = z / len;
     this.knob!.style.transform = `translate(${this.rawX * radius}px, ${-this.rawZ * radius}px)`;
@@ -97,20 +109,17 @@ export class VirtualStick {
     const z = kx || kz ? kz / (Math.hypot(kx, kz) || 1) : this.rawZ;
     this.smoothX = damp(this.smoothX, x, 24, dt);
     this.smoothZ = damp(this.smoothZ, z, 24, dt);
-    const rawLength = Math.hypot(x, z),
-      length = Math.hypot(this.smoothX, this.smoothZ),
-      isKeyboard = Boolean(kx || kz),
-      travel = isKeyboard ? 1 : clamp((length - 0.12) / 0.88) ** 0.85,
-      magnitude = rawLength > 0.12 ? travel : 0,
-      boost = !this.bombing && !this.boostLocked && this.energyAvailable
-        ? isKeyboard && this.keys.has("ShiftLeft") || isKeyboard && this.keys.has("ShiftRight")
-          ? 1
-          : travel >= 0.84
-            ? clamp((travel - 0.84) / 0.16)
-            : 0
-        : 0;
+    const rawLength = Math.hypot(x, z);
+    const length = Math.hypot(this.smoothX, this.smoothZ);
+    const isKeyboard = Boolean(kx || kz);
+    const travel = isKeyboard ? 1 : clamp((length - 0.12) / 0.88);
     const active = rawLength > 0.12;
-    this.feedback(magnitude, boost, x, z, travel);
+    const magnitude = active ? travel : 0;
+    const shift = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
+    const boost = !active || this.bombing ? 0 : isKeyboard
+      ? Number(shift)
+      : clamp((length - 1) / (RULES.boost.outerRadius - 1));
+    this.feedback(magnitude, this.boostLocked || !this.energyAvailable ? 0 : boost, x, z);
     return {
       // The fixed camera looks toward +Z, so screen right is world -X.
       x: -this.smoothX / (length || 1),
@@ -121,41 +130,34 @@ export class VirtualStick {
       travel,
     };
   }
-  private feedback(magnitude: number, boost: number, x: number, z: number, travel = 0) {
+  private feedback(magnitude: number, boost: number, x: number, z: number) {
     if (!this.surface || !this.knob) return;
-    const throttle = this.energyAvailable ? magnitude * (this.bombing ? 0.45 : 1) : 0;
-    const percent = Math.round(throttle * 100);
-    const mode =
-      this.boostLocked
-        ? "locked"
-        : !this.energyAvailable && !this.bombing
-          ? "depleted"
-        : magnitude === 0
-          ? "cruise"
-          : this.bombing
-            ? "trim"
-            : boost > 0
-              ? "boost"
-              : travel >= 0.74
-                ? "full"
+    const percent = Math.round(magnitude * (this.bombing ? 45 : 100));
+    const mode = magnitude === 0
+      ? "cruise"
+      : this.bombing
+        ? "trim"
+        : this.boostLocked || !this.energyAvailable
+          ? "locked"
+          : boost > 0
+            ? "boost"
             : percent === 100
               ? "full"
               : "accelerating";
     this.surface.dataset.mode = mode;
     this.surface.style.setProperty("--throttle", String(percent));
     this.surface.setAttribute("aria-valuenow", String(percent));
-    const message =
-      mode === "locked" || mode === "depleted"
-        ? "能量不足 · 加力耗尽 · 回充中"
-        : mode === "cruise"
-          ? "巡航 · 油门 0%"
-          : mode === "trim"
-            ? `轰炸微调 · 油门 ${percent}%`
+    const message = mode === "locked"
+      ? "加力回充 · 油门 " + percent + "%"
+      : mode === "cruise"
+        ? (this.bombing ? "松杆稳定准心" : "巡航 · 油门 0%")
+        : mode === "trim"
+          ? "轰炸微调 · 油门 " + percent + "%"
           : mode === "boost"
-              ? `加力 ${Math.round(boost * 100)}% · 极速 +${Math.round(boost * 55)}%`
-              : mode === "full"
-                ? "满油门 · 再拉进入加力"
-              : `加速 · 油门 ${percent}%`;
+            ? "加力 " + Math.round(boost * 100) + "%"
+            : mode === "full"
+              ? "满油门 · 外拉加力"
+              : "油门 " + percent + "%";
     this.surface.setAttribute("aria-valuetext", message);
     if (this.label && this.label.textContent !== message)
       this.label.textContent = message;

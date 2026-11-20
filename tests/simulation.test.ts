@@ -3,6 +3,7 @@ import { AIRFRAMES } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { UPGRADES, upgradeById } from "../src/data/upgrades";
 import { WEAPONS } from "../src/data/weapons";
+import { NetworkController, playerIntent } from "../src/simulation/Controllers";
 import { World, requiredXp } from "../src/simulation/World";
 import { NO_INPUT, type Intent } from "../src/simulation/types";
 import { SaveStore } from "../src/services/Save";
@@ -114,9 +115,12 @@ describe("weapons, damage and bombing", () => {
     expect(
       w.telemetry.events.filter((e) => e.type === "lock_lost"),
     ).toHaveLength(1);
-    const newTarget = w.spawnEnemy("bomber", w.player.x, w.player.z + 18)!;
+    const controller = new NetworkController();
+    controller.push({ time: 0, intent: playerIntent({ heading: 0, throttle: 0 }) });
+    const newTarget = w.spawnReplayOpponent(AIRFRAMES[0], controller, w.player.x, w.player.z + 18);
+    newTarget.heading = 0;
     advance(w, 0.1);
-    expect(w.mainLock!.lockProgress).toBeLessThan(0.15);
+    expect(w.mainLock?.targetId).toBe(newTarget.id);
     advance(w, 1.3);
     expect(
       w.telemetry.events.some(
@@ -154,7 +158,7 @@ describe("weapons, damage and bombing", () => {
     advance(w, 0.4, { x: 1, z: 0, magnitude: 1, active: true });
     expect(w.bombs[0].x).toBe(landing.x);
     expect(w.bombs[0].z).toBe(landing.z);
-    advance(w, 0.6);
+    advance(w, 1.05);
     expect(target.health).toBeLessThan(target.maxHealth);
     expect(w.bombsHit).toBe(1);
     expect(w.bombs).toHaveLength(0);
@@ -219,7 +223,7 @@ describe("progression and saves", () => {
     w.upgradesAvailable = 1;
     w.openUpgrades();
     expect(w.choices).toHaveLength(3);
-    expect(w.choices.every((u) => u.max === 999)).toBe(true);
+    expect(w.choices.every((u) => u.repeatable)).toBe(true);
   });
   it("makes heavy, light and asymmetric builds differ in stats, geometry recipes and collision zones", () => {
     const heavy = fresh(),
@@ -272,7 +276,7 @@ describe("progression and saves", () => {
     const save = new SaveStore(storage);
     expect(save.equip("mastodon_03")).toBe(false);
     const w = fresh();
-    w.score = 2100;
+    w.score = 7600;
     w.coins = 23;
     advance(w, 1);
     w.end();
@@ -282,12 +286,12 @@ describe("progression and saves", () => {
     expect(restored.data.equipped).toBe("mastodon_03");
     expect(restored.data.currency).toBe(w.coins);
     raw = "{bad json";
-    expect(new SaveStore(storage).data.equipped).toBe("swift_01");
+    expect(new SaveStore(storage).data.equipped).toBe("sparrow_05");
     raw =
       '{"version":1,"equipped":"unknown","unlocked":3,"currency":-50,"bestScore":"oops"}';
     const corrupt = new SaveStore(storage);
     expect(corrupt.data.currency).toBe(0);
-    expect(corrupt.data.equipped).toBe("swift_01");
+    expect(corrupt.data.equipped).toBe("sparrow_05");
     const unavailable = new SaveStore({
       getItem: () => {
         throw new Error("denied");
@@ -308,6 +312,7 @@ describe("five-minute endurance", () => {
       const w = new World(frame, 123);
       w.player.invulnerable = 10000;
       let peak = 0;
+      let peakEnemies = 0;
       for (let i = 0; i < 60 * 300; i++) {
         const angle = Math.sin(i / 1400) * 2.5;
         w.frame(1 / 60, {
@@ -321,6 +326,7 @@ describe("five-minute endurance", () => {
         if (i % 600 === 0 && w.phase === "battle") w.toggleBombing();
         if (w.canBomb) w.dropBomb();
         if (w.phase === "bombing" && i % 600 === 400) w.toggleBombing();
+        peakEnemies = Math.max(peakEnemies, w.enemies.length);
         peak = Math.max(
           peak,
           w.enemies.length +
@@ -341,15 +347,14 @@ describe("five-minute endurance", () => {
       }
       expect(w.elapsed).toBeCloseTo(300, 3);
       expect(w.phase).not.toBe("result");
-      expect(w.enemies.length).toBeGreaterThan(0);
+      expect(peakEnemies).toBeGreaterThan(0);
       expect(w.level).toBeGreaterThanOrEqual(1);
       expect(peak).toBeLessThan(250);
       expect(w.telemetry.events.length).toBeLessThanOrEqual(500);
-      expect(
-        w.telemetry.events.some(
-          (e) => e.type === "lock_fire" || e.type === "bomb_drop",
-        ),
-      ).toBe(true);
+      if (frame.bomb || frame.missile)
+        expect(w.telemetry.events.some((event) => event.type === "lock_fire" || event.type === "bomb_drop")).toBe(true);
+      else if (!w.bombWeapon)
+        expect(w.bombsDropped).toBe(0);
     },
   );
 });

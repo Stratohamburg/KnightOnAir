@@ -1,6 +1,7 @@
-import { AIRFRAMES, airframeById, type Airframe } from "../data/aircrafts";
-import { QUALITIES, type Quality } from "../data/config";
+import { AIRFRAMES, airframeById, eraOf, type Airframe } from "../data/aircrafts";
+import { ERAS } from "../data/eras";
 import { combatantById } from "../data/combatants";
+import { QUALITIES, RULES, type Quality } from "../data/config";
 import type { Upgrade } from "../data/upgrades";
 import type { Stats } from "../simulation/types";
 import { WEAPONS } from "../data/weapons";
@@ -10,7 +11,7 @@ import { SaveStore } from "../services/Save";
 import { GameAudio } from "../services/Audio";
 import { VirtualStick } from "../input/VirtualStick";
 import { clamp } from "../services/Random";
-import { actorAltitude, surfaceHeight } from "../simulation/Terrain";
+
 import { icon, planePreview } from "../ui/icons";
 import { CombatHud } from "../ui/CombatHud";
 
@@ -148,7 +149,9 @@ export class GameApp {
     return `<div class="stat-grid">${values.map(([name, value, max, unit]) => `<div class="stat"><div><span>${name}</span><strong>${value}<small>${unit}</small></strong></div><div class="stat-track"><i style="width:${(value / max) * 100}%"></i></div></div>`).join("")}</div>${detailed ? `<div class="spec-row"><span>能量 <b>${frame.energyMax}</b></span><span>翼展 <b>${frame.wingspan}m</b></span><span>受弹面积 <b>${frame.footprint < 0.8 ? "小" : frame.footprint > 1.2 ? "大" : "中"}</b></span><span>挂点 <b>${frame.hardpoints}</b></span></div>` : ""}`;
   }
   private weapons(frame: Airframe) {
-    return `<div class="weapon-tags"><span>${icon("target")}${WEAPONS[frame.gun].name}</span>${frame.missile ? `<span>${icon("target")}锁定导弹</span>` : ""}${frame.turret ? `<span>${icon("target")}自动炮塔</span>` : ""}<span>${icon("bomb")}${WEAPONS[frame.bomb].name}</span></div>`;
+    const loadout = new Set(combatantById(frame.id)?.mounts.map((mount) => mount.weaponId));
+    return `<div class="weapon-tags">${[...loadout].map((id) =>
+      `<span>${icon(id === frame.bomb ? "bomb" : "target")}${WEAPONS[id].name}</span>`).join("")}</div>`;
   }
   private showMeta() {
     this.screen = "meta";
@@ -172,19 +175,26 @@ export class GameApp {
       .classList.toggle("equipment-view", this.tab === "equipment");
     const isUnlocked = this.save.data.unlocked.includes(frame.id),
       isEquipped = this.save.data.equipped === frame.id;
+    const era = eraOf(frame), mission = ERAS[era];
+    const eraFrames = AIRFRAMES.filter((candidate) => eraOf(candidate) === era);
+    const eraIndex = Object.keys(ERAS).indexOf(era);
     let body = "";
     if (this.tab === "sortie")
       body = `
       <div class="home-heading"><div class="eyebrow"><span class="live-dot"></span> ALL SYSTEMS READY</div><h1>风起，<br>即刻出发<span>。</span></h1><p>云层之上，下一段航线由你书写。</p></div>
       <div class="plane-caption"><span>01 / ${frame.role}</span><i></i><span>FLYING FREE</span></div>
       <section class="home-card"><div class="card-heading"><div><span class="eyebrow">YOUR AIRCRAFT</span><h2>${frame.name}</h2></div><button class="text-button" data-tab="equipment">更换机体 ${icon("arrow")}</button></div><p class="frame-description">${frame.description}</p>${this.stats(frame)}${this.weapons(frame)}
-      <div class="mission-strip"><span class="mission-number">01</span><div><strong>翡翠海岸</strong><small>第一关 / 无尽巡航</small></div><span class="weather">晴间多云<br><b>微风 02 kn</b></span></div>
+      <div class="mission-strip"><span class="mission-number">${String(eraIndex + 1).padStart(2, "0")}</span><div><strong>${mission.mission}</strong><small>${mission.label} / 无尽巡航</small></div><span class="weather">晴间多云<br><b>微风 02 kn</b></span></div>
       <button class="launch-button" data-action="launch" ${this.renderer ? "" : "disabled"}><span><small>READY WHEN YOU ARE</small>出击</span>${icon("arrow")}</button>
       <div class="home-footer"><button data-action="help">${icon("help")} 飞行指南</button><span>最高积分 <b>${fmt(this.save.data.bestScore)}</b></span></div></section>`;
     else if (this.tab === "equipment")
       body = `
       <div class="equipment-title"><span class="eyebrow">THE HANGAR</span><h1>选择你的座驾<span>。</span></h1><p>不同的轮廓，不同的飞行方式。</p></div>
-      <div class="airframe-carousel"><button class="icon-button" data-action="previous" aria-label="上一架飞机">${icon("chevron", "flipped")}</button><span>${String(this.preview + 1).padStart(2, "0")} <i>/ 04</i></span><button class="icon-button" data-action="next" aria-label="下一架飞机">${icon("chevron")}</button></div>
+      <div class="era-tabs" aria-label="机体时代">${Object.entries(ERAS).map(([id, group]) => {
+        const first = AIRFRAMES.findIndex((candidate) => eraOf(candidate) === id);
+        return `<button data-preview="${first}" aria-pressed="${id === era}">${group.label}</button>`;
+      }).join("")}</div>
+      <div class="airframe-carousel"><button class="icon-button" data-action="previous" aria-label="上一架飞机">${icon("chevron", "flipped")}</button><span>${String(eraFrames.indexOf(frame) + 1).padStart(2, "0")} <i>/ ${String(eraFrames.length).padStart(2, "0")}</i></span><button class="icon-button" data-action="next" aria-label="下一架飞机">${icon("chevron")}</button></div>
       <section class="equipment-card"><div class="card-heading"><div><span class="eyebrow">${frame.role}</span><h2>${frame.name}</h2></div><span class="status-chip ${isUnlocked ? "" : "locked"}">${icon(isEquipped ? "check" : isUnlocked ? "shield" : "lock")}${isEquipped ? "当前装备" : isUnlocked ? "已解锁" : "未解锁"}</span></div>
       <p class="frame-description">${frame.description}</p>${this.stats(frame, true)}${this.weapons(frame)}
       <div class="part-selector" aria-label="部件预览">${[
@@ -202,7 +212,7 @@ export class GameApp {
         )
         .join("")}</div>
       <p class="part-hint">${this.highlight ? this.partDescription(this.highlight) : `机身 ${frame.length}m · 点击部位查看挂点与功能`}</p>
-      <button class="primary equip-button" data-action="equip" ${!isUnlocked || isEquipped ? "disabled" : ""}>${isEquipped ? "已装备 · 随时出击" : isUnlocked ? `装备这架飞机 ${icon("arrow")}` : `${icon("lock")} ${frame.unlockText}`}</button><div class="carousel-dots">${AIRFRAMES.map((_, i) => `<button aria-label="预览第 ${i + 1} 架飞机" data-preview="${i}" class="${this.preview === i ? "active" : ""}"></button>`).join("")}</div></section>`;
+      <button class="primary equip-button" data-action="equip" ${!isUnlocked || isEquipped ? "disabled" : ""}>${isEquipped ? "已装备 · 随时出击" : isUnlocked ? `装备这架飞机 ${icon("arrow")}` : `${icon("lock")} ${frame.unlockText}`}</button><div class="carousel-dots">${eraFrames.map((candidate) => `<button aria-label="预览 ${candidate.name}" data-preview="${AIRFRAMES.indexOf(candidate)}" class="${frame.id === candidate.id ? "active" : ""}"></button>`).join("")}</div></section>`;
     else
       body = `<section class="placeholder-page"><span class="eyebrow">COMING SOON</span><div class="placeholder-symbol">${icon(tabs.find((t) => t.id === this.tab)!.icon)}</div><h1>${this.tab === "shop" ? "商店即将开放" : "内容准备中"}<span>。</span></h1><p>${this.tab === "shop" ? "未来将在这里发现更多机体与外观。<br>现在，先去天空里收集一些故事。" : "新的飞行故事正在准备。<br>你的下一次出击，无需等待。"}</p><button class="primary" data-tab="sortie">返回出击 ${icon("arrow")}</button></section>`;
     this.ui.innerHTML = `${this.topBar()}${body}${this.nav()}`;
@@ -234,12 +244,16 @@ export class GameApp {
     )!;
     button.disabled = true;
     button.innerHTML =
-      '<span><small>ENTERING EMERALD COAST</small>准备起飞</span><span class="loading-spinner"></span>';
+      `<span><small>${ERAS[eraOf(airframeById(this.save.data.equipped))].mission}</small>准备起飞</span><span class="loading-spinner"></span>`;
     this.audio.play("upgrade");
   }
   private startBattle() {
     this.screen = "battle";
     this.world = new World(airframeById(this.save.data.equipped));
+    if (this.renderer) {
+      const renderer = this.renderer;
+      this.world.isSpawnVisible = (x, y, z, radius) => renderer.isSpawnVisible(x, y, z, radius);
+    }
     this.finished = false;
     this.renderer?.setPlayer(this.world.player);
     this.root.classList.remove("launching");
@@ -247,15 +261,15 @@ export class GameApp {
     this.lastScore = 0;
     this.lastHealth = this.world.player.health;
     this.lastLock = 0;
-    this.ui.innerHTML = `<header class="battle-top"><div class="health-block"><div class="hud-title">${icon("shield")}<span>机体 <b id="health-text"></b></span></div><div class="hud-meter health-meter"><i id="health-fill"></i></div><div class="hud-title energy-title">${icon("bolt")}<span>加力储备 <b id="energy-text"></b></span></div><div class="hud-meter energy-meter"><i id="energy-fill"></i></div></div><div class="battle-clock"><span class="eyebrow">翡翠海岸</span><b id="battle-time">00:00</b><small id="battle-score">0 PTS</small></div><button class="icon-button pause-button" data-action="pause" aria-label="暂停游戏">${icon("pause")}</button></header>
+    this.ui.innerHTML = `<header class="battle-top"><div class="health-block"><div class="hud-title">${icon("shield")}<span>机体 <b id="health-text"></b></span></div><div class="hud-meter health-meter"><i id="health-fill"></i></div><div class="hud-title energy-title">${icon("bolt")}<span>加力储备 <b id="energy-text"></b></span></div><div class="hud-meter energy-meter"><i id="energy-fill"></i></div></div><div class="battle-clock"><span class="eyebrow">${ERAS[this.world.era].mission}</span><b id="battle-time">00:00</b><small id="battle-score">0 PTS</small></div><button class="icon-button pause-button" data-action="pause" aria-label="暂停游戏">${icon("pause")}</button></header>
       <div class="xp-bar"><i id="xp-fill"></i><span id="level-label">LV.01</span></div>
       <div class="battle-announcement" id="battle-notice" role="status" aria-live="polite"></div>
       <div class="battle-status"><span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span></div>
-      <div class="control-deck"><div class="deck-top"><button class="upgrade-button" data-action="upgrade" id="upgrade-button" disabled>${icon("wrench")}<span>改装升级</span><b id="upgrade-count">0</b></button><button class="mode-button" data-action="bomb-mode" id="mode-button" aria-pressed="false">${icon("target")}<span>轰炸模式</span><i></i></button></div>
+      <div class="control-deck" data-bombing="false"><div class="deck-top"><button class="upgrade-button" data-action="upgrade" id="upgrade-button" disabled>${icon("wrench")}<span>改装升级</span><b id="upgrade-count">0</b></button><button class="mode-button" data-action="bomb-mode" id="mode-button" aria-pressed="false">${icon("target")}<span>轰炸模式</span><i></i></button></div>
       <div class="deck-main"><div class="control-readout"><span id="flight-mode">空战巡航</span><strong id="speed-label">0.0<small>m/s</small></strong><span id="energy-state">加力就绪</span></div>
-      <div class="stick-surface" role="slider" aria-label="飞行摇杆，方向控制航向，内圈普通油门，外圈加力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="stick-base"><span class="stick-scale-label">外圈 · 加力</span><span class="stick-throttle"></span><span class="stick-half"></span><span class="stick-cross"></span><span class="stick-knob">${icon("plane")}</span></div><span class="stick-label">巡航 · 油门 0%</span></div>
-      <button class="bomb-button" data-action="bomb" id="bomb-button" aria-label="投弹" disabled><span class="bomb-progress"></span>${icon("bomb")}<strong id="bomb-label">待命</strong><small id="bomb-state">先开启轰炸</small></button></div>
-      <div class="deck-footer"><span>KNIGHT ON AIR <i>第一关</i></span><button data-action="help" aria-label="飞行操作帮助">${icon("help")}</button><span id="quality-readout"></span></div></div>`;
+      <div class="stick-surface" role="slider" aria-label="飞行摇杆，外圈加力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="stick-base"><span class="stick-boost-ring" aria-hidden="true"><b>加力</b></span><span class="stick-throttle"></span><span class="stick-half"></span><span class="stick-cross"></span><span class="stick-knob">${icon("plane")}</span></div><span class="stick-label">巡航 · 油门 0%</span></div>
+      <button class="bomb-button" data-action="bomb" id="bomb-button" aria-label="投弹" hidden disabled><span class="bomb-progress"></span>${icon("bomb")}<strong id="bomb-label">待命</strong><small id="bomb-state">先开启轰炸</small></button></div>
+      <div class="deck-footer"><span>KNIGHT ON AIR <i>${ERAS[this.world.era].label}</i></span><button data-action="help" aria-label="飞行操作帮助">${icon("help")}</button><span id="quality-readout"></span></div></div>`;
     this.stick.attach(this.ui.querySelector(".stick-surface")!);
     this.stick.enabled = true;
     this.combatHud?.dispose();
@@ -263,11 +277,13 @@ export class GameApp {
     this.hudTimer = 1;
     this.modal = "";
     this.overlays.innerHTML = "";
+    this.renderer?.render(this.world, 0, { display: false });
+    this.updateHud();
   }
   private updateHud() {
     const w = this.world!;
     const p = w.player;
-    this.stick.setFlightState(p.energy > 0, w.isBombing, p.boostLocked);
+
     const text = (id: string, value: string) => {
       const el = this.ui.querySelector<HTMLElement>(`#${id}`);
       if (el && el.textContent !== value) el.textContent = value;
@@ -294,7 +310,11 @@ export class GameApp {
     upgrade.disabled = w.upgradesAvailable === 0;
     upgrade.classList.toggle("available", w.upgradesAvailable > 0);
     const mode = this.ui.querySelector<HTMLButtonElement>("#mode-button")!;
+    const deck = this.ui.querySelector<HTMLElement>(".control-deck")!;
+    deck.dataset.bombing = String(w.isBombing);
+    this.stick.setFlightState(p.energy > 0, w.isBombing, p.boostLocked);
     mode.setAttribute("aria-pressed", String(w.isBombing));
+    mode.title = w.bombWeapon ? "" : "需要安装弹舱";
     text(
       "flight-mode",
       w.isBombing ? `准心稳定 ${Math.round(w.stability * 100)}%` : "空战巡航",
@@ -312,11 +332,14 @@ export class GameApp {
             : "加力就绪",
     );
     const bomb = this.ui.querySelector<HTMLButtonElement>("#bomb-button")!;
+    const weapon = w.bombWeapon;
+    mode.disabled = !weapon;
+    bomb.hidden = !w.isBombing;
     bomb.disabled = !w.canBomb;
     bomb.classList.toggle("ready", w.canBomb);
     const cooldownTotal = Math.max(
       1,
-      1 / w.bombWeapon.fireRate + p.stats.bombCooldown,
+      1 / (weapon?.fireRate ?? 1) + p.stats.bombCooldown,
     );
     bomb.style.setProperty(
       "--progress",
@@ -324,7 +347,7 @@ export class GameApp {
     );
     text(
       "bomb-label",
-      w.bombCooldown > 0
+      !weapon ? "未装载" : w.bombCooldown > 0
         ? `${w.bombCooldown.toFixed(1)}s`
         : w.canBomb
           ? "投弹"
@@ -334,7 +357,7 @@ export class GameApp {
     );
     text(
       "bomb-state",
-      w.bombCooldown > 0
+      !weapon ? "可通过改装增加弹舱" : w.bombCooldown > 0
         ? "装填中"
         : w.canBomb
           ? "落点已锁定"
@@ -365,7 +388,7 @@ export class GameApp {
     if (!r) return;
     let html = "";
     for (const e of w.enemies.slice(0, 30)) {
-      const enemyY = e.layer === "air" ? actorAltitude(e.x, e.z, 20, 491) : surfaceHeight(e.x, e.z, 491) + 1;
+      const enemyY = e.layer === "air" ? RULES.flightAltitude : w.surfaceHeight(e.x, e.z) + 1;
       const pos = r.project(e.x, enemyY, e.z);
       if (!pos.visible) continue;
       const cloudOccluded = r.isCloudOccluded(e.x, enemyY, e.z);
@@ -374,12 +397,12 @@ export class GameApp {
     const lock = w.mainLock,
       target = w.enemies.find((e) => e.id === lock?.targetId);
     if (target && lock) {
-      const pos = r.project(target.x, 4, target.z);
+      const pos = r.project(target.x, target.layer === "air" ? RULES.flightAltitude : w.surfaceHeight(target.x, target.z), target.z);
       if (pos.visible)
         html += `<div class="lock-label" style="left:${pos.x}px;top:${pos.y + 20}px">${lock.cooldown > 0 ? "导弹装填" : `锁定 ${Math.round(lock.lockProgress * 100)}%`}</div>`;
     }
     if (w.isBombing) {
-      const pos = r.project(w.aim.x, 0.2, w.aim.z);
+      const pos = r.project(w.aim.x, w.surfaceHeight(w.aim.x, w.aim.z) + .2, w.aim.z);
       if (pos.visible)
         html += `<div class="aim-label ${w.canBomb ? "ready" : ""}" style="left:${pos.x}px;top:${pos.y + 35}px">${w.canBomb ? "准许投弹" : `稳定 ${Math.round(w.stability * 100)}%`}</div>`;
     }
@@ -530,6 +553,12 @@ export class GameApp {
     this.highlight = "";
     this.showMeta();
   }
+  private browseEra(step: number) {
+    const current = AIRFRAMES[this.preview];
+    const group = AIRFRAMES.filter((frame) => eraOf(frame) === eraOf(current));
+    const next = group[(group.indexOf(current) + group.length + step) % group.length];
+    this.browse(AIRFRAMES.indexOf(next));
+  }
   private onClick(e: MouseEvent) {
     const el = (e.target as HTMLElement).closest<HTMLElement>(
       "button,[data-tab]",
@@ -568,10 +597,10 @@ export class GameApp {
         this.launch();
         break;
       case "previous":
-        this.browse(this.preview - 1);
+        this.browseEra(-1);
         break;
       case "next":
-        this.browse(this.preview + 1);
+        this.browseEra(1);
         break;
       case "equip":
         if (this.save.equip(AIRFRAMES[this.preview].id)) {
@@ -733,7 +762,9 @@ export class GameApp {
           this.startBattle();
       }
       if (this.screen === "battle" && this.world) {
-        this.world.frame(dt, this.stick.read(dt));
+        const world = this.world;
+        this.stick.setFlightState(world.player.energy > 0, world.isBombing, world.player.boostLocked);
+        world.frame(dt, this.stick.read(dt));
         const events = this.world.consumeEvents();
         this.combatHud?.consume(events);
         for (const event of events) {

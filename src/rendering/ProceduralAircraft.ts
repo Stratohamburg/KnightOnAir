@@ -75,6 +75,7 @@ export class ProceduralAircraft {
   readonly group = new THREE.Group();
   private materials = new Map<string, THREE.ShaderMaterial>();
   private parts = new Map<string, THREE.Group>();
+  private propellers: { mesh: THREE.Mesh; part: Part }[] = [];
   private flames: { mesh: THREE.Mesh; part: Part }[] = [];
   private turretHeads = new Map<string, THREE.Group>();
   private flameMaterial = effectMaterial();
@@ -99,6 +100,7 @@ export class ProceduralAircraft {
   rebuild() {
     this.disposeContents();
     this.flames = [];
+    this.propellers = [];
     this.parts.clear();
     this.turretHeads.clear();
     const p = this.player,
@@ -119,11 +121,17 @@ export class ProceduralAircraft {
       this.materials.set(part.id, mat);
       const side = part.slot === "leftWing" ? -1 : 1;
       if (part.role === "body" || part.kind === "body") {
-        this.mesh(
-          fuselageGeometry(s.length, f.engines === 4 ? 0.75 : 0.48),
-          mat,
-          root,
-        );
+        if (f.shape === "airship") {
+          const hull = this.mesh(new THREE.IcosahedronGeometry(1, 2), mat, root, 0, s.length * .14, 0);
+          hull.scale.set(s.length * .14, s.length * .15, s.length * .5);
+          this.mesh(new THREE.BoxGeometry(s.length * .10, .9, s.length * .36), trim, root);
+        } else {
+          this.mesh(fuselageGeometry(s.length, f.engines === 4 ? .75 : .48), mat, root);
+          if (f.shape === "flyingBoat") {
+            const hull = this.mesh(fuselageGeometry(s.length * .96, s.length * .11), trim, root, 0, -.55);
+            hull.scale.y = .64;
+          }
+        }
         const cockpit = this.mesh(
           new THREE.SphereGeometry(0.45, 6, 4),
           glass,
@@ -168,6 +176,17 @@ export class ProceduralAircraft {
           0.01,
           -f.length * 0.1,
         );
+        for (let tier = 1; tier < (f.wingCount ?? 1); tier++) {
+          const height = tier * .8;
+          this.mesh(wingGeometry(s.wingspan * .46, side, f.length * .34, f.length * .12), mat, root, 0, height, -.12 * tier);
+          for (const z of [-.35, .35])
+            this.mesh(new THREE.BoxGeometry(.075, .8, .075), metal, root, side * s.wingspan * .32, height - .4, z);
+        }
+        if (f.shape === "floatplane") {
+          const float = this.mesh(fuselageGeometry(f.length * .62, .38), trim, root, side * s.wingspan * .21, -.9);
+          float.scale.y = .72;
+          this.mesh(new THREE.BoxGeometry(.13, .82, .15), metal, root, side * s.wingspan * .21, -.46);
+        }
         const insignia = this.mesh(
           new THREE.CylinderGeometry(0.2, 0.2, 0.025, 12),
           metal,
@@ -224,6 +243,11 @@ export class ProceduralAircraft {
           0,
           -0.74,
         ).rotation.x = Math.PI / 2;
+        if (f.era && f.era !== "jet") {
+          const propeller = this.mesh(new THREE.BoxGeometry(.14, f.shape === "airship" ? 2.3 : 1.7, .07), trim, root, 0, 0, .75);
+          this.propellers.push({ mesh: propeller, part });
+          continue;
+        }
         const flame = this.mesh(
           new THREE.PlaneGeometry(0.6, 2.5),
           this.flameMaterial,
@@ -346,6 +370,8 @@ export class ProceduralAircraft {
     const p = this.player;
     if (p.revision !== this.revision) this.rebuild();
     this.buildTime += dt;
+    for (const { mesh, part } of this.propellers)
+      if (part.health > 0) mesh.rotation.z += dt * (display ? 19 : 14 + p.speed * 3);
     for (const part of p.parts) {
       const root = this.parts.get(part.id)!;
       root.visible = !part.destroyed;

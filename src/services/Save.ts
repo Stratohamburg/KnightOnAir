@@ -1,4 +1,4 @@
-import { AIRFRAMES, airframeById } from "../data/aircrafts";
+import { AIRFRAMES, STARTER_FRAME_ID, airframeById } from "../data/aircrafts";
 import type { Quality } from "../data/config";
 import type { World } from "../simulation/World";
 export interface SaveData {
@@ -16,8 +16,8 @@ export interface SaveData {
 }
 const defaults = (): SaveData => ({
   version: 2,
-  equipped: AIRFRAMES[0].id,
-  unlocked: [AIRFRAMES[0].id],
+  equipped: STARTER_FRAME_ID,
+  unlocked: [STARTER_FRAME_ID],
   bestScore: 0,
   bestTime: 0,
   currency: 0,
@@ -60,7 +60,7 @@ export class SaveStore {
       ).map((f) => f.id);
       base.equipped = base.unlocked.includes(saved.equipped)
         ? airframeById(saved.equipped).id
-        : AIRFRAMES[0].id;
+        : STARTER_FRAME_ID;
       if (["low", "standard", "high"].includes(saved.quality))
         base.quality = saved.quality;
       if (typeof saved.sound === "boolean") base.sound = saved.sound;

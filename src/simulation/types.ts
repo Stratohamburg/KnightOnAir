@@ -188,6 +188,8 @@ export interface Projectile {
   active: boolean;
   id: number;
   team: "player" | "enemy";
+  targetLayers?: WeaponConfig["targetLayers"];
+  armorPierce?: number;
   kind: "bullet" | "missile" | "flak";
   x: number;
   z: number;
@@ -289,6 +291,7 @@ export interface Effect {
   seed: number;
 }
 export interface Bomb {
+  startY: number;
   x: number;
   z: number;
   startX: number;
