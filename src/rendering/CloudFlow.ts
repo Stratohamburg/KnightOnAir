@@ -1,6 +1,6 @@
 export const defaultCloudWind = [-.36, .93295] as const;
-const roll = { along: .205, across: .061, height: .086, horizontal: 2.35, vertical: 3.35 };
-const eddies = { along: .37, across: -.24, height: .19, rate: .8, horizontal: 1.05, vertical: 1.1 };
+const roll = { horizontal: 2.35, vertical: 3.35 };
+const eddies = { horizontal: 1.05, vertical: 1.1 };
 
 export function cloudFlowSpeed(windX: number, windZ: number, gust: number) {
   const magnitude = Math.hypot(windX, windZ);
@@ -26,7 +26,17 @@ function flowDirection(windX: number, windZ: number): [number, number] {
     : [defaultCloudWind[0], defaultCloudWind[1]];
 }
 
-// Both the volume shader and CPU visibility trace use this backward mapping.
+export function cloudSelfShapePosition(x: number, y: number, z: number, selfTime = 0) {
+  const crest = x * .021 + z * .014 + y * .086 + selfTime * .12;
+  const eddy = x * .031 - z * .019 + y * .19 + selfTime * .17;
+  return {
+    x: x - Math.cos(crest) * roll.horizontal - Math.sin(eddy) * eddies.horizontal,
+    y: y - Math.sin(crest) * roll.vertical - Math.cos(eddy) * eddies.vertical,
+    z,
+  };
+}
+
+// Wind controls the translation offset. The shape basis stays in world space.
 export function cloudFlowPosition(
   x: number,
   y: number,
@@ -37,33 +47,24 @@ export function cloudFlowPosition(
   selfTime = 0,
 ) {
   [windX, windZ] = flowDirection(windX, windZ);
-  const along = x * windX + z * windZ;
-  const across = x * windZ - z * windX;
-  const crest = (along - distance) * roll.along + across * roll.across + y * roll.height + selfTime * .12;
-  const eddy = (along - distance * eddies.rate) * eddies.along + across * eddies.across + y * eddies.height + selfTime * .17;
-  const downstream = Math.cos(crest) * roll.horizontal;
-  const lateral = Math.sin(eddy) * eddies.horizontal;
-  return {
-    x: x - (windX * downstream + windZ * lateral),
-    y: y - (Math.sin(crest) * roll.vertical + Math.cos(eddy) * eddies.vertical),
-    z: z - (windZ * downstream - windX * lateral),
-  };
+  return cloudSelfShapePosition(
+    x - windX * distance * .42,
+    y,
+    z - windZ * distance * .42,
+    selfTime,
+  );
 }
 
 export const cloudFlowGLSL = `
-  uniform vec2 flowDirection;
-
   uniform float selfTime;
 
-  vec3 cloudFlowPosition(vec3 position, float distance) {
-    vec2 wind = flowDirection;
-    vec2 acrossWind = vec2(wind.y, -wind.x);
-    float along = dot(position.xz, wind);
-    float across = dot(position.xz, acrossWind);
-    float crest = (along - distance) * ${roll.along} + across * ${roll.across} + position.y * ${roll.height} + selfTime * .12;
-    float eddy = (along - distance * ${eddies.rate}) * ${eddies.along} + across * ${eddies.across} + position.y * ${eddies.height} + selfTime * .17;
-    vec2 horizontal = wind * (cos(crest) * ${roll.horizontal}) + acrossWind * (sin(eddy) * ${eddies.horizontal});
-    float lift = sin(crest) * ${roll.vertical} + cos(eddy) * ${eddies.vertical};
-    return position - vec3(horizontal.x, lift, horizontal.y);
+  vec3 cloudSelfShapePosition(vec3 position) {
+    float crest = position.x * .021 + position.z * .014 + position.y * .086 + selfTime * .12;
+    float eddy = position.x * .031 - position.z * .019 + position.y * .19 + selfTime * .17;
+    return position - vec3(
+      cos(crest) * 2.35 + sin(eddy) * 1.05,
+      sin(crest) * 3.35 + cos(eddy) * 1.1,
+      0.
+    );
   }
 `;

@@ -6,6 +6,20 @@
 
 ## Requirements
 
+### Requirement: Runtime content library integration
+
+玩家和敌人的程序化飞机 MUST 通过运行时 3D 内容库的机体工厂、几何目录、材质目录和局部锚点创建。机体工厂 MUST 复用共享几何与静态材质，同时为每个实体保留独立姿态、部件状态和动态效果锚点。
+
+#### Scenario: Reuse aircraft content
+
+- **WHEN** 场景中创建多个相同类型的飞机
+- **THEN** 实例共享可复用几何和静态材质，部件损伤、挂点姿态和特效状态保持独立
+
+#### Scenario: Dispose aircraft instance
+
+- **WHEN** 飞机从战斗场景移除
+- **THEN** 机体工厂释放实体节点和动态资源，不销毁仍被其他实例使用的共享内容
+
 ### Requirement: Configuration-driven aircraft shape
 
 飞机和主要空中载具 MUST 根据机体配置生成可辨识的机身、机翼、发动机、尾翼、炮塔、浮筒或飞艇结构。玩家和敌人的轮廓 MUST 能表达时代、角色和机体大小差异。
@@ -31,7 +45,7 @@
 
 ### Requirement: Damage presentation without hit flash
 
-玩家和敌人 MUST 根据部件损伤显示局部受损材质、火花、烟雾、火焰或结构碎裂。系统 MUST NOT 使用覆盖整架飞机的显眼受击闪白作为主要命中反馈。
+玩家和敌人 MUST 根据部件损伤显示局部受损材质、外发光火花、烟雾、火焰或结构碎裂。开火和命中爆点 MUST 使用外发光核心与柔和光晕形成局部亮度对比。系统 MUST NOT 使用覆盖整架飞机的显眼受击闪白作为主要命中反馈。
 
 #### Scenario: Damaged engine
 
@@ -41,12 +55,12 @@
 #### Scenario: Damaged wing
 
 - **WHEN** 机翼部件受到连续命中或进入禁用状态
-- **THEN** 机翼显示局部火花、裂纹、烟雾或小型碎片，效果不会改变模拟状态
+- **THEN** 机翼显示局部外发光火花、裂纹、烟雾或小型碎片，效果不会改变模拟状态
 
 #### Scenario: Impact debris
 
 - **WHEN** 投射物命中并造成足够的部件伤害
-- **THEN** 命中点生成沿命中方向和部件局部法线散开的碎屑，碎屑短时间后回收或消失
+- **THEN** 命中点生成外发光粒子和沿命中方向及部件局部法线散开的碎屑，碎屑短时间后回收或消失
 
 ### Requirement: Persistent impact smoke
 

@@ -140,6 +140,13 @@ export function bakeCloudWall(noise: Uint8Array) {
         const distance = field[index];
         if (distance <= -3.5) continue;
         const wx = minX + (x + .5) * dx;
+        const curtainX = smooth01((wx - minX - 2) / 13) *
+          (1 - smooth01((wx - maxX + 16) / 18));
+        const curtainY = smooth01((wy - minY - 5) / 13) *
+          (1 - smooth01((wy - maxY + 22) / 18));
+        const curtainNoise = edgeNoise(noise, wx * .17, wy * .11, wz * .17, 0);
+        const curtain = curtainX * curtainY * (.62 + curtainNoise * .38);
+        field[index] = Math.max(field[index], curtain * 1.35 - .32);
         const broad = edgeNoise(noise, wx * .8, wy, wz * .8, 0);
         const fine = edgeNoise(noise, wx * 2.3, wy * 2.5, wz * 2.3, 1);
         const perturbation = (broad - .56) * 4.5 + (fine - .47) * 1.6;

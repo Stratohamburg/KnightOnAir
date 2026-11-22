@@ -6,7 +6,8 @@ import {
 } from "./CloudscapeLayout";
 import { bakeCloudWall, cloudWall, cloudWallWeight, sampleCloudWall } from "./CloudWall";
 import {
-  cloudFlowGLSL, cloudFlowPosition, cloudFlowSpeed, cloudSelfMorphSpeed, smoothCloudFlow,
+  cloudFlowGLSL, cloudFlowSpeed, cloudSelfMorphSpeed, cloudSelfShapePosition,
+  smoothCloudFlow,
   defaultCloudWind,
 } from "./CloudFlow";
 
@@ -28,7 +29,8 @@ const cloudSampling = `
   uniform sampler2D columns;
   uniform sampler3D detailNoise, wallVolume;
   uniform vec2 drift;
-  uniform float flowDistance, flowSpeed, selfMorphSpeed, selfStrength, detailStrength;
+  uniform float flowDistance, selfMorphSpeed, selfStrength, detailStrength;
+  uniform vec2 flowDirection;
   uniform vec3 sunDirection;
 
   ${cloudFlowGLSL}
@@ -42,10 +44,8 @@ const cloudSampling = `
     float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r);
     float ceilingY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.g);
     if (at.y < floorY - 3. || at.y > ceilingY + 4.) return vec3(0.);
-    vec2 flowAcross = vec2(flowDirection.y, -flowDirection.x);
-    vec2 noiseDrift = flowDirection * (.011 + flowSpeed * .0012) - flowAcross * .006;
     vec3 noiseAt = vec3(at.x, at.y * 1.22, at.z) * .045 +
-      vec3(noiseDrift.x, .009, noiseDrift.y) * flowDistance;
+      vec3(.003, .001, .004) * selfTime * selfMorphSpeed;
     vec2 detail = texture(detailNoise, noiseAt).rg;
     vec3 morphAt = vec3(at.x * .018, at.y * .031, at.z * .018) +
       vec3(flowDirection.x, .41, flowDirection.y) * selfTime * (.006 * selfMorphSpeed);
@@ -79,12 +79,13 @@ const cloudSampling = `
     vec2 fade = smoothstep(vec2(0.), vec2(${cloudWall.edgeFade.map(value => value.toFixed(1)).join(", ")}), edge);
     float lod = 1. - smoothstep(${cloudWall.detailDistance[0].toFixed(1)}, ${cloudWall.detailDistance[1].toFixed(1)}, distance);
     float wallWeight = fade.x * fade.y * lod;
-    vec3 flowing = cloudFlowPosition(at, flowDistance);
-    vec3 distant = wallWeight < 1. ? sampleDistantCloud(mix(at, flowing, ${distantFlowWeight})) : vec3(0.);
+    vec3 advected = at - vec3(drift.x, 0., drift.y);
+    vec3 flowing = cloudSelfShapePosition(advected);
+    vec3 distant = wallWeight < 1. ? sampleDistantCloud(mix(advected, flowing, ${distantFlowWeight})) : vec3(0.);
     if (wallWeight <= 0.) return distant;
     vec2 voxel = texture(wallVolume, (flowing - wallMin) / (wallMax - wallMin)).rg;
     vec3 wallMorphAt = flowing * .021 +
-      vec3(flowDirection.x, .37, flowDirection.y) * selfTime * (.004 * selfMorphSpeed);
+      vec3(.003, .004, .002) * selfTime * selfMorphSpeed;
     vec2 wallMorph = texture(detailNoise, wallMorphAt).rg;
     voxel.r = clamp(voxel.r * mix(.88, 1.12, wallMorph.x * selfStrength) +
       (wallMorph.y - .5) * .08 * selfStrength, 0., 1.);
@@ -431,9 +432,7 @@ export class Cloudscape {
     if (y <= cloudBase || y >= cloudTop) return 0;
     const cloudX = x - this.drift.x, cloudZ = z - this.drift.y;
     const weight = cloudWallWeight(cloudX, cloudZ, distance);
-    const flowing = cloudFlowPosition(
-      cloudX, y, cloudZ, this.flowDistance, this.flowX, this.flowZ, this.selfTime,
-    );
+    const flowing = cloudSelfShapePosition(cloudX, y, cloudZ, this.selfTime);
     const distant = weight < 1 ? estimateCloudDensity(
       this.map,
       THREE.MathUtils.lerp(cloudX, flowing.x, distantFlowWeight),

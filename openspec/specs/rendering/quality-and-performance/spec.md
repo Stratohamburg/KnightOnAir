@@ -38,6 +38,29 @@
 - **WHEN** 满战斗场景运行五分钟并切换质量档位
 - **THEN** 几何体、材质与纹理资源数量在场景预热后保持有界
 
+### Requirement: Runtime content library budgets
+
+运行时内容库 MUST 为共享几何、材质、特效对象池、实例批次和重复二维节点定义有界容量。新增动态内容 MUST 优先复用内容目录或对象池，不得在每个模拟帧中重复创建相同资源。
+
+#### Scenario: Content library under full battle load
+
+- **WHEN** 满额战斗同时运行飞机、投射物、外发光粒子、烟雾、碎屑和 HUD 接触目标
+- **THEN** 资源数量、池容量、实例批次和绘制次数保持在当前质量档位预算内
+
+### Requirement: Emissive combat rendering
+
+开火爆点、命中爆点、火花、冲击粒子和投射物尾迹 MUST 支持外发光表现。外发光效果 MUST 使用有界的对象池、共享几何和可复用材质，不能通过无限创建独立纹理或材质实现。
+
+#### Scenario: Combat bloom at standard quality
+
+- **WHEN** 标准质量运行包含连续开火、连续命中和多个敌人的战斗场景
+- **THEN** 外发光爆点和粒子保持清晰光晕，同时渲染资源数量和绘制预算仍在定义范围内
+
+#### Scenario: Emissive fallback at low quality
+
+- **WHEN** 玩家使用低质量档位或设备帧率低于安全阈值
+- **THEN** 系统减少外发光粒子数量和光晕采样，保留外发光爆点、命中方向和主要颜色区分
+
 ### Requirement: Development diagnostics
 
 开发环境 MUST 提供绘制次数、三角形、帧时间、质量档位、云和植被活动数量等诊断数据，生产环境不得因此改变公开行为。
