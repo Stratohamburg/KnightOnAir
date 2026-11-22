@@ -41,13 +41,23 @@ export const RULES = {
 } as const;
 export type Quality = "low" | "standard" | "high";
 export const QUALITIES = {
-  low: { label: "省电", scale: 0.7, clouds: 4, particles: 24, shadows: false },
+  low: {
+    label: "省电", scale: 0.7, clouds: 4, particles: 24, shadows: false,
+    cloud: { puffs: 4, shell: false, volumes: 0, steps: 0, sunSteps: 0, veil: 0.28 },
+    vegetation: { tufts: 0, waveDetail: 0, waveStrength: 0.12, bendFrequency: 0.65, flutter: 0 },
+  },
   standard: {
     label: "标准",
     scale: 0.85,
     clouds: 7,
     particles: 48,
     shadows: true,
+    cloud: { puffs: 6, shell: true, volumes: 0, steps: 0, sunSteps: 0, veil: 0.36 },
+    vegetation: { tufts: 12, waveDetail: 0.55, waveStrength: 0.15, bendFrequency: 1, flutter: 0 },
   },
-  high: { label: "高", scale: 1, clouds: 10, particles: 80, shadows: true },
+  high: {
+    label: "高", scale: 1, clouds: 10, particles: 80, shadows: true,
+    cloud: { puffs: 7, shell: true, volumes: 2, steps: 16, sunSteps: 2, veil: 0.45 },
+    vegetation: { tufts: 24, waveDetail: 1, waveStrength: 0.17, bendFrequency: 1, flutter: 0.14 },
+  },
 } as const;

@@ -196,6 +196,7 @@ export class TerrainChunks {
     const surfaceMasks: number[] = [];
     const roadMasks: number[] = [];
     const shoreMasks: number[] = [];
+    const grassMasks: number[] = [];
     const originX = cellX * TERRAIN.chunk;
     const originZ = cellZ * TERRAIN.chunk;
     for (let iz = 0; iz <= segments; iz++) {
@@ -212,6 +213,7 @@ export class TerrainChunks {
         surfaceMasks.push(sample.surfaceMask);
         roadMasks.push(sample.roadMask);
         shoreMasks.push(sample.shoreMask);
+        grassMasks.push(sample.surfaceMask === 0 && sample.roadMask < .3 ? 1 : 0);
       }
     }
 
@@ -232,6 +234,7 @@ export class TerrainChunks {
     geometry.setAttribute("surfaceMask", new THREE.Float32BufferAttribute(surfaceMasks, 1));
     geometry.setAttribute("roadMask", new THREE.Float32BufferAttribute(roadMasks, 1));
     geometry.setAttribute("shoreMask", new THREE.Float32BufferAttribute(shoreMasks, 1));
+    geometry.setAttribute("grassMask", new THREE.Float32BufferAttribute(grassMasks, 1));
     geometry.setIndex(indices);
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, this.material);
@@ -274,7 +277,6 @@ export class TerrainChunks {
   }
 
   updateTime(time: number) {
-    this.material.uniforms.time.value = time;
     this.water.material.uniforms.time.value = time;
   }
 }

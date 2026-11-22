@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { vegetationWindGLSL, vegetationWindUniforms } from "./VegetationWind";
 const noise = `
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
 float noise(vec2 p) { vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f); return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+1.),f.x),f.y); }
@@ -34,13 +35,26 @@ export function aircraftMaterial(
       }`,
   });
 }
-export function terrainMaterial() {
+export function terrainMaterial(wind = vegetationWindUniforms()) {
   return new THREE.ShaderMaterial({
-    uniforms: { time: { value: 0 }, grass: { value: new THREE.Color("#68ad76") }, road: { value: new THREE.Color("#94c779") } },
-    vertexShader: `attribute float height; attribute float surfaceMask; attribute float roadMask; attribute float shoreMask;
-      varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore;
-      void main(){ vec4 world=modelMatrix*vec4(position,1.); vWorld=world.xyz; vNormal=normalize(normalMatrix*normal); vHeight=height; vSurface=surfaceMask; vRoad=roadMask; vShore=shoreMask; gl_Position=projectionMatrix*viewMatrix*world; }`,
-    fragmentShader: `${noise} varying vec3 vWorld; varying vec3 vNormal; varying float vHeight; varying float vSurface; varying float vRoad; varying float vShore; uniform float time; uniform vec3 grass,road;
+    uniforms: {
+      ...wind,
+      grass: { value: new THREE.Color("#68ad76") },
+      road: { value: new THREE.Color("#94c779") },
+      waveDetail: { value: 0 },
+      waveStrength: { value: 0 },
+    },
+    vertexShader: `attribute float surfaceMask; attribute float roadMask; attribute float shoreMask; attribute float grassMask;
+      varying vec3 vWorld; varying vec3 vNormal; varying float vSurface; varying float vRoad; varying float vShore; varying float vGrass;
+      void main(){
+        vec4 world=modelMatrix*vec4(position,1.);
+        vWorld=world.xyz; vNormal=normalize(normalMatrix*normal);
+        vSurface=surfaceMask; vRoad=roadMask; vShore=shoreMask; vGrass=grassMask;
+        gl_Position=projectionMatrix*viewMatrix*world;
+      }`,
+    fragmentShader: `${noise} ${vegetationWindGLSL}
+      varying vec3 vWorld; varying vec3 vNormal; varying float vSurface; varying float vRoad; varying float vShore; varying float vGrass;
+      uniform vec3 grass,road; uniform float waveDetail,waveStrength;
       void main(){
         vec3 sand=vec3(.91,.72,.42); vec3 water=vec3(.24,.74,.84); vec3 rock=vec3(.38,.65,.53);
         vec3 col = vSurface < .5 ? grass : vSurface < 1.5 ? road : vSurface < 2.5 ? sand : vSurface < 3.5 ? water : rock;
@@ -48,6 +62,19 @@ export function terrainMaterial() {
         float band=light < .32 ? .76 : light < .68 ? .93 : 1.08;
         float grain=fbm(vWorld.xz*.035)-.5;
         col*=band + grain*.08;
+        if (vSurface < .5 && vGrass > .1 && vRoad < .3) {
+          vec2 at = vWorld.xz;
+          vec2 localWind = sampleWind(at);
+          float gustSpeed = .9 + length(localWind) * .9 + windGust * .22;
+          float zone = noise(at * .036);
+          float phase = dot(at, windDirection) * .32 + zone * 1.85 - sceneTime * gustSpeed;
+          float wave = sin(phase) * .78;
+          if (waveDetail > 0.)
+            wave += sin(phase * 1.7 + zone * 4.) * .22 * waveDetail;
+          float weight = smoothstep(.1,.85,vGrass) * (1. - smoothstep(.12,.3,vRoad));
+          col *= 1. + wave * weight * waveStrength;
+          col += vec3(.052,.044,.008) * weight * max(0.,wave) * waveStrength;
+        }
         col=mix(col,vec3(.95,.83,.60),vShore*.35);
         col=mix(col,vec3(.92,.79,.58),vRoad*.18);
         float fog=smoothstep(70.,240.,distance(cameraPosition,vWorld));
@@ -66,23 +93,29 @@ export function cloudMaterial() {
       middleColor: { value: new THREE.Color("#f3ebdd") },
       shadowColor: { value: new THREE.Color("#b7d2ea") },
       time: { value: 0 },
+      shell: { value: 0 },
     },
-    vertexShader: `varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal;
-      void main(){vLocal=position;
+    vertexShader: `varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal; varying vec3 vTint;
+      void main(){vLocal=position; vTint=vec3(1.);
       vec4 local=vec4(position,1.);
       vec3 n=normal;
       #ifdef USE_INSTANCING
         local=instanceMatrix*local;
         n=mat3(instanceMatrix)*n;
       #endif
+      #ifdef USE_INSTANCING_COLOR
+        vTint=instanceColor;
+      #endif
       vNormal=normalize(mat3(modelMatrix)*n);
       vec4 world=modelMatrix*local;vWorld=world.xyz;gl_Position=projectionMatrix*viewMatrix*world;}`,
-    fragmentShader: `${noise} varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal;
-      uniform vec3 topColor,middleColor,shadowColor; uniform float time;
+    fragmentShader: `${noise} varying vec3 vNormal; varying vec3 vWorld; varying vec3 vLocal; varying vec3 vTint;
+      uniform vec3 topColor,middleColor,shadowColor; uniform float time,shell;
       void main(){vec3 n=normalize(vNormal); float light=dot(n,normalize(vec3(-.45,1.,.65)))*.5+.5; float grain=fbm(vLocal.xz*.18+time*.004)-.5;
         vec3 col=mix(shadowColor,middleColor,smoothstep(.28,.58,light)); col=mix(col,topColor,smoothstep(.62,.9,light));
-        float rim=pow(1.-max(0.,dot(n,normalize(cameraPosition-vWorld))),2.2); col+=vec3(1.,.83,.68)*rim*.12; col*=1.+grain*.05;
-        gl_FragColor=vec4(col,1.);
+        float rim=pow(1.-max(0.,dot(n,normalize(cameraPosition-vWorld))),2.2);
+        col+=vec3(1.,.83,.68)*rim*mix(.055,.14,shell);
+        col*=1.+grain*mix(.025,.075,shell);
+        gl_FragColor=vec4(col*vTint,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>}`,
     transparent: false,

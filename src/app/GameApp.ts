@@ -7,6 +7,7 @@ import type { Stats } from "../simulation/types";
 import { WEAPONS } from "../data/weapons";
 import { World, requiredXp } from "../simulation/World";
 import { Renderer } from "../rendering/Renderer";
+import { cloudDiagnostics } from "../rendering/RenderDiagnostics";
 import { SaveStore } from "../services/Save";
 import { GameAudio } from "../services/Audio";
 import { VirtualStick } from "../input/VirtualStick";
@@ -79,6 +80,14 @@ export class GameApp {
       this.renderer = new Renderer(this.sceneHost);
       this.renderer.setQuality(this.save.data.quality);
       this.renderer.setPlayer(this.displayWorld.player);
+      if (import.meta.env.DEV) {
+        Object.assign(window, {
+          __koa: {
+            renderer: this.renderer,
+            get cloud() { return cloudDiagnostics.get(this.renderer); },
+          },
+        });
+      }
       this.renderer.canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
         this.pause();

@@ -5,9 +5,10 @@ import { combatantById } from "../data/combatants";
 import { eraOf } from "../data/aircrafts";
 import { ERAS } from "../data/eras";
 import { routeHeight } from "../simulation/Routes";
-import { Random, clamp, damp, RAD } from "../services/Random";
+import { clamp, damp, RAD } from "../services/Random";
 import { World } from "../simulation/World";
-import { sampleTerrain, surfaceHeight } from "../simulation/Terrain";
+import { surfaceHeight } from "../simulation/Terrain";
+import type { WindField } from "../simulation/WindField";
 import type { Player, Enemy } from "../simulation/types";
 import {
   ProceduralAircraft,
@@ -23,18 +24,25 @@ import {
 } from "./ShaderMaterials";
 import { TerrainChunks } from "./TerrainChunks";
 import { CloudField } from "./CloudField";
+import { CloudDepthPass } from "./CloudVolume";
+import { cloudDiagnostics, environmentFixture, environmentState } from "./RenderDiagnostics";
 import { frameBattleCamera } from "./BattleCamera";
+import { updateVegetationWind, vegetationWindUniforms } from "./VegetationWind";
+import { VegetationField } from "./VegetationField";
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly overlayScene = new THREE.Scene();
+  private readonly cloudScene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly canvas: HTMLCanvasElement;
   private aircraft?: ProceduralAircraft;
   private terrainChunks: TerrainChunks;
   private cloudField: CloudField;
-  private terrainMat = terrainMaterial();
+  private cloudDepth: CloudDepthPass;
+  private readonly vegetationWind = vegetationWindUniforms();
+  private terrainMat = terrainMaterial(this.vegetationWind);
   private enemies = new Map<number, THREE.Group>();
   private bulletBatches: THREE.InstancedMesh[];
   private pickups: THREE.InstancedMesh;
@@ -49,7 +57,7 @@ export class Renderer {
   private shadows: THREE.Mesh[] = [];
   private smoke: THREE.Mesh[] = [];
   private fireMeshes: THREE.Mesh[] = [];
-  private forest: THREE.InstancedMesh;
+  private readonly vegetation: VegetationField;
   private dummy = new THREE.Object3D();
   private projected = new THREE.Vector3();
   private displayAnchor = new THREE.Vector3();
@@ -70,9 +78,6 @@ export class Renderer {
   quality: Quality = "standard";
   private width = 0;
   private height = 0;
-  private readonly vegetationColor = new THREE.Color();
-  private readonly vegetationPalette = ["#83ad65", "#5e956c", "#9bbe70", "#728f63"];
-  private groundOrigin = { x: -99999, z: -99999 };
   private materialCache = new Map<string, THREE.Material>();
   constructor(private host: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -103,8 +108,12 @@ export class Renderer {
     this.overlayScene.fog = this.scene.fog;
     this.renderer.autoClear = false;
     this.renderer.info.autoReset = false;
+    if (import.meta.env.DEV) {
+      cloudDiagnostics.set(this, { clusters: 0, volumes: 0, mode: "puffs", cpuMs: 0, rayMarchCpuMs: 0, veil: 0 });
+    }
     this.terrainChunks = new TerrainChunks(this.scene, this.terrainMat, 491);
-    this.cloudField = new CloudField(this.scene, 491);
+    this.cloudField = new CloudField(this.cloudScene, 491, this.scene);
+    this.cloudDepth = new CloudDepthPass(this.renderer);
     const playerBullet = projectileMaterial("#ffe5a1"),
       enemyBullet = projectileMaterial("#f98769"),
       missileMat = projectileMaterial("#c6f4d4");
@@ -278,17 +287,7 @@ export class Renderer {
       this.fireMeshes.push(mesh);
       this.scene.add(mesh);
     }
-    this.forest = new THREE.InstancedMesh(
-      new THREE.ConeGeometry(0.65, 2.4, 5),
-      new THREE.MeshStandardMaterial({
-        color: "#415b45",
-        flatShading: true,
-        roughness: 1,
-      }),
-      210,
-    );
-    this.forest.frustumCulled = false;
-    this.scene.add(this.forest);
+    this.vegetation = new VegetationField(this.scene, this.vegetationWind, 491);
     this.setQuality("standard");
     this.resize();
   }
@@ -312,6 +311,9 @@ export class Renderer {
   }
   setQuality(q: Quality) {
     this.quality = q;
+    const { vegetation } = QUALITIES[q];
+    this.terrainMat.uniforms.waveDetail.value = vegetation.waveDetail;
+    this.terrainMat.uniforms.waveStrength.value = vegetation.waveStrength;
     this.resolution = QUALITIES[q].scale;
     this.slowFrames = 0;
     this.fastFrames = 0;
@@ -477,35 +479,6 @@ export class Renderer {
     this.enemies.set(e.id, root);
     return root;
   }
-  private updateTerrain(x: number, z: number) {
-    const cx = Math.round(x / 64) * 64,
-      cz = Math.round(z / 64) * 64;
-    if (cx === this.groundOrigin.x && cz === this.groundOrigin.z) return;
-    this.groundOrigin = { x: cx, z: cz };
-    this.terrainChunks.update(x, z);
-    const random = new Random(89 + cx * 13 + cz * 11);
-    for (let i = 0; i < 210; i++) {
-      const cluster = Math.floor(i / 14),
-        bx = Math.sin(cluster * 12.7) * 70 + cx,
-        bz = Math.cos(cluster * 6.5) * 70 + cz;
-      const treeX = bx + random.range(-5, 5);
-      const treeZ = bz + random.range(-5, 5);
-      const terrain = sampleTerrain(treeX, treeZ, 491);
-      this.dummy.position.set(
-        treeX,
-        terrain.height + 1.2,
-        treeZ,
-      );
-      const blocked = terrain.surface === "water" || terrain.roadMask > 0.3 || Math.abs(terrain.slopeX) + Math.abs(terrain.slopeZ) > 0.85;
-      this.dummy.scale.setScalar(blocked ? 0.001 : random.range(0.65, 1.3));
-      this.dummy.rotation.set(0, random.range(0, 6.28), 0);
-      this.dummy.updateMatrix();
-      this.forest.setMatrixAt(i, this.dummy.matrix);
-      this.forest.setColorAt(i, this.vegetationColor.set(this.vegetationPalette[(i * 17 + cluster) % this.vegetationPalette.length]));
-    }
-    this.forest.instanceMatrix.needsUpdate = true;
-    if (this.forest.instanceColor) this.forest.instanceColor.needsUpdate = true;
-  }
   render(
     world: World | undefined,
     dt: number,
@@ -560,6 +533,12 @@ export class Renderer {
       this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
       frameBattleCamera(this.camera, x, z, this.cameraBombing);
     }
+    const fixture = import.meta.env.DEV ? environmentFixture.get(this) : undefined;
+    if (fixture?.camera && fixture.lookAt) {
+      this.camera.position.copy(fixture.camera);
+      this.camera.lookAt(fixture.lookAt);
+      this.camera.updateMatrixWorld();
+    }
     this.viewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this.viewFrustum.setFromProjectionMatrix(this.viewProjection);
     this.aircraft.update(this.time, sceneDt, options.highlight, display);
@@ -575,11 +554,32 @@ export class Renderer {
       this.aircraft.group.position.y -= this.crashTime * this.crashTime * 2;
       this.aircraft.group.rotation.z += this.crashTime * 0.9;
     }
-    this.updateTerrain(x, z);
-    this.terrainMat.uniforms.time.value = this.time;
+    this.terrainChunks.update(x, z);
+    this.vegetation.update(x, z, this.quality);
+    const wind = display ? undefined : world?.wind;
+    updateVegetationWind(this.vegetationWind, this.time, wind, x, z);
     this.terrainChunks.updateTime(this.time);
-    this.cloudField.setQuality(QUALITIES[this.quality].clouds);
-    this.cloudField.update(this.time, x, z);
+    const cloudStart = import.meta.env.DEV ? performance.now() : 0;
+    this.cloudField.setQuality(this.quality);
+    this.cloudField.update(this.time, x, z, this.camera.position, this.viewFrustum, fixture?.volumes, fixture?.cloud);
+    if (import.meta.env.DEV) {
+      const diagnostics = cloudDiagnostics.get(this)!;
+      diagnostics.clusters = fixture?.cloud === false ? 0 : fixture?.cloud ? 1 : this.cloudField.activeCount;
+      diagnostics.volumes = this.cloudField.activeVolumes;
+      diagnostics.mode = diagnostics.volumes > 0 ? "volume" : QUALITIES[this.quality].cloud.shell ? "shell" : "puffs";
+      diagnostics.cpuMs = performance.now() - cloudStart;
+      diagnostics.veil = this.cloudField.veilOpacity;
+      if (fixture) {
+        environmentState.set(this, {
+          sceneTime: this.time,
+          windTime: this.vegetationWind.windTime.value,
+          gust: this.vegetationWind.windGust.value,
+          direction: this.vegetationWind.windDirection.value.toArray(),
+          trees: this.vegetation.treeCount,
+          tufts: this.vegetation.tuftCount,
+        });
+      }
+    }
     this.shadows.forEach((s) => (s.visible = false));
     if (QUALITIES[this.quality].shadows) {
       const shadow = this.shadows[0];
@@ -589,10 +589,25 @@ export class Renderer {
     }
     if (world && !display) this.updateBattle(world);
     else this.hideBattle();
-    this.updateSmoke(p, x, z, world?.wind.gust ?? 0);
+    this.updateSmoke(p, x, z, wind);
     this.renderer.info.reset();
+    const useCloudDepth = QUALITIES[this.quality].cloud.volumes > 0;
+    if (useCloudDepth) this.cloudDepth.begin(this.renderer);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
+    const cloudDrawStart = import.meta.env.DEV ? performance.now() : 0;
+    this.renderer.render(this.cloudScene, this.camera);
+    if (useCloudDepth) this.cloudDepth.finish(this.renderer);
+    const volumeStart = import.meta.env.DEV ? performance.now() : 0;
+    if (this.cloudField.activeVolumes > 0) {
+      this.cloudField.renderVolumes(this.renderer, this.camera, this.cloudDepth.depth);
+    }
+    if (import.meta.env.DEV) {
+      const diagnostics = cloudDiagnostics.get(this)!;
+      diagnostics.rayMarchCpuMs = this.cloudField.activeVolumes > 0 ? performance.now() - volumeStart : 0;
+    }
+    this.cloudField.renderVeil(this.renderer);
+    if (import.meta.env.DEV) cloudDiagnostics.get(this)!.cpuMs += performance.now() - cloudDrawStart;
     this.renderer.clearDepth();
     this.renderer.render(this.overlayScene, this.camera);
     this.frameMetrics.calls = this.renderer.info.render.calls;
@@ -797,10 +812,11 @@ export class Renderer {
       }
     });
   }
-  private updateSmoke(p: Player, x: number, z: number, wind: number) {
+  private updateSmoke(p: Player, x: number, z: number, wind: WindField | undefined) {
     const damaged = p.parts.filter(
       (part) => part.health < part.maxHealth * 0.45,
     );
+    const drift = damaged.length ? wind?.sample(x, z) : undefined;
     this.smoke.forEach((mesh, i) => {
       const part = damaged[i % Math.max(1, damaged.length)];
       mesh.visible = Boolean(part) && i < (this.quality === "low" ? 3 : 12);
@@ -809,9 +825,9 @@ export class Renderer {
         sin = Math.sin(p.heading),
         cos = Math.cos(p.heading);
       mesh.position.set(
-        x + part.x * cos + part.z * sin - p.vx * t * 0.3 + wind * t,
+        x + part.x * cos + part.z * sin - p.vx * t * 0.3 + (drift?.x ?? 0) * t,
         RULES.flightAltitude + .3 + t * 2,
-        z - part.x * sin + part.z * cos - p.vz * t * 0.3,
+        z - part.x * sin + part.z * cos - p.vz * t * 0.3 + (drift?.z ?? 0) * t,
       );
       mesh.scale.setScalar(0.5 + t * 1.9);
       mesh.quaternion.copy(this.camera.quaternion);
@@ -871,7 +887,9 @@ export class Renderer {
   dispose() {
     this.aircraft?.dispose();
     this.terrainChunks.dispose();
+    this.vegetation.dispose();
     this.cloudField.dispose();
+    this.cloudDepth.dispose();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
         o.geometry.dispose();
