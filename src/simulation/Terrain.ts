@@ -6,13 +6,13 @@ export const TERRAIN = {
   playAmplitude: 10,
   farPeak: 18,
   chunk: 80,
-  nearSegments: 24,
-  farSegments: 10,
-  ring: 3,
+  segments: 40,
+  chunkRadius: 2,
 } as const;
 
 export interface TerrainSample {
   height: number;
+  bedHeight: number;
   slopeX: number;
   slopeZ: number;
   surface: "land" | "water";
@@ -30,6 +30,23 @@ const integerHash = (x: number, z: number, seed: number) => {
 };
 
 const smooth = (value: number) => value * value * (3 - 2 * value);
+
+function falloff(distance: number, shoulder: number) {
+  return 1 - smooth(clamp((distance - shoulder) / (1 - shoulder)));
+}
+
+// Grass-covered headlands and overlapping inland ridges frame the river opening.
+const landforms = [
+  [-39, 2, 32, 26, 8, .18],
+  [-49, 53, 37, 47, 12, .22],
+  [61, 35, 32, 46, 13, .38],
+  [86, 93, 47, 60, 13, .22],
+  [-88, 122, 54, 60, 16, .17],
+  [-19, 155, 44, 39, 11, .16],
+  [55, 186, 51, 47, 14, .2],
+  [-78, -71, 48, 48, 12, .22],
+  [62, -101, 53, 56, 14, .24],
+] as const;
 
 const valueNoise = (x: number, z: number, seed: number) => {
   const ix = Math.floor(x);
@@ -62,27 +79,35 @@ export const roadX = (z: number, seed: number) =>
 export const riverZ = (x: number, seed: number) =>
   -Math.sin(x * .022 + seed * .01) * 18 - Math.sin(x * .06) * 4;
 const routeDistance = (x: number, z: number, seed: number) => Math.abs(x - roadX(z, seed));
+export const railX = (z: number, seed: number) => roadX(z, seed + 49) + 28;
 
 const baseHeight = (x: number, z: number, seed: number) => {
   const warpX = (fbm(x * 0.004, z * 0.004, seed + 11, 2) - 0.5) * 18;
   const warpZ = (fbm(x * 0.004 - 5.7, z * 0.004 + 9.1, seed + 12, 2) - 0.5) * 18;
   const wx = x + warpX;
   const wz = z + warpZ;
-  const broad = fbm(wx * 0.012, wz * 0.012, seed, 4) * 9.2;
-  const detail = fbm(wx * 0.045, wz * 0.045, seed + 1, 2) * 0.8;
-  const ridge = clamp((fbm(wx * 0.0035, wz * 0.0035, seed + 2, 3) - 0.58) / 0.18, 0, 1);
-  return Math.min(TERRAIN.farPeak, broad + detail + ridge * 8);
+  const broad = 1.8 + fbm(wx * .009, wz * .009, seed, 3) * 4.7;
+  const detail = fbm(wx * .037, wz * .037, seed + 1, 2) * .95;
+  const ridge = clamp((fbm(wx * .0035, wz * .0035, seed + 2, 3) - .58) / .25) * 6;
+  let relief = 0;
+  for (const [cx, cz, width, length, rise, shoulder] of landforms) {
+    const across = (wx - cx) / width;
+    const along = (wz - cz) / length;
+    if (Math.abs(across) >= 1 || Math.abs(along) >= 1) continue;
+    relief = Math.max(relief, rise * falloff(Math.hypot(across, along), shoulder));
+  }
+  const corridor = Math.min(routeDistance(x, z, seed), Math.abs(x - railX(z, seed)));
+  const routeClearance = .42 + .58 * smooth(clamp((corridor - 4) / 21));
+  return broad + detail + 13.5 * (1 - Math.exp(-(ridge + relief * routeClearance) / 10));
 };
 
 export function terrainHeight(x: number, z: number, seed = TERRAIN.seed) {
-  let height = baseHeight(x, z, seed);
-  const river = Math.abs(z - riverZ(x, seed));
-  const riverMask = 1 - clamp((river - 2) / 5, 0, 1);
-  height += (-3 - height) * riverMask;
-  const road = (1 - riverMask) * (1 - clamp((routeDistance(x, z, seed) - 2) / 4.5, 0, 1));
-  const roadBase = baseHeight(x, z, seed);
-  height = height * (1 - road * 0.8) + roadBase * road * 0.8;
-  return clamp(height, -3.5, TERRAIN.farPeak);
+  const height = baseHeight(x, z, seed);
+  const riverOffset = z - riverZ(x, seed);
+  const bay = 12 * falloff(Math.abs(x + 30) / 43, .13);
+  const bankWidth = 11 + bay * (riverOffset < 0 ? .78 : 1.22);
+  const bank = smooth(clamp((Math.abs(riverOffset) - 2.4) / bankWidth));
+  return clamp(-4.8 + (height + 4.8) * bank, -4.8, TERRAIN.farPeak);
 }
 
 export function surfaceHeight(x: number, z: number, seed = TERRAIN.seed) {
@@ -103,12 +128,13 @@ export function terrainNormal(x: number, z: number, seed = TERRAIN.seed) {
 
 export function sampleTerrain(x: number, z: number, seed = TERRAIN.seed): TerrainSample {
   const epsilon = 0.25;
-  const height = surfaceHeight(x, z, seed);
+  const bedHeight = terrainHeight(x, z, seed);
+  const height = Math.max(TERRAIN.waterLevel, bedHeight);
   const slopeX = (surfaceHeight(x + epsilon, z, seed) - surfaceHeight(x - epsilon, z, seed)) / (epsilon * 2);
   const slopeZ = (surfaceHeight(x, z + epsilon, seed) - surfaceHeight(x, z - epsilon, seed)) / (epsilon * 2);
   const roadMask = 1 - clamp((routeDistance(x, z, seed) - 2) / 4.5, 0, 1);
   const shoreMask = clamp(1 - Math.abs(height - TERRAIN.waterLevel) / 1.2, 0, 1);
-  const water = isWater(x, z, seed);
+  const water = bedHeight <= TERRAIN.waterLevel + .02;
   const surfaceMask = water ? 3 : shoreMask > 0.1 ? 2 : roadMask > 0.45 ? 1 : Math.abs(slopeX) + Math.abs(slopeZ) > 0.55 ? 4 : 0;
-  return { height, slopeX, slopeZ, surface: water ? "water" : "land", surfaceMask, roadMask, shoreMask };
+  return { height, bedHeight, slopeX, slopeZ, surface: water ? "water" : "land", surfaceMask, roadMask, shoreMask };
 }

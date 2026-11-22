@@ -20,7 +20,8 @@ export const RULES = {
   comboTimeout: 5,
   camera: {
     fov: 48,
-    pitch: 64,
+    pitch: 52,
+    displayPitch: 64,
     distance: 66,
     bombing: { fov: 34, pitch: 74, distance: 74 },
     near: 0.1,
@@ -42,22 +43,21 @@ export const RULES = {
 export type Quality = "low" | "standard" | "high";
 export const QUALITIES = {
   low: {
-    label: "省电", scale: 0.7, clouds: 4, particles: 24, shadows: false,
-    cloud: { puffs: 4, shell: false, volumes: 0, steps: 0, sunSteps: 0, veil: 0.28 },
+    label: "省电", scale: 0.7, particles: 24, shadows: false,
+    cloud: { resolution: 0.4, samples: 12, detail: 0.38 },
     vegetation: { tufts: 0, waveDetail: 0, waveStrength: 0.12, bendFrequency: 0.65, flutter: 0 },
   },
   standard: {
     label: "标准",
     scale: 0.85,
-    clouds: 7,
     particles: 48,
     shadows: true,
-    cloud: { puffs: 6, shell: true, volumes: 0, steps: 0, sunSteps: 0, veil: 0.36 },
+    cloud: { resolution: 0.5, samples: 18, detail: 0.72 },
     vegetation: { tufts: 12, waveDetail: 0.55, waveStrength: 0.15, bendFrequency: 1, flutter: 0 },
   },
   high: {
-    label: "高", scale: 1, clouds: 10, particles: 80, shadows: true,
-    cloud: { puffs: 7, shell: true, volumes: 2, steps: 16, sunSteps: 2, veil: 0.45 },
+    label: "高", scale: 1, particles: 80, shadows: true,
+    cloud: { resolution: 0.65, samples: 24, detail: 1 },
     vegetation: { tufts: 24, waveDetail: 1, waveStrength: 0.17, bendFrequency: 1, flutter: 0.14 },
   },
 } as const;

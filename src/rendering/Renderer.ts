@@ -18,13 +18,14 @@ import {
 import {
   aircraftMaterial,
   terrainMaterial,
+  skyDomeMaterial,
   crosshairMaterial,
   effectMaterial,
   projectileMaterial,
 } from "./ShaderMaterials";
 import { TerrainChunks } from "./TerrainChunks";
-import { CloudField } from "./CloudField";
-import { CloudDepthPass } from "./CloudVolume";
+import { Cloudscape } from "./Cloudscape";
+import { cloudSun } from "./CloudscapeLayout";
 import { cloudDiagnostics, environmentFixture, environmentState } from "./RenderDiagnostics";
 import { frameBattleCamera } from "./BattleCamera";
 import { updateVegetationWind, vegetationWindUniforms } from "./VegetationWind";
@@ -34,13 +35,12 @@ export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   readonly overlayScene = new THREE.Scene();
-  private readonly cloudScene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly canvas: HTMLCanvasElement;
   private aircraft?: ProceduralAircraft;
   private terrainChunks: TerrainChunks;
-  private cloudField: CloudField;
-  private cloudDepth: CloudDepthPass;
+  private readonly skyDome: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
+  private readonly cloudscape: Cloudscape;
   private readonly vegetationWind = vegetationWindUniforms();
   private terrainMat = terrainMaterial(this.vegetationWind);
   private enemies = new Map<number, THREE.Group>();
@@ -100,8 +100,15 @@ export class Renderer {
     );
     this.scene.add(new THREE.HemisphereLight("#f5edd2", "#526b61", 2.8));
     const sun = new THREE.DirectionalLight("#fff1ca", 3);
-    sun.position.set(-15, 28, -8);
+    sun.position.set(...cloudSun);
     this.scene.add(sun);
+    this.skyDome = new THREE.Mesh(
+      new THREE.SphereGeometry(420, 24, 16),
+      skyDomeMaterial(),
+    );
+    this.skyDome.renderOrder = -1000;
+    this.skyDome.frustumCulled = false;
+    this.scene.add(this.skyDome);
     this.overlayScene.add(new THREE.HemisphereLight("#fff6e5", "#526b61", 2.2));
     this.overlayScene.add(new THREE.DirectionalLight("#fff1ca", 2.4));
     this.scene.fog = new THREE.Fog("#cfefff", 70, 240);
@@ -109,11 +116,20 @@ export class Renderer {
     this.renderer.autoClear = false;
     this.renderer.info.autoReset = false;
     if (import.meta.env.DEV) {
-      cloudDiagnostics.set(this, { clusters: 0, volumes: 0, mode: "puffs", cpuMs: 0, rayMarchCpuMs: 0, veil: 0 });
+      cloudDiagnostics.set(this, {
+        enabled: false,
+        resolution: [0, 0],
+        samples: 0,
+        cpuMs: 0,
+        rayMarchCpuMs: 0,
+        cameraDensity: 0,
+        windDirection: [-0.36, 0.93295],
+        windSpeed: 0,
+      });
     }
-    this.terrainChunks = new TerrainChunks(this.scene, this.terrainMat, 491);
-    this.cloudField = new CloudField(this.cloudScene, 491, this.scene);
-    this.cloudDepth = new CloudDepthPass(this.renderer);
+    this.cloudscape = new Cloudscape(this.renderer, 491);
+    Object.assign(this.terrainMat.uniforms, this.cloudscape.shadowUniforms);
+    this.terrainChunks = new TerrainChunks(this.scene, this.terrainMat, 491, this.cloudscape.shadowUniforms);
     const playerBullet = projectileMaterial("#ffe5a1"),
       enemyBullet = projectileMaterial("#f98769"),
       missileMat = projectileMaterial("#c6f4d4");
@@ -314,6 +330,7 @@ export class Renderer {
     const { vegetation } = QUALITIES[q];
     this.terrainMat.uniforms.waveDetail.value = vegetation.waveDetail;
     this.terrainMat.uniforms.waveStrength.value = vegetation.waveStrength;
+    this.terrainChunks.setShadows(QUALITIES[q].shadows);
     this.resolution = QUALITIES[q].scale;
     this.slowFrames = 0;
     this.fastFrames = 0;
@@ -498,7 +515,10 @@ export class Renderer {
       (this.scene.fog as THREE.Fog).color.set(colors.haze);
       this.terrainMat.uniforms.grass.value.set(colors.grass);
       this.terrainMat.uniforms.road.value.set(colors.accent);
+      this.terrainMat.uniforms.haze.value.set(colors.haze);
+      this.skyDome.material.uniforms.horizon.value.set(colors.haze);
       this.terrainChunks.setWaterColor(colors.water);
+      this.terrainChunks.setHaze(colors.haze);
     }
     const display = options.display,
       launch = options.launching ?? 0;
@@ -516,7 +536,7 @@ export class Renderer {
       const displayDistance = 26 * Math.max(1, p.stats.wingspan / 9, p.stats.length / 10);
       const aspectScale = this.camera.aspect < 0.55 ? 1.12 : 1;
       const distance = (displayDistance - launch * 3) * aspectScale;
-      const pitch = RULES.camera.pitch * RAD;
+      const pitch = RULES.camera.displayPitch * RAD;
       const cameraBase = RULES.flightAltitude - 9;
       this.camera.position.set(
         this.displayAnchor.x,
@@ -539,6 +559,7 @@ export class Renderer {
       this.camera.lookAt(fixture.lookAt);
       this.camera.updateMatrixWorld();
     }
+    this.skyDome.position.copy(this.camera.position);
     this.viewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this.viewFrustum.setFromProjectionMatrix(this.viewProjection);
     this.aircraft.update(this.time, sceneDt, options.highlight, display);
@@ -559,26 +580,25 @@ export class Renderer {
     const wind = display ? undefined : world?.wind;
     updateVegetationWind(this.vegetationWind, this.time, wind, x, z);
     this.terrainChunks.updateTime(this.time);
-    const cloudStart = import.meta.env.DEV ? performance.now() : 0;
-    this.cloudField.setQuality(this.quality);
-    this.cloudField.update(this.time, x, z, this.camera.position, this.viewFrustum, fixture?.volumes, fixture?.cloud);
-    if (import.meta.env.DEV) {
-      const diagnostics = cloudDiagnostics.get(this)!;
-      diagnostics.clusters = fixture?.cloud === false ? 0 : fixture?.cloud ? 1 : this.cloudField.activeCount;
-      diagnostics.volumes = this.cloudField.activeVolumes;
-      diagnostics.mode = diagnostics.volumes > 0 ? "volume" : QUALITIES[this.quality].cloud.shell ? "shell" : "puffs";
-      diagnostics.cpuMs = performance.now() - cloudStart;
-      diagnostics.veil = this.cloudField.veilOpacity;
-      if (fixture) {
-        environmentState.set(this, {
-          sceneTime: this.time,
-          windTime: this.vegetationWind.windTime.value,
-          gust: this.vegetationWind.windGust.value,
-          direction: this.vegetationWind.windDirection.value.toArray(),
-          trees: this.vegetation.treeCount,
-          tufts: this.vegetation.tuftCount,
-        });
-      }
+    const cloudsEnabled = fixture?.clouds ?? true;
+    const cloudWind = wind?.sample(x, z) ?? { x: -0.36, z: 0.93295 };
+    this.cloudscape.update(
+      sceneDt,
+      cloudWind.x,
+      cloudWind.z,
+      wind?.gust ?? 0,
+      this.camera.position,
+      cloudsEnabled,
+    );
+    if (import.meta.env.DEV && fixture) {
+      environmentState.set(this, {
+        sceneTime: this.time,
+        windTime: this.vegetationWind.windTime.value,
+        gust: this.vegetationWind.windGust.value,
+        direction: this.vegetationWind.windDirection.value.toArray(),
+        trees: this.vegetation.treeCount,
+        tufts: this.vegetation.tuftCount,
+      });
     }
     this.shadows.forEach((s) => (s.visible = false));
     if (QUALITIES[this.quality].shadows) {
@@ -591,23 +611,28 @@ export class Renderer {
     else this.hideBattle();
     this.updateSmoke(p, x, z, wind);
     this.renderer.info.reset();
-    const useCloudDepth = QUALITIES[this.quality].cloud.volumes > 0;
-    if (useCloudDepth) this.cloudDepth.begin(this.renderer);
+    this.cloudscape.begin(this.renderer);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
-    const cloudDrawStart = import.meta.env.DEV ? performance.now() : 0;
-    this.renderer.render(this.cloudScene, this.camera);
-    if (useCloudDepth) this.cloudDepth.finish(this.renderer);
-    const volumeStart = import.meta.env.DEV ? performance.now() : 0;
-    if (this.cloudField.activeVolumes > 0) {
-      this.cloudField.renderVolumes(this.renderer, this.camera, this.cloudDepth.depth);
+    const cloudStart = import.meta.env.DEV ? performance.now() : 0;
+    let cloudMarchMs = 0;
+    if (cloudsEnabled) {
+      this.cloudscape.renderClouds(this.renderer, this.camera, this.quality);
+      if (import.meta.env.DEV) cloudMarchMs = performance.now() - cloudStart;
     }
+    this.cloudscape.compositeWorld(this.renderer, this.camera);
     if (import.meta.env.DEV) {
       const diagnostics = cloudDiagnostics.get(this)!;
-      diagnostics.rayMarchCpuMs = this.cloudField.activeVolumes > 0 ? performance.now() - volumeStart : 0;
+      diagnostics.enabled = cloudsEnabled;
+      diagnostics.resolution[0] = cloudsEnabled ? this.cloudscape.width : 0;
+      diagnostics.resolution[1] = cloudsEnabled ? this.cloudscape.height : 0;
+      diagnostics.samples = cloudsEnabled ? QUALITIES[this.quality].cloud.samples : 0;
+      diagnostics.cameraDensity = this.cloudscape.cameraDensity;
+      diagnostics.windDirection = [this.cloudscape.flow.x, this.cloudscape.flow.z];
+      diagnostics.windSpeed = this.cloudscape.flow.speed;
+      diagnostics.rayMarchCpuMs = cloudMarchMs;
+      diagnostics.cpuMs = cloudsEnabled ? performance.now() - cloudStart : 0;
     }
-    this.cloudField.renderVeil(this.renderer);
-    if (import.meta.env.DEV) cloudDiagnostics.get(this)!.cpuMs += performance.now() - cloudDrawStart;
     this.renderer.clearDepth();
     this.renderer.render(this.overlayScene, this.camera);
     this.frameMetrics.calls = this.renderer.info.render.calls;
@@ -873,7 +898,7 @@ export class Renderer {
   }
   isCloudOccluded(x: number, y: number, z: number) {
     this.projected.set(x, y, z);
-    return this.cloudField.occludes(this.camera.position, this.projected);
+    return this.cloudscape.occludes(this.camera.position, this.projected);
   }
   get diagnostics() {
     return {
@@ -887,9 +912,9 @@ export class Renderer {
   dispose() {
     this.aircraft?.dispose();
     this.terrainChunks.dispose();
+    this.terrainMat.dispose();
     this.vegetation.dispose();
-    this.cloudField.dispose();
-    this.cloudDepth.dispose();
+    this.cloudscape.dispose();
     this.scene.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof THREE.Line) {
         o.geometry.dispose();

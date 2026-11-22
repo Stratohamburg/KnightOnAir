@@ -38,10 +38,13 @@ describe("configuration v3", () => {
     const storage = {
       getItem: (key: string) => stored.get(key) ?? null,
       setItem: (key: string, value: string) => stored.set(key, value),
+      removeItem: (key: string) => {
+        stored.delete(key);
+      },
     };
     const fresh = new SaveStore(storage);
     expect(fresh.data.equipped).toBe(STARTER_FRAME_ID);
-    expect(stored.has("knight-on-air.v1")).toBe(true);
+    expect(stored.has("knight-on-air.v1")).toBe(false);
     fresh.persist();
     expect(stored.has("knight-on-air.v2")).toBe(true);
     expect(JSON.parse(stored.get("knight-on-air.v2")!).version).toBe(2);

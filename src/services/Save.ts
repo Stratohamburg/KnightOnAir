@@ -32,12 +32,14 @@ export class SaveStore {
   available = true;
   constructor(
     private storage:
-      Pick<Storage, "getItem" | "setItem"> | undefined = undefined,
+      (Pick<Storage, "getItem" | "setItem"> &
+        Partial<Pick<Storage, "removeItem">>) | undefined = undefined,
   ) {
     try {
       this.storage ??=
         typeof localStorage === "undefined" ? undefined : localStorage;
       if (!this.storage) this.available = false;
+      this.storage?.removeItem?.("knight-on-air.v1");
       const raw = this.storage?.getItem("knight-on-air.v2");
       if (!raw) return;
       const saved = JSON.parse(raw);

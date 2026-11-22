@@ -7,29 +7,30 @@ import { placeVegetation } from "./VegetationField";
 import { cloudDiagnostics, environmentFixture, environmentState, type EnvironmentFixture } from "./RenderDiagnostics";
 import { Renderer } from "./Renderer";
 
-type Scene = "occlusion" | "volume" | "veil" | "grass" | "tree" | "battle";
+type Scene = "occlusion" | "cloudscape" | "grass" | "tree" | "battle" | "terrain";
 
 export function mountEnvironmentAcceptance(root: HTMLElement) {
   const host = document.createElement("div");
-  host.style.cssText = "position:fixed;inset:0";
+  host.className = "scene-host";
+  host.style.cssText = "position:fixed;inset:0;z-index:0";
   root.replaceChildren(host);
   const renderer = new Renderer(host);
-  const fixture: EnvironmentFixture = { volumes: true };
+  const fixture: EnvironmentFixture = { clouds: true };
   environmentFixture.set(renderer, fixture);
   const gl = renderer.renderer.getContext();
   let world: World;
   let scene: Scene;
-  let cloudCenter: Vector3 | undefined;
   let treeRoot: Vector3 | undefined;
   let unit: Vector3 | undefined;
 
   function report() {
+    const cloud = cloudDiagnostics.get(renderer)!;
     return {
       scene,
       quality: renderer.quality,
       ...renderer.frameMetrics,
       ...environmentState.get(renderer),
-      cloud: { ...cloudDiagnostics.get(renderer)! },
+      cloud: { ...cloud, resolution: [...cloud.resolution] },
       memory: { ...renderer.renderer.info.memory, programs: renderer.renderer.info.programs?.length },
       resolution: [gl.drawingBufferWidth, gl.drawingBufferHeight],
       enemies: world.enemies.length,
@@ -43,20 +44,28 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     else if (world.clock.timeScale > 0) world.wind.update(dt);
     const start = performance.now();
     renderer.render(world, dt, { display: false });
-    return { frameCpuMs: performance.now() - start, ...report() };
+    const result = { frameCpuMs: performance.now() - start, ...report() };
+    renderer.canvas.dataset.frame = JSON.stringify({
+      quality: result.quality,
+      calls: result.calls,
+      triangles: result.triangles,
+      resolution: result.resolution,
+      bombing: world.isBombing,
+    });
+    return result;
   }
 
   function setup(next: Scene, quality: Quality = "standard") {
     scene = next;
     const battle = next === "battle";
-    world = new World(airframeById(battle ? "raptor_14" : "wasp_04"), 491, { director: false });
+    const frame = battle ? "raptor_14" : next === "terrain" ? "courier_02" : "wasp_04";
+    world = new World(airframeById(frame), 491, { director: false });
     renderer.setPlayer(world.player);
     renderer.setQuality(quality);
     world.wind.update(52);
     fixture.camera = fixture.lookAt = undefined;
-    fixture.volumes = true;
-    fixture.cloud = battle ? undefined : false;
-    treeRoot = unit = cloudCenter = undefined;
+    fixture.clouds = battle || next === "cloudscape" || next === "occlusion" || next === "terrain";
+    treeRoot = unit = undefined;
 
     if (battle) {
       const enemies = [
@@ -78,8 +87,8 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       const ground = world.enemies.find((enemy) => enemy.layer === "ground")!;
       unit = new Vector3(ground.x, world.surfaceHeight(ground.x, ground.z) + .55, ground.z);
       frameBattleCamera(renderer.camera, 0, 0, 0);
-      cloudCenter = renderer.camera.position.clone().lerp(unit, .45);
-      fixture.cloud = cloudCenter;
+      fixture.camera = renderer.camera.position.clone().add(new Vector3(28, -9, 0));
+      fixture.lookAt = unit.clone();
       const lock = world.mainLock;
       if (lock) {
         lock.targetId = ground.id;
@@ -87,11 +96,8 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       }
     }
 
-    if (next === "volume" || next === "veil") {
-      cloudCenter = new Vector3(0, 25, 0);
-      fixture.cloud = cloudCenter;
-      fixture.lookAt = cloudCenter.clone().add(new Vector3(0, 0, 5));
-      fixture.camera = new Vector3(0, 29, -34);
+    if (next === "cloudscape") {
+      world.spawnEnemy("mobile_artillery", -9, 151);
     }
 
     if (next === "tree") {
@@ -118,7 +124,7 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       return renderer.canvas.toDataURL("image/png");
     },
     position() {
-      return { unit: unit?.toArray(), cloud: cloudCenter?.toArray(), treeRoot: treeRoot?.toArray() };
+      return { unit: unit?.toArray(), treeRoot: treeRoot?.toArray() };
     },
     project(x: number, y: number, z: number) {
       const point = new Vector3(x, y, z).project(renderer.camera);
@@ -129,13 +135,30 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       fixture.lookAt = new Vector3(targetX, targetY, targetZ);
       return draw();
     },
-    clouds(visible: boolean, volumes = true) {
-      fixture.volumes = volumes;
-      fixture.cloud = visible ? cloudCenter : false;
+    clouds(visible: boolean) {
+      fixture.clouds = visible;
       return draw();
+    },
+    flight(x: number, z: number, bombing: boolean, dt = 1 / 60) {
+      fixture.camera = fixture.lookAt = undefined;
+      world.player.x = world.player.prevX = x;
+      world.player.z = world.player.prevZ = z;
+      if (world.isBombing !== bombing) world.toggleBombing();
+      world.aim.x = x;
+      world.aim.z = z + 13;
+      return draw(dt);
     },
     surface(x: number, z: number) { return world.surfaceHeight(x, z); },
   };
   Object.assign(window, { __koa: { renderer, environment } });
-  setup("battle");
+  const params = new URLSearchParams(location.search);
+  if (params.get("environmentTest") === "terrain") {
+    const quality = params.get("quality");
+    setup("terrain", quality === "low" || quality === "high" ? quality : "standard");
+    fixture.clouds = params.get("clouds") !== "off";
+    const bombing = params.get("view") === "bombing";
+    environment.flight(0, bombing ? 7 : -4, bombing, .5);
+  } else {
+    setup("battle");
+  }
 }

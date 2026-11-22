@@ -1,5 +1,5 @@
 import { clamp } from "../services/Random";
-import { riverZ, roadX, surfaceHeight } from "./Terrain";
+import { railX, riverZ, roadX, surfaceHeight } from "./Terrain";
 
 export type RouteKind = "road" | "rail" | "water";
 export interface Route {
@@ -17,7 +17,7 @@ function route(seed: number, kind: RouteKind, id: string): Route {
   const points = Array.from({ length: Math.floor(840 / spacing) + 1 }, (_, index) => {
     const coordinate = index * spacing - 420;
     if (kind === "water") return { x: coordinate, z: riverZ(coordinate, seed) };
-    const x = kind === "rail" ? roadX(coordinate, seed + 49) + 28 : roadX(coordinate, seed);
+    const x = kind === "rail" ? railX(coordinate, seed) : roadX(coordinate, seed);
     return { x, z: coordinate };
   });
   const offsets = [0];

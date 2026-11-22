@@ -1,12 +1,14 @@
 import type { Vector3 } from "three";
 
 export interface CloudDiagnostics {
-  clusters: number;
-  volumes: number;
-  mode: "puffs" | "shell" | "volume";
+  enabled: boolean;
+  resolution: [number, number];
+  samples: number;
   cpuMs: number;
   rayMarchCpuMs: number;
-  veil: number;
+  cameraDensity: number;
+  windDirection: [number, number];
+  windSpeed: number;
 }
 
 export const cloudDiagnostics = new WeakMap<object, CloudDiagnostics>();
@@ -14,8 +16,7 @@ export const cloudDiagnostics = new WeakMap<object, CloudDiagnostics>();
 export interface EnvironmentFixture {
   camera?: Vector3;
   lookAt?: Vector3;
-  cloud?: Vector3 | false;
-  volumes: boolean;
+  clouds: boolean;
 }
 
 export const environmentFixture = new WeakMap<object, EnvironmentFixture>();

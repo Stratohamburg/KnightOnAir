@@ -6,7 +6,7 @@ import { sampleTerrain, TERRAIN } from "../simulation/Terrain";
 import { vegetationWindGLSL, type VegetationWindUniforms } from "./VegetationWind";
 
 const candidatesPerChunk = 24;
-const palette = ["#83ad65", "#5e956c", "#9bbe70", "#728f63"];
+const palette = ["#a7bd69", "#70a777", "#c2d579", "#85a56c"];
 const chunkCapacity = 9 * candidatesPerChunk;
 
 export interface VegetationPlant {
@@ -23,15 +23,18 @@ export interface VegetationPlant {
 export function placeVegetation(cellX: number, cellZ: number, seed: number, tree: boolean) {
   const random = new Random(seed ^ Math.imul(cellX, 374761393) ^ Math.imul(cellZ, 668265263) ^ Number(tree) * 801);
   const plants: VegetationPlant[] = [];
+  const groupSize = tree ? 8 : 6;
+  const groups = candidatesPerChunk / groupSize;
   let groveX = 0, groveZ = 0;
   for (let index = 0; index < candidatesPerChunk; index++) {
-    if (tree && index % 8 === 0) {
-      groveX = random.range(-28, 28);
-      groveZ = random.range(-28, 28);
+    if (index % groupSize === 0) {
+      groveX = random.range(-29, 29);
+      groveZ = -26 + 52 * (index / groupSize) / (groups - 1) + random.range(-3, 3);
     }
-    const spread = tree ? 10 : TERRAIN.chunk * .5;
-    const x = cellX * TERRAIN.chunk + groveX + random.range(-spread, spread);
-    const z = cellZ * TERRAIN.chunk + groveZ + random.range(-spread, spread);
+    const angle = random.range(0, Math.PI * 2);
+    const radius = random.range(1, tree ? 10 : 11);
+    const x = cellX * TERRAIN.chunk + groveX + Math.cos(angle) * radius;
+    const z = cellZ * TERRAIN.chunk + groveZ + Math.sin(angle) * radius;
     const surface = sampleTerrain(x, z, seed);
     if (surface.surfaceMask !== 0 || surface.roadMask >= .3 || Math.hypot(surface.slopeX, surface.slopeZ) > (tree ? .48 : .4)) continue;
     const plant = new Random(seed ^ Math.imul(Math.round(x * 1024), 1274126177) ^ Math.imul(Math.round(z * 1024), 1597334677));
@@ -69,12 +72,21 @@ function treeGeometry() {
 
 function tuftGeometry() {
   const vertices: number[] = [];
+  const colors: number[] = [];
+  const root = new THREE.Color("#83ac55");
+  const tip = new THREE.Color("#dee6a2");
+  const flower = new THREE.Color("#fff5c7");
   for (const angle of [0, Math.PI * .66, Math.PI * 1.33]) {
     const x = Math.cos(angle) * .25, z = Math.sin(angle) * .25;
     vertices.push(x, 0, z, -x, 0, -z, z * .7, .62, -x * .7);
+    colors.push(...root.toArray(), ...root.toArray(), ...tip.toArray());
+    vertices.push(z * .7 - x * .26, .53, -x * .7 - z * .26,
+      z * .7 + x * .26, .54, -x * .7 + z * .26, z * .7, .62, -x * .7);
+    colors.push(...flower.toArray(), ...flower.toArray(), ...flower.toArray());
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   geometry.computeVertexNormals();
   return geometry;
 }
@@ -89,10 +101,10 @@ function vegetationBatch(tree: boolean, wind: VegetationWindUniforms, frequency:
   motion.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute("plantMotion", motion);
   const material = new THREE.MeshStandardMaterial({
-    color: tree ? "#b2bb9c" : "#99b96d",
+    color: tree ? "#bbc5a5" : "#d1d5a8",
     flatShading: true,
     roughness: 1,
-    vertexColors: tree,
+    vertexColors: true,
     side: tree ? THREE.FrontSide : THREE.DoubleSide,
   });
   material.customProgramCacheKey = () => tree ? "wind-tree" : "wind-tuft";
