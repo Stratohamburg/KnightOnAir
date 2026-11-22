@@ -64,6 +64,7 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     renderer.setQuality(quality);
     world.wind.update(52);
     fixture.camera = fixture.lookAt = undefined;
+    fixture.cloudShadows = undefined;
     fixture.clouds = battle || next === "cloudscape" || next === "occlusion" || next === "terrain";
     treeRoot = unit = undefined;
 
@@ -156,6 +157,7 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     const quality = params.get("quality");
     setup("terrain", quality === "low" || quality === "high" ? quality : "standard");
     fixture.clouds = params.get("clouds") !== "off";
+    fixture.cloudShadows = params.get("cloudShadows") !== "off";
     const bombing = params.get("view") === "bombing";
     environment.flight(0, bombing ? 7 : -4, bombing, .5);
   } else {

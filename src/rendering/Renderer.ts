@@ -24,6 +24,8 @@ import {
   projectileMaterial,
 } from "./ShaderMaterials";
 import { TerrainChunks } from "./TerrainChunks";
+import { AircraftShadows } from "./AircraftShadows";
+import { createTerrainDetail } from "./TerrainDetail";
 import { Cloudscape } from "./Cloudscape";
 import { cloudSun } from "./CloudscapeLayout";
 import { cloudDiagnostics, environmentFixture, environmentState } from "./RenderDiagnostics";
@@ -42,7 +44,9 @@ export class Renderer {
   private readonly skyDome: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   private readonly cloudscape: Cloudscape;
   private readonly vegetationWind = vegetationWindUniforms();
-  private terrainMat = terrainMaterial(this.vegetationWind);
+  private readonly aircraftShadows = new AircraftShadows();
+  private readonly terrainDetail = createTerrainDetail();
+  private readonly terrainMat = terrainMaterial(this.terrainDetail, this.vegetationWind);
   private enemies = new Map<number, THREE.Group>();
   private bulletBatches: THREE.InstancedMesh[];
   private pickups: THREE.InstancedMesh;
@@ -54,7 +58,6 @@ export class Renderer {
   private lockFan: THREE.Mesh;
   private targetRing: THREE.Mesh;
   private groundMarkers: THREE.Mesh[] = [];
-  private shadows: THREE.Mesh[] = [];
   private smoke: THREE.Mesh[] = [];
   private fireMeshes: THREE.Mesh[] = [];
   private readonly vegetation: VegetationField;
@@ -128,8 +131,15 @@ export class Renderer {
       });
     }
     this.cloudscape = new Cloudscape(this.renderer, 491);
-    Object.assign(this.terrainMat.uniforms, this.cloudscape.shadowUniforms);
-    this.terrainChunks = new TerrainChunks(this.scene, this.terrainMat, 491, this.cloudscape.shadowUniforms);
+    const terrainLighting = { ...this.cloudscape.shadowUniforms, ...this.aircraftShadows.uniforms };
+    Object.assign(this.terrainMat.uniforms, terrainLighting);
+    this.terrainChunks = new TerrainChunks(
+      this.scene,
+      this.terrainMat,
+      491,
+      terrainLighting,
+      this.vegetationWind,
+    );
     const playerBullet = projectileMaterial("#ffe5a1"),
       enemyBullet = projectileMaterial("#f98769"),
       missileMat = projectileMaterial("#c6f4d4");
@@ -275,16 +285,6 @@ export class Renderer {
       marker.visible = false;
       this.groundMarkers.push(marker);
       this.scene.add(marker);
-    }
-    const shadowMat = effectMaterial();
-    shadowMat.uniforms.color.value.set("#182e2b");
-    shadowMat.uniforms.opacity.value = 0.45;
-    for (let i = 0; i < 40; i++) {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), shadowMat);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.visible = false;
-      this.shadows.push(mesh);
-      this.scene.add(mesh);
     }
     for (let i = 0; i < 12; i++) {
       const mat = effectMaterial();
@@ -600,18 +600,16 @@ export class Renderer {
         tufts: this.vegetation.tuftCount,
       });
     }
-    this.shadows.forEach((s) => (s.visible = false));
-    if (QUALITIES[this.quality].shadows) {
-      const shadow = this.shadows[0];
-      shadow.visible = true;
-      shadow.position.set(x + 1.4, surfaceHeight(x, z, 491) + 0.05, z + 0.5);
-      shadow.scale.set(p.stats.wingspan * 1.25, p.stats.length * 1.2, 1);
-    }
+    this.aircraftShadows.clear();
+    this.aircraftShadows.add(
+      x, this.aircraft.group.position.y, z, this.aircraft.group.rotation.y,
+      p.stats.wingspan, p.stats.length, .68, p.frame.shape === "airship",
+    );
     if (world && !display) this.updateBattle(world);
     else this.hideBattle();
     this.updateSmoke(p, x, z, wind);
     this.renderer.info.reset();
-    this.cloudscape.begin(this.renderer);
+    this.cloudscape.begin(this.renderer, this.camera, this.quality, fixture?.cloudShadows);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     const cloudStart = import.meta.env.DEV ? performance.now() : 0;
@@ -670,8 +668,7 @@ export class Renderer {
   }
   private updateBattle(world: World) {
     const p = world.player;
-    let gi = 0,
-      si = 1;
+    let gi = 0;
     const living = new Set(world.enemies.map((e) => e.id));
     for (const [id, mesh] of this.enemies)
       if (!living.has(id)) {
@@ -699,11 +696,8 @@ export class Renderer {
         marker.position.set(e.x, surface + 0.12, e.z);
         marker.scale.setScalar(e.radius * 1.25);
       }
-      if (e.layer === "air" && QUALITIES[this.quality].shadows && si < 40) {
-        const shadow = this.shadows[si++];
-        shadow.visible = true;
-        shadow.position.set(e.x + 1.4, surfaceHeight(e.x, e.z, 491) + 0.05, e.z + 0.5);
-        shadow.scale.set(e.radius * 4, e.radius * 3, 1);
+      if (e.layer === "air" && QUALITIES[this.quality].shadows) {
+        this.aircraftShadows.add(e.x, height, e.z, e.heading, e.radius * 4, e.radius * 3, .56);
       }
     }
     for (let i = gi; i < this.groundMarkers.length; i++)
@@ -913,6 +907,7 @@ export class Renderer {
     this.aircraft?.dispose();
     this.terrainChunks.dispose();
     this.terrainMat.dispose();
+    this.terrainDetail.dispose();
     this.vegetation.dispose();
     this.cloudscape.dispose();
     this.scene.traverse((o) => {

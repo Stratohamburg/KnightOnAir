@@ -1,0 +1,91 @@
+# Spec Delta
+
+## Purpose
+
+为移动端飞行场景提供具有层次、遮挡关系和云内空间感的风格化云层表现，同时保持玩家操作信息和现有战斗可读性。
+
+## ADDED Requirements
+
+### Requirement: Layered cloud appearance
+
+云场 MUST 在世界坐标中呈现具有连续密度变化的云壁、云脊和远景云带，并保留顶部受光、侧面明暗和偏冷云底形成的体积层次。
+
+#### Scenario: Near cloud presents volume
+
+- **WHEN** 相机接近近景云壁
+- **THEN** 云顶、侧面和云底的明暗随观察位置变化，云边缘呈现自然的密度过渡
+
+#### Scenario: Far cloud preserves depth cue
+
+- **WHEN** 相机远离近景云壁
+- **THEN** 近景细节平滑减弱，远景云带保留可辨识的轮廓和明暗
+
+#### Scenario: River opening separates the banks
+
+- **WHEN** 玩家从翡翠海岸的河道入口飞向两侧云壁之间
+- **THEN** 河道上方保留可辨识的开口，两侧云壁仍具连续的体积感
+
+### Requirement: Tiered cloud rendering
+
+省电、标准和高画质 MUST 使用同一连续云场，并按档位应用有界的云缓冲分辨率、视线采样和细节预算。
+
+#### Scenario: Quality changes cloud budget
+
+- **WHEN** 玩家切换省电、标准或高画质
+- **THEN** 云缓冲每轴分辨率分别为世界缓冲的 40%、50% 和 65%，视线采样上限分别为 12、18 和 24 步，云形布局与遮挡语义保持一致
+
+### Requirement: Surface cloud shadows
+
+云场 MUST 在地表和水面呈现与云覆盖和漂移一致的软影。
+
+#### Scenario: Cloud shadow moves with coverage
+
+- **WHEN** 云层覆盖经过可见地表或水面
+- **THEN** 软影随云形推进，地表与水面各自保留原有几何高度
+
+### Requirement: World occlusion and player overlay
+
+云层 MUST 参与世界物体的视觉遮挡，并且 MUST 保持玩家飞机、玩家弹道、锁定环、准心和投弹路径的可见性。
+
+#### Scenario: Cloud covers world object
+
+- **WHEN** 云层位于相机与地面单位或敌机之间
+- **THEN** 对应世界物体被云的密度和深度关系遮挡，雷达和边缘提示继续工作
+
+#### Scenario: Player remains readable
+
+- **WHEN** 玩家飞机进入云层或位于云层之后
+- **THEN** 玩家飞机、玩家弹道和关键瞄准信息仍然清晰可见
+
+### Requirement: Cloud interior response
+
+云内雾化 MUST 来自穿过云场时的透射率变化，碰撞、锁定和命中继续依据模拟规则判定。
+
+#### Scenario: Entering cloud increases veil
+
+- **WHEN** 相机从云层外部移动到云层内部
+- **THEN** 周围场景的透射率随视线穿过的云密度平滑下降
+
+#### Scenario: Leaving cloud removes veil
+
+- **WHEN** 相机离开云层密度范围
+- **THEN** 内部雾化平滑减弱，世界颜色和玩家覆盖层恢复到云外状态
+
+### Requirement: Deterministic cloud motion
+
+云场布局 MUST 由种子与世界坐标确定，云的流动 MUST 随模拟风向、风速和阵风变化，并以场景时钟推进。
+
+#### Scenario: Same seed reproduces field
+
+- **WHEN** 使用相同种子在相同世界坐标采样初始云场
+- **THEN** 云层高度、覆盖和受光结果一致
+
+#### Scenario: Clouds respond to wind
+
+- **WHEN** 模拟风向、风速或阵风发生变化
+- **THEN** 云形推进使用对应的风向与强度，云影和遮挡判断跟随同一流动状态
+
+#### Scenario: Pause freezes cloud animation
+
+- **WHEN** 世界时钟暂停
+- **THEN** 云的漂移距离与动画相位保持当前值，恢复后从该状态继续

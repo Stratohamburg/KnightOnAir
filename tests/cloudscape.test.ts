@@ -1,6 +1,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { QUALITIES } from "../src/data/config";
-import { cloudFlowAdvance, cloudFlowPosition, cloudFlowSpeed } from "../src/rendering/CloudFlow";
+import {
+  cloudFlowAdvance, cloudFlowPosition, cloudFlowSpeed, cloudSelfMorphSpeed,
+  smoothCloudFlow,
+} from "../src/rendering/CloudFlow";
 import { bakeCloudWall, cloudWallWeight, sampleCloudWall } from "../src/rendering/CloudWall";
 import {
   bakeCloudMap, bakeCloudNoise, cloudBase, cloudMapSize, cloudNoiseSize, cloudTop,
@@ -74,8 +77,20 @@ describe("coastal cloudscape", () => {
     const north = cloudFlowPosition(12, 38, -7, 16, 0, 1);
     expect(east).not.toEqual(north);
     expect(cloudFlowSpeed(0.8, 0, 0)).toBeGreaterThan(cloudFlowSpeed(0.2, 0, 0));
+    expect(cloudFlowSpeed(0, 0, 0)).toBe(0);
     expect(cloudFlowSpeed(0.2, 0, 1.1)).toBeGreaterThan(cloudFlowSpeed(0.2, 0, 0));
+    expect(cloudSelfMorphSpeed(0, 0, 0)).toBeGreaterThan(0);
+    expect(cloudSelfMorphSpeed(.8, 0, 0)).toBeGreaterThan(cloudSelfMorphSpeed(0, 0, 0));
+    expect(cloudSelfMorphSpeed(.2, 0, 1.1)).toBeGreaterThan(cloudSelfMorphSpeed(.2, 0, 0));
     expect(cloudFlowAdvance(0, 1, 0, 0)).toBe(0);
     expect(cloudFlowAdvance(1, 1, 0, 0)).toBeCloseTo(cloudFlowSpeed(1, 0, 0));
+    const lower = cloudFlowPosition(12, 24, -7, 16, 1, 0);
+    const upper = cloudFlowPosition(12, 52, -7, 16, 1, 0);
+    expect(Math.abs(upper.x - lower.x) + Math.abs(upper.z - lower.z)).toBeGreaterThan(.01);
+    const still = cloudFlowPosition(12, 38, -7, 0, 1, 0, 0);
+    const bubbled = cloudFlowPosition(12, 38, -7, 0, 1, 0, 5);
+    expect(Math.abs(still.x - bubbled.x) + Math.abs(still.y - bubbled.y) + Math.abs(still.z - bubbled.z)).toBeGreaterThan(.01);
+    const abrupt = Math.abs(cloudFlowSpeed(1, 0, 0) - cloudFlowSpeed(.2, 0, 0));
+    expect(Math.abs(smoothCloudFlow(.5, 1, 1) - .5)).toBeLessThan(abrupt);
   });
 });

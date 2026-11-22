@@ -17,6 +17,7 @@ export interface EnvironmentFixture {
   camera?: Vector3;
   lookAt?: Vector3;
   clouds: boolean;
+  cloudShadows?: boolean;
 }
 
 export const environmentFixture = new WeakMap<object, EnvironmentFixture>();

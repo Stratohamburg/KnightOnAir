@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { TERRAIN } from "../simulation/Terrain";
+import { aircraftShadowGLSL } from "./AircraftShadows";
 import { cloudShadowGLSL } from "./Cloudscape";
 import { cloudSun } from "./CloudscapeLayout";
 import { vegetationWindGLSL, vegetationWindUniforms } from "./VegetationWind";
@@ -48,10 +49,11 @@ export function aircraftMaterial(
       }`,
   });
 }
-export function terrainMaterial(wind = vegetationWindUniforms()) {
+export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationWindUniforms()) {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...wind,
+      detailTexture: { value: detailTexture },
       grass: { value: new THREE.Color("#68ad76") },
       road: { value: new THREE.Color("#94c779") },
       sand: { value: new THREE.Color("#d8c78d") },
@@ -70,23 +72,28 @@ export function terrainMaterial(wind = vegetationWindUniforms()) {
         vRoad=roadMask;
         gl_Position=projectionMatrix*viewMatrix*world;
       }`,
-    fragmentShader: `${noise} ${vegetationWindGLSL} ${cloudShadowGLSL} ${landscapeLight}
+    fragmentShader: `${noise} ${vegetationWindGLSL} ${cloudShadowGLSL} ${aircraftShadowGLSL} ${landscapeLight}
       varying vec3 vWorld, vNormal;
       varying float vRoad;
       uniform vec3 grass, road, sand, stone;
+      uniform sampler2D detailTexture;
       uniform float waveDetail, waveStrength;
       void main(){
         vec3 normalWorld = normalize(vNormal);
         vec2 at = vWorld.xz;
         float broad = fbm(at * .036);
-        float detail = noise(at * .24);
+        vec2 grainUv = at * .064;
+        vec3 grain = texture2D(detailTexture, grainUv).rgb;
+        vec2 rotated = vec2(dot(at, vec2(.81, .59)), dot(at, vec2(-.59, .81)));
+        vec3 relief = texture2D(detailTexture, rotated * .023 + .37).rgb;
+        float detail = mix(grain.r, relief.r, .43);
         float bankHeight = vWorld.y - (${TERRAIN.waterLevel});
         float shore = 1. - smoothstep(.15, 2.35, bankHeight + (detail - .5) * .54);
         float track = smoothstep(.24, .88, vRoad) * (1. - shore);
         float slope = 1. - normalWorld.y;
         float rock = smoothstep(.075, .29, slope + (broad - .5) * .09);
         vec3 meadow = grass * mix(vec3(.66, .85, .79), vec3(1.42, 1.25, .83), broad);
-        meadow *= 1. + (detail - .5) * .065;
+        meadow *= mix(vec3(.71, .82, .78), vec3(1.34, 1.23, .88), smoothstep(.25, .82, detail));
         float grassWeight = (1. - rock) * (1. - track) * (1. - shore);
         if (grassWeight > .05) {
           vec2 localWind = sampleWind(at);
@@ -97,14 +104,19 @@ export function terrainMaterial(wind = vegetationWindUniforms()) {
             wave += sin(phase * 1.7 + broad * 4.) * .22 * waveDetail;
           meadow *= 1. + wave * waveStrength;
         }
-        float strata = sin(vWorld.y * 2. + broad * 8.) * .022;
-        vec3 col = mix(meadow, stone * (.83 + broad * .28 + strata), rock);
-        col = mix(col, mix(road, sand, .43), track * .72);
-        col = mix(col, sand * (.76 + .32 * broad), shore);
+        float strata = texture2D(detailTexture, vec2(rotated.x * .061, vWorld.y * .14 + relief.g * .13)).g;
+        vec3 col = mix(meadow, stone * (.66 + .52 * strata + .16 * grain.g), rock);
+        col = mix(col, mix(road, sand, .49) * (.82 + .36 * grain.b), track * .76);
+        float drySand = smoothstep(.15, 1.35, bankHeight);
+        vec3 beach = sand * (.70 + .26 * drySand + .25 * grain.b + .13 * relief.b);
+        col = mix(col, beach, shore);
         float diffuse = smoothstep(-.1, .93, dot(normalWorld, landscapeSun));
         float valleyShade = 1. - smoothstep(0., 6., vWorld.y);
         vec3 lighting = mix(vec3(.68, .81, .88), vec3(1.25, 1.16, .96), diffuse);
-        col *= lighting * (1. - .12 * valleyShade) * cloudLightAt(vWorld);
+        float surfaceLight = cloudLightAt(vWorld);
+        float planeLight = aircraftSunlightAt(vWorld);
+        vec3 shade = mix(vec3(.67, .82, .89), vec3(1.), surfaceLight);
+        col *= lighting * (1. - .12 * valleyShade) * shade * surfaceLight * mix(1., planeLight, surfaceLight);
         gl_FragColor=vec4(aerialPerspective(col, vWorld),1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -144,9 +156,10 @@ export function skyDomeMaterial() {
     fog: false,
   });
 }
-export function waterMaterial() {
+export function waterMaterial(wind = vegetationWindUniforms()) {
   return new THREE.ShaderMaterial({
     uniforms: {
+      ...wind,
       time: { value: 0 },
       tint: { value: new THREE.Color("#399db4") },
       haze: { value: new THREE.Color("#a9e4ed") },
@@ -161,7 +174,7 @@ export function waterMaterial() {
         vWorld = world.xyz;
         gl_Position=projectionMatrix*viewMatrix*world;
       }`,
-    fragmentShader: `${noise} ${cloudShadowGLSL} ${landscapeLight}
+    fragmentShader: `${noise} ${vegetationWindGLSL} ${cloudShadowGLSL} ${aircraftShadowGLSL} ${landscapeLight}
       varying vec3 vWorld;
       varying float vDepth;
       uniform float time;
@@ -169,8 +182,11 @@ export function waterMaterial() {
       void main(){
         if (vDepth <= 0.) discard;
         vec2 at = vWorld.xz;
-        float wave = noise(at * vec2(.23, .58) + time * vec2(.06, -.18));
-        float ripple = sin(at.x * .27 + at.y * 1.65 + wave * 2. - time * 1.65);
+        vec2 localWind = sampleWind(at);
+        float flow = .035 + length(localWind) * .045 + windGust * .018;
+        vec2 windOffset = windDirection * time * flow;
+        float wave = noise(at * vec2(.23, .58) + windOffset + localWind * .07);
+        float ripple = sin(dot(at, windDirection) * .27 + at.y * 1.65 + wave * 2. - time * (.72 + length(localWind) * .5));
         float shallow = 1. - smoothstep(.05, 2.5, vDepth);
         vec3 col = mix(tint * (.80 + .28 * wave), shallows, shallow * .92);
         vec3 view = normalize(cameraPosition - vWorld);
@@ -182,7 +198,9 @@ export function waterMaterial() {
         float edge = 1. - smoothstep(.05, .34, vDepth + ripple * .11);
         float streak = (1. - smoothstep(.04, .18, abs(vDepth - .52 + ripple * .13))) * smoothstep(.56, .82, wave);
         col = mix(col, foamColor, max(edge * .72, streak * .32));
-        gl_FragColor=vec4(aerialPerspective(col * cloudLightAt(vWorld), vWorld),1.);
+        float surfaceLight = cloudLightAt(vWorld);
+        col *= surfaceLight * mix(1., aircraftSunlightAt(vWorld), surfaceLight * .88);
+        gl_FragColor=vec4(aerialPerspective(col, vWorld),1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>}`,
   });

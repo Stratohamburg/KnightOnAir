@@ -8,6 +8,8 @@ import {
 import { createDefaultRoutes, routeHeading, routePosition } from "../simulation/Routes";
 import { waterMaterial } from "./ShaderMaterials";
 import { TerrainLandmarks } from "./TerrainLandmarks";
+import { routeBridges } from "./RouteBridges";
+import type { VegetationWindUniforms } from "./VegetationWind";
 
 interface ChunkMesh {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
@@ -18,7 +20,7 @@ const chunkKey = (x: number, z: number) => `${x}:${z}`;
 
 export class TerrainChunks {
   private readonly chunks = new Map<string, ChunkMesh>();
-  private readonly water = waterMaterial();
+  private readonly water: THREE.ShaderMaterial;
   private readonly landmarks: TerrainLandmarks;
   private readonly routeObjects: THREE.Object3D[] = [];
   private centerX = Number.NaN;
@@ -28,11 +30,13 @@ export class TerrainChunks {
     private readonly scene: THREE.Scene,
     private readonly material: THREE.ShaderMaterial,
     private readonly seed: number,
-    cloudShadows: THREE.ShaderMaterial["uniforms"],
+    lighting: THREE.ShaderMaterial["uniforms"],
+    wind?: VegetationWindUniforms,
   ) {
-    Object.assign(this.water.uniforms, cloudShadows);
-    this.landmarks = new TerrainLandmarks(scene, seed, cloudShadows);
-    this.buildRouteProps(seed);
+    this.water = waterMaterial(wind);
+    Object.assign(this.water.uniforms, lighting);
+    this.landmarks = new TerrainLandmarks(scene, seed, lighting);
+    this.buildRouteProps(seed, lighting);
   }
 
   setWaterColor(color: string) {
@@ -48,7 +52,7 @@ export class TerrainChunks {
     this.landmarks.setShadows(visible);
   }
 
-  private buildRouteProps(seed: number) {
+  private buildRouteProps(seed: number, lighting: THREE.ShaderMaterial["uniforms"]) {
     const routes = createDefaultRoutes(seed);
     const sleeper = new THREE.InstancedMesh(
       new THREE.BoxGeometry(1.6, 0.12, 0.18),
@@ -60,48 +64,31 @@ export class TerrainChunks {
       new THREE.MeshStandardMaterial({ color: "#526b7d", metalness: 0.3, roughness: 0.7, flatShading: true }),
       1280,
     );
-    const bridge = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1, 0.4, 1),
-      new THREE.MeshStandardMaterial({ color: "#806655", roughness: 1, flatShading: true }),
-      128,
-    );
+    const bridge = routeBridges(routes, lighting);
+    this.routeObjects.push(bridge);
+    this.scene.add(bridge);
     const roadside = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(0.22, 0.75, 0.18),
-      new THREE.MeshStandardMaterial({ color: "#d7b777", roughness: 1, flatShading: true }),
+      new THREE.CylinderGeometry(.075, .18, .6, 6).translate(0, .29, 0),
+      new THREE.MeshStandardMaterial({ color: "#afaa8a", roughness: 1, flatShading: true }),
       256,
-    );
-    const facility = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1.6, 0.35, 0.8),
-      new THREE.MeshStandardMaterial({ color: "#c98a4a", roughness: 1, flatShading: true }),
-      112,
     );
     const object = new THREE.Object3D();
     let sleeperCount = 0;
     let railCount = 0;
-    let bridgeCount = 0;
     let roadsideCount = 0;
-    let facilityCount = 0;
     for (const route of routes) {
       if (route.kind === "water") continue;
-      const spacing = route.kind === "rail" ? 1.4 : 2;
+      const spacing = route.kind === "rail" ? 1.4 : 8;
       for (let at = 0; at < route.length; at += spacing) {
         const point = routePosition(route, at);
         const y = point.y;
         const heading = routeHeading(route, at);
-        const from = routePosition(route, at - spacing / 2);
-        const to = routePosition(route, at + spacing / 2);
-        const pitch = -Math.atan2(to.y - from.y, Math.hypot(to.x - from.x, to.z - from.z));
-        object.rotation.set(pitch, heading, 0, "YXZ");
-        object.scale.set(1, 1, 1);
-        if (y - terrainHeight(point.x, point.z, seed) > .28 && bridgeCount < bridge.count) {
-          object.position.set(point.x, y - .08, point.z);
-          object.scale.set(route.kind === "rail" ? 2.25 : 5.8, 1, spacing + .10);
-          object.updateMatrix();
-          bridge.setMatrixAt(bridgeCount++, object.matrix);
-          object.scale.set(1, 1, 1);
-        }
         if (route.kind === "rail") {
-          object.position.set(point.x, y + .16, point.z);
+          const from = routePosition(route, at - spacing / 2);
+          const to = routePosition(route, at + spacing / 2);
+          const pitch = -Math.atan2(to.y - from.y, Math.hypot(to.x - from.x, to.z - from.z));
+          object.rotation.set(pitch, heading, 0, "YXZ");
+          object.position.set(point.x, y + .18, point.z);
           object.updateMatrix();
           if (sleeperCount < sleeper.count) sleeper.setMatrixAt(sleeperCount++, object.matrix);
           for (const side of [-0.55, 0.55]) {
@@ -110,36 +97,24 @@ export class TerrainChunks {
             if (railCount < rail.count) rail.setMatrixAt(railCount++, object.matrix);
           }
         }
-        if (route.kind === "road" && at % 8 === 0) {
+        if (route.kind === "road") {
           for (const side of [-4, 4]) {
             const postX = point.x + Math.cos(heading) * side;
             const postZ = point.z - Math.sin(heading) * side;
             const postY = terrainHeight(postX, postZ, seed);
             if (postY <= TERRAIN.waterLevel) continue;
-            object.position.set(postX, postY + .38, postZ);
+            object.position.set(postX, postY, postZ);
             object.rotation.set(0, heading, 0);
             object.updateMatrix();
             if (roadsideCount < roadside.count) roadside.setMatrixAt(roadsideCount++, object.matrix);
-          }
-          if (at % 32 === 0 && facilityCount < facility.count) {
-            const facilityX = point.x + Math.cos(heading) * 5;
-            const facilityZ = point.z - Math.sin(heading) * 5;
-            const facilityY = terrainHeight(facilityX, facilityZ, seed);
-            if (facilityY <= TERRAIN.waterLevel) continue;
-            object.position.set(facilityX, facilityY + .18, facilityZ);
-            object.rotation.set(0, heading, 0);
-            object.updateMatrix();
-            facility.setMatrixAt(facilityCount++, object.matrix);
           }
         }
       }
     }
     sleeper.count = sleeperCount;
     rail.count = railCount;
-    bridge.count = bridgeCount;
     roadside.count = roadsideCount;
-    facility.count = facilityCount;
-    for (const mesh of [sleeper, rail, bridge, roadside, facility]) {
+    for (const mesh of [sleeper, rail, roadside]) {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.computeBoundingSphere();
       this.routeObjects.push(mesh);
