@@ -13,7 +13,7 @@
 #### Scenario: Enemy uses player flight control
 
 - **WHEN** 空中敌人需要追击、拦截、护航或脱离
-- **THEN** 敌人通过与玩家相同的加速度、极速、巡航速度、滚转响应、最大转向和损伤修正推进运动
+- **THEN** 敌人使用同一套规则解释其机体配置、控制意图和损伤状态，推进加速、巡航、滚转和转向
 
 #### Scenario: AI changes throttle intent
 
@@ -24,6 +24,11 @@
 
 - **WHEN** 敌人的机翼、尾翼或发动机受到损伤
 - **THEN** 同一套 ControlDamage 修正同时影响玩家和敌人的升力、推力、滚转响应、转向权限和稳定性
+
+#### Scenario: Identical flight inputs
+
+- **WHEN** 玩家、空中 NPC 和回放实体具有相同初始飞行状态、机体配置、损伤、风场和逐步控制意图
+- **THEN** 三者在固定步进下得到一致的航向、滚转、位置、速度和加力储备
 
 ### Requirement: Air-combat state machine
 
@@ -61,7 +66,7 @@
 #### Scenario: High-speed boom-and-zoom aircraft
 
 - **WHEN** 截击机或俯冲攻击机进入攻击阶段
-- **THEN** 其速度或加力高于巡航阶段，转向能力保持受限，并在攻击完成后执行可见的高速脱离
+- **THEN** 其攻击速度高于自身巡航速度，转弯半径大于同代轻型格斗机，攻击结束后继续掠过并拉开距离，向玩家暴露可读的反击窗口
 
 #### Scenario: Slow attack aircraft
 
@@ -81,6 +86,12 @@
 
 - **WHEN** 截击机以高于玩家的速度完成攻击窗口
 - **THEN** 它继续沿脱离方向飞行并超过玩家，不在同一帧直接掉头追尾
+
+#### Scenario: Hunter briefly holds the tail
+
+- **WHEN** 追猎机从同向后方接近以同代常用巡航速度直飞的玩家
+- **THEN** 它可凭相对速度进入并短暂保持尾后有效射击窗口，窗口结束后主动脱离
+- **AND** 玩家通过转弯或加力可以破坏当前射击机会
 
 ### Requirement: Air separation
 

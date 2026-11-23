@@ -331,8 +331,7 @@ describe("five-minute endurance", () => {
           peak,
           w.enemies.length +
             w.projectiles.count +
-            w.pickups.count +
-            w.effects.count,
+            w.pickups.count,
         );
         if (i % 600 === 0) {
           expect(

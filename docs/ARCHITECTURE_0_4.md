@@ -1,121 +1,27 @@
 # 0.4 统一战斗架构与实施路线
 
-本文件是 0.4 的跨系统实施规范。它解决三个问题。空中玩家、空中 NPC 和未来空中 PvP 必须经过同一套操纵、飞行物理、命中、部件损毁和武器逻辑。地面和水面单位保留独立的路线与移动模拟。所有战斗实体共用部件、命中、伤害传递、损毁状态、武器失效和事件逻辑。敌人的行为需要可预测、可配置。
+## 当前运行时架构
 
-当前代码和 01–16 修改文档仍处于迁移前状态。实施以本文件的接口和顺序为准，内容数值以 [0.4 战斗设计与方案评审](DESIGN_0_4.md) 和 [时代内容、默认装配与存档迁移](content/ERA_CONTENT_0_4.md) 为准。
-
-## 当前仍存在的玩家与非玩家分叉
-
-| 区域 | 当前分叉 | 目标收口 |
-| --- | --- | --- |
-| 空中物理更新 | `World.updatePlayer()` 和空中部分的 `World.updateEnemies()` 分开。玩家使用 `updateFlightTurn`，敌人使用另一套 `turnVelocity`、`speed` 和 `bank` 更新。 | 一个 `integrateAirActor()`。空中控制器只提供目标方向、速度意图和动作请求。 |
-| 地面与水面移动 | 地面单位在 `updateEnemies()` 中和空中敌人共用函数，路线、车距和追击条件逐步增加。 | `integrateGroundActor()` 和 `integrateWaterActor()` 保留独立路线与移动规则。它们只接入共享战斗、武器和事件管线。 |
-| 飞行模型 | `FlightDynamics.flightEnvelope()` 和 `updateFlightTurn()` 的参数类型是 `Player`。空中敌人没有相同的包线计算。 | `AirMotionState` 和 `ControlDamage` 作为通用输入。空中玩家、空中敌人和空中 PvP 载具调用同一函数。 |
-| 命中检测 | `hitPlayer()` 与敌人整体圆检测分开。 | `hitEntity(entity, sweptProjectile)` 对任意 `CombatEntity` 返回最早命中的部件。 |
-| 伤害结算 | `damagePlayer()` 与 `damageEnemy()` 分开。玩家和敌人都需要部件总生命。 | `applyPartDamage()` 统一处理命中部件生命、总生命扣减、损毁状态、挂载武器和事件。 |
-| 损毁性能 | 玩家有 `partFactor()`，敌人按 `health` 比例降速和改变状态。地面单位也有单独的速度衰减路径。 | `evaluateDamage(parts, config)` 统一输出部件功能和武器状态。空中单位使用其中的飞行控制字段，地面和水面单位使用发动机、轮组和武器字段。 |
-| 武器 | 玩家武器挂在 `player.weapons`。敌人开火时临时复制 `WEAPONS.light_cannon` 并覆盖数值。 | 所有武器都是挂载在实体部件上的 `WeaponRuntime`，开火使用相同的冷却、射界、弹道和目标过滤。 |
-| 渲染 | 玩家走 `ProceduralAircraft`，敌人走 `Renderer.createEnemy`。 | `ActorRenderer` 按同一 `parts` 状态建组。玩家和敌人只在相机层级、标签和特效预算上有表现差异。 |
-| 数据 | 玩家用 `Airframe`，敌人用扁平 `EnemyConfig`。 | 物理和挂载进入共享 `CombatantConfig`。AI、刷新和奖励进入 `NpcProfile`。 |
-| 生命周期 | 玩家受升级、轰炸、结算和存档影响。敌人受导演、回收和奖励影响。 | 这些属于控制器、场景导演和局外系统，不进入共享物理和伤害分支。 |
-
-因此当前仍有明显区分。第一个实施目标是消除空中玩家与空中 NPC 的操纵、飞行物理和战斗分叉，并把地面与水面单位接入共享伤害管线。升级、存档、战斗结算、相机跟随和敌人刷新仍然可以保留各自的业务入口。它们通过通用事件和控制接口连接战斗模拟。
-
-## 统一运行时模型
-
-### 运行时实体
-
-```ts
-export interface CombatEntity {
-  id: string;
-  configId: string;
-  factionId: string;
-  layer: "air" | "ground" | "water";
-  position: { x: number; z: number; y: number };
-  previous: { x: number; z: number; y: number };
-  motion: AirMotionState | GroundMotionState | WaterMotionState;
-  health: number;
-  maxHealth: number;
-  parts: Part[];
-  weapons: WeaponRuntime[];
-  damage: ControlDamage;
-  partRevision: number;
-  damageRevision: number;
-  controllerId: string;
-}
-
-export interface AirMotionState {
-  heading: number;
-  speed: number;
-  vx: number;
-  vz: number;
-  turnVelocity: number;
-  bank: number;
-  rollVelocity: number;
-}
-
-export interface GroundMotionState {
-  heading: number;
-  speed: number;
-  routeId?: string;
-  routeDistance?: number;
-  laneOffset?: number;
-}
-
-export interface WaterMotionState {
-  heading: number;
-  speed: number;
-  routeId?: string;
-  routeDistance?: number;
-  laneOffset?: number;
-}
-
-export interface ControllerIntent {
-  targetHeading?: number;
-  targetPoint?: { x: number; z: number };
-  throttle: number;
-  boost: number;
-  fire: boolean;
-  bomb: boolean;
-  brake: boolean;
-}
-```
-
-玩家控制器把摇杆和键盘转换成空中 `ControllerIntent`。空中 AI 控制器从行为配置和场景快照生成相同结构。网络控制器将来直接写入相同结构。`integrateAirActor()` 不读取玩家、敌人或网络身份，只读取实体配置、当前部件状态和控制意图。地面和水面控制器生成路线、车道和速度意图，交给各自的移动积分器。
-
-### 每个固定步的顺序
-
-```text
-1. 场景快照和控制器生成 ControllerIntent
-2. 行为目标、玩家目标或网络目标生成目标点
-3. 空中编队和分离修正空中目标点，地面与水面路线系统修正路线意图
-4. evaluateDamage 更新所有实体的共享部件功能和伤害结果，空中实体额外消费飞行 ControlDamage
-5. 空中实体调用 `integrateAirActor`，地面与水面实体调用各自移动积分器
-6. updateWeapons 根据同一挂载和目标过滤发射
-7. updateProjectiles 调用 hitEntity 和 applyPartDamage
-8. 发布 damage、part_disabled、weapon_disabled、entity_destroyed 等事件
-9. 场景导演处理生成、回收、奖励和下一步控制器输入
-```
-
-`World.actors` 是模拟的权威集合。迁移期可以保留 `world.player` 和 `world.enemies` 作为按 `controllerId`、`factionId` 或 `layer` 过滤的只读视图。任何新的空中物理逻辑必须写入 `integrateAirActor`。地面和水面移动逻辑写入各自积分器。共享命中、伤害和武器逻辑写入 `actors` 管线。
-
-### 允许存在的身份差异
-
-身份差异只出现在控制来源和局外业务。
-
-| 差异 | 允许的行为 |
+| 范围 | 实现与维护入口 |
 | --- | --- |
-| 控制来源 | 玩家输入、空中 AI 行为、网络输入生成不同的 `ControllerIntent`。地面和水面控制器生成路线意图。 |
-| 目标过滤 | `factionId` 决定可攻击对象。敌我双方使用同一武器目标过滤函数。 |
-| 局外系统 | 玩家可以升级、存档、结算和进入轰炸模式。NPC 可以被导演生成、回收和奖励。 |
-| 表现层 | 玩家跟随主相机，敌人显示血条、雷达点和边缘指示。两者读取同一部件状态。 |
-| 资源能力 | 某个实体可以在配置中没有炸弹舱、雷达或加力部件。能力缺失由 `ControlDamage` 和挂载数据表达。 |
+| 玩家、空中 NPC 与回放 | `World.frame` 以 1/60 秒推进模拟。玩家输入、`npcIntent` 和 `NetworkController` 都提供 `ControllerIntent`。`integrateAirActor` 统一处理油门、刹车、加力耗尽与回充、风场、滚转和损伤。 |
+| 空战行为与地面路线 | `CombatantConfig` 定义载体与运动包线。`NpcProfile.airAttack` 定义攻击角、攻击窗口、脱离与重新切入和逃逸门槛。空中 NPC 的分离修正目标航向。地面与水面继续使用路线、车距和各层移动规则。 |
+| 构型与挂点 | `Part` 描述部件，`RuntimeWeapon` 通过 `partId`、`anchorId` 和局部偏移绑定挂点。改装更新构型与命中轮廓，`localToWorld` 按机体位置、航向和滚转计算枪口、炮塔与发动机出口的世界姿态。 |
+| 扫掠与伤害 | `HitTest` 用弹体和目标的相对运动计算最早世界接触点，部件归因可空。`DamageModel` 先扣归因部件可承受的量，余量等额分配，整机生命由部件生命求和。禁用部件保留轮廓，可脱落部件移除覆盖。 |
+| 事件与反馈 | `GameApp` 每个渲染帧调用一次 `World.consumeEvents()`，把同一批事件交给渲染、HUD 和音频。开火、命中、禁用、脱落与击毁事件携带发生时的世界位置、方向、姿态和速度，接收方可在实体离场后继续使用快照。 |
+| 内容与资源 | `src/content/3d` 提供机库与战斗共用的机体工厂、挂点和资源租用。`src/content/fx` 管理武器特效、烟雾和碎屑批次。`src/content/2d` 负责战斗视图、雷达、名牌和可复用组件。 |
 
-空中物理公式、命中顺序、部件状态、总生命扣减、武器失效、碰撞和弹道不因身份变化。地面与水面的路线和移动公式独立，命中和损毁公式保持共用。
+从飞行、伤害或呈现的入口追踪实现。[共享飞行](../src/simulation/FlightDynamics.ts) · [NPC 与回放控制](../src/simulation/Controllers.ts) · [命中检测](../src/simulation/HitTest.ts) · [部件伤害](../src/simulation/DamageModel.ts) · [战斗事件](../src/simulation/types.ts) · [仓库内容库指导](../AGENTS.md)
+
+以当前配置类型、OpenSpec 主规格和验收记录核对运行时行为。[配置与校验](../src/data/combatants.ts) · [空战规格](../openspec/specs/battle/air-combat-behavior/spec.md) · [运行时内容库规格](../openspec/specs/rendering/runtime-content-library/spec.md) · [集成验收](IMPLEMENTATION.md#当前空战与内容库验收)
+
+## 0.4 原始迁移方案
+
+以下是从 0.3.0 规划配置 v3 和跨系统迁移时的接口草案及实施阶段。
 
 ## 敌人配置重设计
 
-当前 `EnemyConfig` 把物理、视觉、攻击、奖励和刷新揉成一张扁平表。它还迫使 `World` 根据 `kind` 写硬编码分支。12 的 v2 虽然补充了字段，仍然把物理实体和 NPC 行为放在同一个配置对象中。0.4 改用两个层次。
+原先的 `EnemyConfig` 把物理、视觉、攻击、奖励和刷新揉成一张扁平表。它还迫使 `World` 根据 `kind` 写硬编码分支。12 的 v2 虽然补充了字段，仍然把物理实体和 NPC 行为放在同一个配置对象中。0.4 改用两个层次。
 
 ### 共享载体配置 `CombatantConfig`
 

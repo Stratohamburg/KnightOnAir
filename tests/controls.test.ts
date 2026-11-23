@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as THREE from "three";
 import { AIRFRAMES } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { VirtualStick } from "../src/input/VirtualStick";
 import { frameBattleCamera } from "../src/rendering/BattleCamera";
-import { ProceduralAircraft } from "../src/rendering/ProceduralAircraft";
+import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
+import { ContentCatalog } from "../src/content/3d/ContentCatalog";
+import { upgradeById } from "../src/data/upgrades";
 import { RAD } from "../src/services/Random";
 import { World } from "../src/simulation/World";
+import { NetworkController } from "../src/simulation/Controllers";
 
 class StickSurface extends EventTarget {
   knob = { style: { transform: "" } };
@@ -107,6 +110,34 @@ function expectFlightDirection(stick: VirtualStick, x: number, y: number) {
 }
 
 describe("screen-relative flight controls", () => {
+  it("shares geometry across preview and combat models and releases the final lease", () => {
+    const catalog = new ContentCatalog();
+    const world = new World(AIRFRAMES[0], 42, { director: false });
+    const player = world.player;
+    const replay = world.spawnReplayOpponent(player.frame, new NetworkController(), 0, 25);
+    const preview = new ProceduralAircraft(player, catalog);
+    const battle = new ProceduralAircraft(replay, catalog);
+    const mesh = (model: ProceduralAircraft) =>
+      model.group.getObjectByName("center_body")!.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+    const shared = mesh(preview).geometry;
+    const disposed = vi.fn();
+    shared.addEventListener("dispose", disposed);
+    expect(mesh(battle).geometry).toBe(shared);
+    expect(mesh(battle).material).not.toBe(mesh(preview).material);
+    replay.bank = -.7;
+    replay.parts[0].health *= .25;
+    battle.update(1, 1 / 60);
+    preview.update(1, 1 / 60);
+    expect(battle.group.rotation.z).not.toBe(preview.group.rotation.z);
+    expect(mesh(battle).material.uniforms.damage.value).toBeGreaterThan(mesh(preview).material.uniforms.damage.value);
+    world.installUpgrade(upgradeById("giant_wing")!);
+    preview.update(2, 1 / 60);
+    preview.dispose();
+    expect(disposed).not.toHaveBeenCalled();
+    battle.dispose();
+    expect(disposed).toHaveBeenCalledTimes(1);
+    expect(catalog.stats).toMatchObject({ geometries: 0, materials: 0, textures: 0 });
+  });
   it.each([
     { name: "up", x: 0, y: -1, key: "ArrowUp" },
     { name: "down", x: 0, y: 1, key: "ArrowDown" },

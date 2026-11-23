@@ -5,6 +5,7 @@ import {
   CONFIG_DIAGNOSTICS,
   NPC_PROFILES,
   validateCombatantConfig,
+  validateNpcProfile,
 } from "../src/data/combatants";
 import { SaveStore } from "../src/services/Save";
 import { World } from "../src/simulation/World";
@@ -31,6 +32,12 @@ describe("configuration v3", () => {
     expect(enemy.parts.map((part) => part.id)).toEqual(["center_body", "mobility", "weapon"]);
     expect(enemy.weapons[0].partId).toBe("weapon");
     expect(enemy.weapons[0].config.homing).toBeGreaterThan(0);
+  });
+
+  it("reports incomplete air attack profiles", () => {
+    const profile = NPC_PROFILES.interceptor;
+    expect(validateNpcProfile({ ...profile, airAttack: undefined }, COMBATANT_CONFIGS)?.errors)
+      .toContain("invalid air attack, breakaway or reentry profile");
   });
 
   it("ignores version one saves and persists only the new save key", () => {

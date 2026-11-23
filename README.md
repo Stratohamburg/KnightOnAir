@@ -37,7 +37,7 @@ npm run preview  # 预览生产构建
 
 触控摇杆的内圈控制普通油门，拉出内圈进入加力区。键盘用方向键配合 Shift。普通油门不消耗加力储备，加力耗尽后回充到 8 点并松开外圈输入才能再次触发。
 
-升级次数可以累积。小修理包和大修理包恢复部件总生命，修理额度优先填充机身段、发动机、机翼和挂点的缺口。部件生命归零后仍留在机体上，后续子弹会穿过损毁部件命中后方部件。进入升级、暂停或帮助/设置面板时，模拟、风场、弹道、冷却和敌人一起停止；选择部件后恢复之前的空战或轰炸模式。页面失焦或进入后台会暂停，返回后由玩家继续。
+升级次数可以累积。小修理包和大修理包按机身、发动机、机翼和挂点的顺序修复仍在机体上的部件。投射物命中整机轮廓时优先扣除命中部件的生命，余量由其余部件均摊。禁用部件仍覆盖原有区域，可脱落翼尖会从轮廓中移除。升级、暂停或帮助与设置面板会暂停战斗。选择部件后恢复此前的空战或轰炸模式。页面失焦或进入后台也会暂停，返回后由玩家继续。
 
 空战时显示完整双圈摇杆，外圈半径为普通区的 1.4 倍。开启轰炸后收起加力圈，显示投弹按钮，普通圈用于最高 45% 的微调油门。玩家和敌机都在世界高度 24 的空战层飞行，炸弹落到实际地表。战斗镜头跟随玩家并对准战斗画面中央，转向和速度均有惯性。
 
@@ -69,7 +69,9 @@ src/simulation/WindField.ts        确定性风场
 src/simulation/FlightDynamics.ts   协调转弯、载荷包线与滚转惯量
 src/simulation/types.ts            与渲染解耦的模拟数据
 src/data/                         机体、武器、敌人、升级和手感参数
-src/rendering/ProceduralAircraft.ts 参数化飞机与部件装配
+src/content/3d/AircraftFactory.ts  参数化飞机与部件装配
+src/content/fx/CombatEffects.ts     战斗事件、特效批次与有界粒子池
+src/content/2d/                    HUD、名牌、雷达、通用组件和图标
 src/rendering/Renderer.ts          相机、场景、复用网格和动态分辨率
 src/rendering/ShaderMaterials.ts   无贴图 shader
 src/services/                     对象池、随机数、存档、音效、诊断事件
@@ -78,6 +80,8 @@ tests/controls.test.ts             触控、键盘与屏幕中机头/飞行方�
 tests/flight-dynamics.test.ts      倾角、动力、改装、回正与敌机转向惯性
 ```
 
-模拟层不依赖 Three.js。`World.frame()` 接收帧时间和输入，以 1/60 秒执行模拟，限制后台回来时的追帧量。弹道使用线段扫掠碰撞，避免高速弹穿过目标；弹道、金币和命中特效使用固定容量对象池，预警线、锁定扇形和弹道路径复用 BufferGeometry。
+模拟层以纯数据处理状态和事件。`World.frame()` 接收帧时间和输入，以 1/60 秒执行模拟，并限制追帧量。弹道使用相对于目标运动的扫掠检测。弹道与金币复用模拟池，特效和高频 HUD 元素分别复用渲染批次和 DOM 节点。
+
+新增或修改动态呈现内容时，先查看仓库指导、运行时内容库规格和项目 skill。[仓库指导](AGENTS.md) · [运行时内容库规格](openspec/specs/rendering/runtime-content-library/spec.md) · [项目 skill](.agents/skills/runtime-content-library/SKILL.md)
 
 设计原文见 [docs/README.md](docs/README.md)，里程碑对应与验证记录见 [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md)。

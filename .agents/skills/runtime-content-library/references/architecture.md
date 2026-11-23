@@ -33,3 +33,8 @@ Weapon fire and impacts use emissive cores, soft halos, and emissive particles. 
 
 World emits public events and pure requests. The effects system consumes them. The renderer submits shared resources and active instances. The UI system consumes view models and events. Adding a new visual effect should not require importing Three.js into simulation or building DOM inside gameplay logic.
 
+## Repository entry points
+
+- Use the pure local anchors and the aircraft and scene factories from the 3D library. Hold catalog leases for shared resources and release them at instance disposal. [Anchors](../../../../src/content/3d/anchors.ts) · [Aircraft factory](../../../../src/content/3d/AircraftFactory.ts) · [Scene objects](../../../../src/content/3d/SceneObjects.ts) · [Resource catalog](../../../../src/content/3d/ContentCatalog.ts)
+- Pass the world snapshots from `GameApp` into the existing effect consumer. Add weapon visuals through the profile definitions and reuse the effect batches. [Combat effects](../../../../src/content/fx/CombatEffects.ts) · [Profiles](../../../../src/content/fx/profiles.ts)
+- Pass display data into the HUD and reuse the shared controls and pools. [Combat HUD](../../../../src/content/2d/CombatHud.ts) · [Battle status](../../../../src/content/2d/BattleStatus.ts) · [Components](../../../../src/content/2d/components.ts)

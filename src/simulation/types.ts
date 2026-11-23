@@ -1,5 +1,6 @@
 import type { Airframe } from "../data/aircrafts";
 import type { WeaponConfig } from "../data/weapons";
+import type { Point3 } from "../content/3d/anchors";
 export type Phase =
   "battle" | "bombing" | "upgrade" | "paused" | "dying" | "result";
 export type Slot =
@@ -18,6 +19,7 @@ export interface Part {
   kind: string;
   slot: Slot;
   x: number;
+  y?: number;
   z: number;
   radius: number;
   health: number;
@@ -35,7 +37,10 @@ export interface Part {
   disabled?: boolean;
   visual?: { kind: string; scale: number; detachable: boolean };
   hitCircles?: { x: number; z: number; r: number }[];
+  silhouette?: Point3[][];
   detachSeed?: number;
+  parentId?: string;
+  connection?: { side: -1 | 0 | 1; x: number; z: number };
 }
 export type PartRole =
   | "body"
@@ -72,7 +77,7 @@ export interface ControlDamage {
   rollBias: number;
   yawDrift: number;
 }
-export interface Player {
+export interface Player extends AirMotionState {
   id: string;
   configId: string;
   factionId: string;
@@ -83,14 +88,8 @@ export interface Player {
   z: number;
   prevX: number;
   prevZ: number;
-  vx: number;
-  vz: number;
-  heading: number;
-  turnVelocity: number;
-  bank: number;
-  rollVelocity: number;
-  speed: number;
-  energy: number;
+  prevHeading?: number;
+  prevBank?: number;
   /** Total current health across all body segments and attached parts. */
   health: number;
   maxHealth: number;
@@ -102,11 +101,9 @@ export interface Player {
   weapons: RuntimeWeapon[];
   upgrades: string[];
   revision: number;
-  boost: number;
-  boosting: boolean;
-  boostLocked: boolean;
   damage: ControlDamage;
   partRevision: number;
+  hitExtent: number;
   damageRevision: number;
 }
 export interface Stats {
@@ -133,9 +130,10 @@ export interface Stats {
 }
 export interface RuntimeWeapon {
   config: WeaponConfig;
+  anchorId: string;
   partId: string;
-  x: number;
-  z: number;
+  offset: Point3;
+  barrelSpacing: number;
   cooldown: number;
   targetId: number;
   lockProgress: number;
@@ -143,7 +141,7 @@ export interface RuntimeWeapon {
   heading: number;
   baseAngle: number;
 }
-export interface Enemy {
+export interface Enemy extends AirMotionState {
   id: number;
   kind: string;
   configId?: string;
@@ -151,13 +149,10 @@ export interface Enemy {
   layer: "air" | "ground" | "water";
   x: number;
   z: number;
-  vx: number;
-  vz: number;
-  heading: number;
-  turnVelocity: number;
-  bank: number;
-  rollVelocity: number;
-  speed: number;
+  prevX?: number;
+  prevZ?: number;
+  prevHeading?: number;
+  prevBank?: number;
   health: number;
   maxHealth: number;
   radius: number;
@@ -171,7 +166,13 @@ export interface Enemy {
   slow: number;
   armorBreak: number;
   called: boolean;
-  state: "entering" | "cruising" | "attacking" | "breaking" | "fleeing";
+  state: "entering" | "cruising" | "attacking" | "breaking" | "reentering" | "fleeing";
+  phaseTime: number;
+  breakHeading: number;
+  attackWindow: number;
+  tailAttack: boolean;
+  attackTargetHeading: number;
+  breakWindow: number;
   factionId?: string;
   controllerId?: string;
   parts: Part[];
@@ -179,6 +180,7 @@ export interface Enemy {
   damage: ControlDamage;
   damageTransfer: number;
   partRevision: number;
+  hitExtent: number;
   damageRevision: number;
   routeId?: string;
   routeDistance?: number;
@@ -194,6 +196,10 @@ export interface Projectile {
   x: number;
   z: number;
   y: number;
+  prevY?: number;
+  vy: number;
+  weaponId: string;
+  damageType: DamageType;
   prevX: number;
   prevZ: number;
   heading: number;
@@ -221,6 +227,10 @@ export interface AirMotionState {
   turnVelocity: number;
   bank: number;
   rollVelocity: number;
+  energy: number;
+  boost: number;
+  boosting: boolean;
+  boostLocked: boolean;
 }
 export interface ControllerIntent {
   targetHeading?: number;
@@ -261,14 +271,28 @@ export interface CombatEntity {
   controllerId?: string;
 }
 export type PickupKind = "coin" | "repairSmall" | "repairLarge";
+export type DamageType = "kinetic" | "explosive" | "fire" | "contact";
+export interface CombatSnapshot {
+  position: Point3;
+  direction: Point3;
+  velocity: Point3;
+  heading: number;
+  bank: number;
+  damageType: DamageType;
+  weaponId?: string;
+}
 export type WorldEvent =
+  | { type: "effect_requested"; time: number; profile: "burst" | "coin" | "heal"; position: Point3; size: number; duration: number }
+  | { type: "weapon_fired"; time: number; owner: "player" | "enemy"; entityId: number | string; anchorId: string; projectileId?: number; snapshot: CombatSnapshot }
+  | { type: "part_detached"; time: number; owner: "player" | "enemy"; entityId: number | string; partId: string; partKind: string; color: string; snapshot: CombatSnapshot }
+  | { type: "player_destroyed"; time: number; snapshot: CombatSnapshot }
   | { type: "enemy_fire"; time: number; enemyId: number; heading: number; aimX: number; aimZ: number; count: number; threat: number }
   | { type: "ground_attack"; time: number; enemyId: number; heading: number; aimX: number; aimZ: number; count: number; threat: number }
   | { type: "missile_lock_warning"; time: number; enemyId: number; heading: number; aimX: number; aimZ: number; count: number; threat: number }
-  | { type: "enemy_hit"; time: number; enemyId: number; amount: number; part?: string }
-  | { type: "enemy_destroyed"; time: number; enemyId: number; kind: string; score: number; coins: number; combo: number }
-  | { type: "player_hit"; time: number; amount: number; source: string; part?: string }
-  | { type: "part_disabled"; time: number; owner: "player" | "enemy"; entityId: number | string; partId: string; label: string }
+  | { type: "enemy_hit"; time: number; enemyId: number; amount: number; part?: string; snapshot: CombatSnapshot }
+  | { type: "enemy_destroyed"; time: number; enemyId: number; kind: string; score: number; coins: number; combo: number; snapshot: CombatSnapshot }
+  | { type: "player_hit"; time: number; amount: number; source: string; part?: string; snapshot: CombatSnapshot }
+  | { type: "part_disabled"; time: number; owner: "player" | "enemy"; entityId: number | string; partId: string; label: string; snapshot: CombatSnapshot }
   | { type: "pickup"; time: number; kind: PickupKind; amount: number };
 export interface Pickup {
   active: boolean;
@@ -278,17 +302,6 @@ export interface Pickup {
   xp: number;
   life: number;
   kind: PickupKind;
-}
-export interface Effect {
-  active: boolean;
-  x: number;
-  z: number;
-  y: number;
-  life: number;
-  maxLife: number;
-  radius: number;
-  kind: "hit" | "explosion" | "ground" | "coin" | "heal" | "smoke" | "debris";
-  seed: number;
 }
 export interface Bomb {
   startY: number;

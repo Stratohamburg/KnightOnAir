@@ -514,61 +514,23 @@ type UpgradeOption = {
 
 ## 游戏状态和代码架构
 
-推荐使用 TypeScript 模块化结构，保持渲染、模拟、输入和数据分离。
+当前代码将固定步模拟、场景渲染、输入、内容库和页面流程放在独立模块。文件入口见 [统一战斗架构](ARCHITECTURE_0_4.md#当前运行时架构)。
 
 ```text
 src/
-  app/
-    GameApp.ts
-    SceneManager.ts
-  scenes/
-    BootScene.ts
-    MetaScene.ts
-    BattleScene.ts
-    ResultScene.ts
-  simulation/
-    World.ts
-    Physics2D.ts
-    WindField.ts
-    CollisionWorld.ts
-    systems/
-      AircraftSystem.ts
-      WeaponSystem.ts
-      EnemySystem.ts
-      PickupSystem.ts
-      BombingSystem.ts
-      ProgressionSystem.ts
-  entities/
-    Aircraft.ts
-    Weapon.ts
-    Projectile.ts
-    Enemy.ts
-    GroundTarget.ts
-    Pickup.ts
-  data/
-    aircrafts.ts
-    weapons.ts
-    upgrades.ts
-    enemies.ts
-  rendering/
-    ProceduralAircraft.ts
-    ProceduralTerrain.ts
-    ShaderMaterials.ts
-    Effects.ts
-  input/
-    VirtualStick.ts
-    ActionButtons.ts
-  ui/
-    MetaNavigation.ts
-    SortieHome.ts
-    EquipmentScreen.ts
-    Hud.ts
-    UpgradePanel.ts
-    Crosshair.ts
-  services/
-    ObjectPool.ts
-    Random.ts
-    Telemetry.ts
+  app/GameApp.ts
+  input/VirtualStick.ts
+  simulation/World.ts
+  simulation/FlightDynamics.ts
+  simulation/Controllers.ts
+  simulation/HitTest.ts
+  simulation/DamageModel.ts
+  content/3d/AircraftFactory.ts
+  content/3d/anchors.ts
+  content/fx/CombatEffects.ts
+  content/2d/CombatHud.ts
+  data/combatants.ts
+  rendering/Renderer.ts
 ```
 
 ### 模拟状态机

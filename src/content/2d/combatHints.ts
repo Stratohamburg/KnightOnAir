@@ -8,6 +8,7 @@ export interface ThreatView {
   bearing: number;
   firing?: boolean;
   chasing?: boolean;
+  breaking?: boolean;
   elite?: boolean;
   onScreen?: boolean;
   kind?: string;
@@ -57,6 +58,7 @@ export interface EdgeAnchor {
   count: number;
   distance: number;
   kind: string;
+  breaking?: boolean;
 }
 
 const normalizeAngle = (angle: number) => {
@@ -109,6 +111,7 @@ export function edgeAnchors(threats: readonly ThreatView[], rect: EdgeRect, max 
       count: threat.count ?? 1,
       distance: threat.distance,
       kind: threat.kind ?? "plane",
+      breaking: threat.breaking,
     };
   });
 }

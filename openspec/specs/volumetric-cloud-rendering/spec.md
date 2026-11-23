@@ -71,6 +71,20 @@
 - **WHEN** 相机离开云层密度范围
 - **THEN** 内部雾化平滑减弱，世界颜色和玩家覆盖层恢复到云外状态
 
+### Requirement: Player cloud interaction
+
+近景云场 MUST 使用玩家的世界位置和水平速度产生局部、连续的体积交互。玩家机体周围 MUST 形成带垂直范围的低密度空腔，机体后方 MUST 形成沿玩家速度方向延伸的柔和尾流。交互 MUST 作用于当前风漂移后的同一密度场，并且不得改变云墙的全局噪声坐标或生成独立的随机位移。
+
+#### Scenario: Player displaces nearby cloud
+
+- **WHEN** 玩家进入近景云体
+- **THEN** 玩家周围的云密度平滑降低，空腔边缘向外推开并随玩家高度衰减，远处云体保持连续
+
+#### Scenario: Player leaves a directional wake
+
+- **WHEN** 玩家以非零水平速度穿过云体
+- **THEN** 玩家后方出现沿速度方向的低密度尾流，尾流宽度和强度随玩家速度平滑变化，停止或暂停时不产生新的随机扰动
+
 ### Requirement: Autonomous cloud morphing
 
 云场 MUST 在没有风或风速很低时继续进行低频、确定性的内部形变。内部形变 MUST 通过连续空间噪声改变云瓣覆盖、边缘侵蚀和局部密度，形成缓慢的鼓起、收缩、融合和边缘呼吸。云瓣的垂直高度相位 MUST 保留体积起伏。内部形变 MUST 使用场景时钟，并且 MUST 与云的水平风向平移分开控制。

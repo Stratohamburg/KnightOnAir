@@ -1,5 +1,6 @@
-import { clamp, RAD } from "../services/Random";
-import type { AirMotionState, ControlDamage, ControllerIntent, Player } from "./types";
+import { RULES } from "../data/config";
+import { angleDelta, clamp, RAD } from "../services/Random";
+import type { AirMotionState, ControlDamage, ControllerIntent, Part, Player } from "./types";
 
 // Game distances represent two metres. Keep the coordinated-turn equation in
 // world units: yaw rate = g * tan(bank) / airspeed.
@@ -13,14 +14,25 @@ export interface AirActorConfig {
   maxSpeed: number;
   cruiseSpeed: number;
   turnRate: number;
-  speedMultiplier?: number;
-  thrustMultiplier?: number;
+  energyMax: number;
+  energyDrain: number;
+  energyRecover: number;
+  windResponse?: number;
   bankLimit?: number;
 }
 
 export interface AirActorState extends AirMotionState {
   x: number;
   z: number;
+}
+
+export function configuredFlight(base: AirActorConfig, parts: readonly Part[]): AirActorConfig {
+  return {
+    ...base,
+    mass: base.mass + parts.reduce((sum, part) => sum + part.addedMass, 0),
+    wingArea: base.wingArea + parts.reduce((sum, part) =>
+      part.id.startsWith("giant_wing_") ? sum + (part.lift ?? 1) * 2.4 : sum, 0),
+  };
 }
 
 export function flightEnvelope(p: Player, engineFactor = 1, wingFactor = 1) {
@@ -57,37 +69,22 @@ export function flightEnvelope(p: Player, engineFactor = 1, wingFactor = 1) {
   return { maxBank, response, mass, wingLoading };
 }
 
-export function updateFlightTurn(
-  p: Player,
-  error: number,
-  turnLimit: number,
-  dt: number,
-  engineFactor: number,
-  wingFactor: number,
-) {
-  const envelope = flightEnvelope(p, engineFactor, wingFactor);
-  const desiredTurn = clamp(
-    error * 4.5 - p.turnVelocity * 0.45,
-    -turnLimit,
-    turnLimit,
-  );
-  const targetBank = clamp(
-    -Math.atan2(p.speed * desiredTurn, FLIGHT_GRAVITY),
-    -envelope.maxBank,
-    envelope.maxBank,
-  );
-  const frequency = envelope.response;
-  p.rollVelocity +=
-    ((targetBank - p.bank) * frequency ** 2 - 2 * frequency * p.rollVelocity) *
-    dt;
-  p.rollVelocity = clamp(p.rollVelocity, -frequency * 0.35, frequency * 0.35);
-  p.bank = clamp(p.bank + p.rollVelocity * dt, -87.5 * RAD, 87.5 * RAD);
-  p.turnVelocity = clamp(
-    (-FLIGHT_GRAVITY * Math.tan(p.bank)) / Math.max(1, p.speed),
-    -turnLimit,
-    turnLimit,
-  );
-  return p.turnVelocity * dt;
+function updateBoost(actor: AirActorState, intent: ControllerIntent, config: AirActorConfig, dt: number) {
+  const request = RULES.boost.enabled && !intent.brake ? clamp(intent.boost) : 0;
+  if (actor.boostLocked && request === 0 && actor.energy >= Math.min(config.energyMax, RULES.boost.rearm)) {
+    actor.boostLocked = false;
+  }
+  actor.boost = !actor.boostLocked && actor.energy > 0 ? request : 0;
+  if (actor.boost > 0) {
+    actor.energy = Math.max(0, actor.energy - config.energyDrain * actor.boost * dt);
+    if (actor.energy === 0) {
+      actor.boostLocked = true;
+      actor.boost = 0;
+    }
+  } else {
+    actor.energy = Math.min(config.energyMax, actor.energy + config.energyRecover * dt);
+  }
+  actor.boosting = actor.boost > 0;
 }
 
 /** Shared air integration entry point for player, NPC, and replay inputs. */
@@ -97,6 +94,8 @@ export function integrateAirActor(
   config: AirActorConfig,
   damage: ControlDamage,
   dt: number,
+  wind: { sample(x: number, z: number): { x: number; z: number } },
+  speedFactor = 1,
 ) {
   const target = intent.targetHeading ?? actor.heading;
   const error = angleDelta(target, actor.heading);
@@ -137,14 +136,19 @@ export function integrateAirActor(
     turnLimit,
   );
   actor.heading = angleDelta(actor.heading + actor.turnVelocity * dt + damage.yawDrift * dt, 0);
-  const boost = clamp(intent.boost);
-  const thrust = Math.max(0, intent.throttle) + ((config.thrustMultiplier ?? 1.9) - 1) * boost;
-  actor.speed += config.acceleration * damage.engineFactor * thrust * dt;
-  if (thrust <= 0) actor.speed -= 1.2 * dt;
-  const normalMax = Math.max(config.cruiseSpeed, config.maxSpeed * damage.engineFactor);
-  const softMax = normalMax * (1 + ((config.speedMultiplier ?? 1.55) - 1) * boost);
-  if (actor.speed > softMax) actor.speed = Math.max(softMax, actor.speed - 8 * dt);
-  actor.speed = clamp(actor.speed, config.cruiseSpeed, normalMax * (config.speedMultiplier ?? 1.55));
+  updateBoost(actor, intent, config, dt);
+  const throttle = intent.brake ? 0 : clamp(intent.throttle);
+  const cruise = config.cruiseSpeed * speedFactor;
+  const normalMax = Math.max(cruise, config.maxSpeed * damage.engineFactor * speedFactor);
+  const thrust = throttle + (RULES.boost.thrustMultiplier - 1) * actor.boost;
+  const baseTarget = cruise + (normalMax - cruise) * throttle;
+  const targetSpeed = baseTarget + normalMax * (RULES.boost.speedMultiplier - 1) * actor.boost;
+  if (actor.speed < targetSpeed) {
+    actor.speed = Math.min(targetSpeed, actor.speed + config.acceleration * damage.engineFactor * thrust * dt);
+  } else {
+    const deceleration = intent.brake || actor.speed > normalMax ? RULES.boost.overspeedDecay : 1.2;
+    actor.speed = Math.max(targetSpeed, actor.speed - deceleration * dt);
+  }
   actor.turnVelocity = clamp(
     (-FLIGHT_GRAVITY * Math.tan(actor.bank)) / Math.max(1, actor.speed),
     -turnLimit,
@@ -152,14 +156,10 @@ export function integrateAirActor(
   );
   actor.vx = Math.sin(actor.heading) * actor.speed;
   actor.vz = Math.cos(actor.heading) * actor.speed;
+  const drift = wind.sample(actor.x + actor.vx * dt, actor.z + actor.vz * dt);
+  actor.vx += drift.x * (config.windResponse ?? 1);
+  actor.vz += drift.z * (config.windResponse ?? 1);
   actor.x += actor.vx * dt;
   actor.z += actor.vz * dt;
   return actor;
-}
-
-function angleDelta(target: number, current: number) {
-  let value = target - current;
-  while (value > Math.PI) value -= Math.PI * 2;
-  while (value < -Math.PI) value += Math.PI * 2;
-  return value;
 }

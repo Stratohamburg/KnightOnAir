@@ -8,7 +8,7 @@
 
 ### Requirement: Content library boundaries
 
-动态创建内容 MUST 归入 3D 内容库、特效库或 2D 内容库。模拟层 MUST 只产生纯数据状态和公开事件，不能直接创建 Three.js 对象或 DOM。页面流程 MUST 通过 2D 内容库创建界面组件，不能在业务逻辑中重复拼接同一类组件。
+可复用的动态呈现内容 MUST 通过 3D 内容库、特效库或 2D 内容库接入正式页面与战斗流程。模拟层 MUST 只产生纯数据状态和公开事件，不能直接创建 Three.js 对象或 DOM。页面流程 MUST 通过 2D 内容库创建界面组件，不能在业务逻辑中重复拼接同一类组件。
 
 #### Scenario: New aircraft visual
 
@@ -24,6 +24,11 @@
 
 - **WHEN** 新增雷达点、边缘指示、敌机标签、战斗告警或反馈列表
 - **THEN** 内容通过 2D 内容库的组件和 ViewModel 创建，渲染层不创建 DOM
+
+#### Scenario: Battle and hangar share aircraft content
+
+- **WHEN** 同一机型在机库预览与战斗中出现
+- **THEN** 两处使用相同的几何和锚点定义，并各自持有实例姿态与损伤表现
 
 ### Requirement: Data-driven content IDs
 
@@ -72,6 +77,11 @@
 - **WHEN** 飞机实例从战斗场景移除
 - **THEN** 实例释放自身节点和动态资源，不错误销毁仍被其他实例使用的共享几何与材质
 
+#### Scenario: Repeated configurations and scene exits
+
+- **WHEN** 玩家反复切换机库机体、开始战斗和结束出击
+- **THEN** 仍在用的共享资源保持有效，离场实例持有的资源可回收，缓存不会随切换次数持续增长
+
 ### Requirement: Profile-driven effects
 
 特效库 MUST 使用 profile 描述枪口爆点、外发光粒子、命中爆点、火花、烟雾、爆炸、冲击环和碎屑。profile MUST 支持外发光核心、柔和光晕、粒子数量、粒子速度、持续时间、风场漂移、是否跟随实体和是否继承实体速度。
@@ -104,6 +114,11 @@ World 和其他模拟模块 MUST 通过公开事件或纯数据特效请求描�
 
 - **WHEN** 模拟确认可脱落部件进入 destroyed
 - **THEN** 事件包含部件锚点、命中方向和继承速度，特效系统创建独立碎屑实例
+
+#### Scenario: Multiple simulation steps per frame
+
+- **WHEN** 一个画面帧内完成多个模拟步并产生开火、命中或脱落事件
+- **THEN** 各呈现系统各消费对应事件一次，命中与脱落表现使用事件发生时的世界数据，即使目标已经离场
 
 ### Requirement: Bounded pooling and caching
 

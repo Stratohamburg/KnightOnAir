@@ -1,5 +1,7 @@
 # 敌人和战场系统
 
+> 本文记录 0.3.0 阶段的初版设计。当前实现见下列入口。[空战状态与飞行包线规格](../../openspec/specs/battle/air-combat-behavior/spec.md) · [遭遇导演规格](../../openspec/specs/battle/encounter-director/spec.md)
+
 ## 战场目标
 
 战场同时提供空中追击、地面火力、金币路线和轰炸目标。敌人需要形成清晰的压力层级，让玩家知道自己正在躲避什么、优先击毁什么，以及什么时候应该切换轰炸模式。

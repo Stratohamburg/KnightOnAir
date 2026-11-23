@@ -1,6 +1,9 @@
 export const defaultCloudWind = [-.36, .93295] as const;
-const roll = { horizontal: 2.35, vertical: 3.35 };
-const eddies = { horizontal: 1.05, vertical: 1.1 };
+// Keep self morphing smaller than the cloud wall so it breathes locally
+// instead of translating the entire volume as a visible wave.
+const roll = { horizontal: .72, vertical: .95 };
+const eddies = { horizontal: .28, vertical: .34 };
+const curl = { horizontal: .18, vertical: .22 };
 
 export function cloudFlowSpeed(windX: number, windZ: number, gust: number) {
   const magnitude = Math.hypot(windX, windZ);
@@ -29,10 +32,11 @@ function flowDirection(windX: number, windZ: number): [number, number] {
 export function cloudSelfShapePosition(x: number, y: number, z: number, selfTime = 0) {
   const crest = x * .021 + z * .014 + y * .086 + selfTime * .12;
   const eddy = x * .031 - z * .019 + y * .19 + selfTime * .17;
+  const curlPhase = x * .012 - z * .017 + y * .061 + selfTime * .071;
   return {
-    x: x - Math.cos(crest) * roll.horizontal - Math.sin(eddy) * eddies.horizontal,
-    y: y - Math.sin(crest) * roll.vertical - Math.cos(eddy) * eddies.vertical,
-    z,
+    x: x - Math.cos(crest) * roll.horizontal - Math.sin(eddy) * eddies.horizontal - Math.sin(curlPhase) * curl.horizontal,
+    y: y - Math.sin(crest) * roll.vertical - Math.cos(eddy) * eddies.vertical - Math.cos(curlPhase) * curl.vertical,
+    z: z - Math.cos(curlPhase) * curl.horizontal * .55,
   };
 }
 
@@ -61,10 +65,11 @@ export const cloudFlowGLSL = `
   vec3 cloudSelfShapePosition(vec3 position) {
     float crest = position.x * .021 + position.z * .014 + position.y * .086 + selfTime * .12;
     float eddy = position.x * .031 - position.z * .019 + position.y * .19 + selfTime * .17;
+    float curlPhase = position.x * .012 - position.z * .017 + position.y * .061 + selfTime * .071;
     return position - vec3(
-      cos(crest) * 2.35 + sin(eddy) * 1.05,
-      sin(crest) * 3.35 + cos(eddy) * 1.1,
-      0.
+      cos(crest) * .72 + sin(eddy) * .28 + sin(curlPhase) * .18,
+      sin(crest) * .95 + cos(eddy) * .34 + cos(curlPhase) * .22,
+      cos(curlPhase) * .099
     );
   }
 `;

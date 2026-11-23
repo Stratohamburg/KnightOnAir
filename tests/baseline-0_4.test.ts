@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { NetworkController, playerIntent } from "../src/simulation/Controllers";
 import { AIRFRAMES, airframeById } from "../src/data/aircrafts";
 import { hitEntity } from "../src/simulation/HitTest";
+import { applyPartDamage, repairPartsWithOverflow, totalPartHealth } from "../src/simulation/DamageModel";
 import { World } from "../src/simulation/World";
 import { routePosition } from "../src/simulation/Routes";
 import { ERAS } from "../src/data/eras";
@@ -41,7 +42,7 @@ describe("0.4 fixed-seed baseline", () => {
     );
   });
 
-  it("skips a disabled front part and hits the next part behind it", () => {
+  it("retains attached disabled parts in the swept silhouette", () => {
     const entity = {
       x: 0,
       z: 0,
@@ -51,7 +52,79 @@ describe("0.4 fixed-seed baseline", () => {
         { id: "rear", kind: "body", slot: "center" as const, x: 0, z: 0, radius: 0.5, health: 10, maxHealth: 10, destroyed: false, state: "intact" as const, weight: 0, addedMass: 0 },
       ],
     };
-    expect(hitEntity(entity, { prevX: 0, prevZ: -2, x: 0, z: 2 })?.part.id).toBe("rear");
+    expect(hitEntity(entity, { prevX: 0, prevZ: 3, x: 0, z: -2 })?.part?.id).toBe("front");
+  });
+
+  it("finds relative motion contacts at the first world-space point", () => {
+    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const entity = world.player;
+    entity.prevX = -10;
+    entity.x = 10;
+    const hit = hitEntity(entity, { prevX: 0, prevZ: -4, x: 0, z: 4 });
+    expect(hit?.t).toBeGreaterThan(.2);
+    expect(hit?.t).toBeLessThan(.55);
+    expect(hit?.x).toBe(0);
+    expect(hit?.z).toBeCloseTo(-4 + 8 * hit!.t);
+  });
+
+  it("covers the visible tip, preserves outline gaps, and excludes detached tips", () => {
+    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const p = world.player;
+    const wing = p.parts.find(({ id }) => id === "right_wing")!;
+    const tip = p.parts.find(({ id }) => id === "right_wing_tip")!;
+    wing.health = 0;
+    wing.state = "disabled";
+    const sweep = (x: number, z: number) => hitEntity(p, { prevX: x, prevZ: z - .1, x, z: z + .1 });
+    expect(sweep(wing.x, -.15)?.part).toBe(wing);
+    expect(sweep(tip.x, tip.z)?.part).toBe(tip);
+    expect(sweep(tip.x, p.frame.length * .28)).toBeUndefined();
+    tip.destroyed = true;
+    expect(sweep(tip.x, tip.z)).toBeUndefined();
+  });
+
+  it("sweeps the edge of a heavy aircraft's expanded wing", () => {
+    const w = new World(airframeById("behemoth_17"), 42, { director: false, supply: false });
+    for (const id of ["giant_wing", "wing_turret", "right_engine", "left_engine"]) w.installUpgrade(upgradeById(id)!);
+    const tip = w.player.parts.find(({ id }) => id === "right_wing_tip")!;
+    const x = Math.max(...tip.silhouette![0].map((point) => point.x)) - .1;
+    expect(x).toBeGreaterThan(14);
+    expect(hitEntity(w.player, { prevX: x, prevZ: 2, x, z: -5 })?.part).toBe(tip);
+  });
+
+  it("resolves penetrating hits by contact time regardless of spawn order", () => {
+    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    world.enemies = [];
+    world.player.weapons = [];
+    const far = world.spawnEnemy("hunter", 0, 15)!;
+    const near = world.spawnEnemy("hunter", 0, 8)!;
+    world.shoot(0, 0, 0, { ...WEAPONS.ww1_sync_mg, speed: 1800, range: 100, pierce: 1 }, "player");
+    world.frame(1 / 60);
+    expect(world.consumeEvents().flatMap((e) => e.type === "enemy_hit" ? [e.enemyId] : []))
+      .toEqual([near.id, far.id]);
+  });
+
+  it("retains successful rolled-mount and destruction snapshots across fixed steps", () => {
+    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    world.enemies = [];
+    const p = world.player;
+    p.bank = .65;
+    const enemy = world.spawnEnemy("hunter", 0, 10)!;
+    world.frame(2 * RULES.step);
+    const shots = world.consumeEvents().filter((event) => event.type === "weapon_fired");
+    expect(shots.length).toBeGreaterThan(0);
+    for (const shot of shots) {
+      const projectile = world.projectiles.items.find(({ id }) => id === shot.projectileId)!;
+      expect(shot.snapshot.position.y).toBe(projectile.y);
+      expect(shot.snapshot.bank).toBeGreaterThan(.4);
+    }
+    world.damageEnemy(enemy, enemy.maxHealth);
+    const deathX = enemy.x;
+    world.frame(3 * RULES.step);
+    expect(world.enemies).not.toContain(enemy);
+    const events = world.consumeEvents();
+    expect(events.find((event) => event.type === "enemy_destroyed")?.snapshot.position.x).toBe(deathX);
+    expect(events.filter((event) => event.type === "part_detached")).toHaveLength(2);
+    expect(world.consumeEvents()).toEqual([]);
   });
 
   it("repairs body segments by deterministic priority", () => {
@@ -66,6 +139,37 @@ describe("0.4 fixed-seed baseline", () => {
     world.frame(1 / 60);
     expect(body.health).toBeGreaterThan(0);
     expect(engine.health).toBe(0);
+  });
+
+  it("spends overflow evenly, preserves detached parts during repair, and emits destruction once", () => {
+    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const p = world.player;
+    const tip = p.parts.find(({ id }) => id === "right_wing_tip")!;
+    const body = p.parts.find(({ id }) => id === "center_body")!;
+    tip.health = 1;
+    body.health = .25;
+    const survivors = p.parts.filter((part) => part !== body && part !== tip);
+    const before = survivors.map(({ health }) => health);
+    const first = applyPartDamage(p, tip, 1.25 + survivors.length * .6);
+    expect(first.transitions.find(({ part }) => part === tip)?.state).toBe("destroyed");
+    expect(body.health).toBe(0);
+    expect(survivors.map(({ health }) => health)).toEqual(before.map((health) => expect.closeTo(health - .6)));
+    applyPartDamage(p, body, survivors.length * .6);
+    expect(survivors.map(({ health }) => health)).toEqual(before.map((health) => expect.closeTo(health - 1.2)));
+    repairPartsWithOverflow(p.parts, 7);
+    expect(tip.health).toBe(0);
+    expect(tip.destroyed).toBe(true);
+    world.installUpgrade(upgradeById("nose_cannon")!);
+    expect(p.health).toBe(totalPartHealth(p.parts));
+
+    const enemy = world.spawnEnemy("hunter", 0, 16)!;
+    world.damageEnemy(enemy, enemy.health * 2);
+    world.damageEnemy(enemy, 10);
+    expect(enemy.health).toBe(0);
+    expect(totalPartHealth(enemy.parts)).toBe(0);
+    const events = world.consumeEvents();
+    expect(events.filter((event) => event.type === "enemy_destroyed")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "part_disabled")).toHaveLength(enemy.parts.length);
   });
 
   it("keeps player and NPC actors in one combat collection with mounted weapons", () => {
@@ -185,7 +289,8 @@ describe("0.4 era and combat rules", () => {
     world.toggleBombing();
     for (let i = 0; i < 180; i++) world.frame(1 / 60);
     expect(world.dropBomb()).toBe(true);
-    expect(world.bombs[0].startY).toBe(RULES.flightAltitude);
+    const bay = world.player.parts.find((part) => part.role === "bay")!;
+    expect(world.bombs[0].startY).toBeCloseTo(RULES.flightAltitude + (bay.y! - .22) * Math.cos(world.player.bank));
   });
 
   it("offers an opening pair of repair kits and keeps the field cap", () => {
@@ -203,6 +308,7 @@ describe("0.4 era and combat rules", () => {
     function run(hz: number) {
       const world = new World(airframeById("swift_01"), 42, { director: false });
       world.enemies = [];
+      world.player.weapons = [];
       const controller = new NetworkController();
       controller.push({ time: 1.5, intent: playerIntent({ heading: Math.PI / 2, throttle: .8 }) });
       controller.push({ time: 0, intent: playerIntent({ heading: Math.PI, throttle: .4, fire: true }) });

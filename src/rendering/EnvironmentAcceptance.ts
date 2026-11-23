@@ -2,6 +2,7 @@ import { Vector3 } from "three";
 import { airframeById } from "../data/aircrafts";
 import { RULES, type Quality } from "../data/config";
 import { World } from "../simulation/World";
+import type { CombatSnapshot, WorldEvent } from "../simulation/types";
 import { frameBattleCamera } from "./BattleCamera";
 import { placeVegetation } from "./VegetationField";
 import { cloudDiagnostics, environmentFixture, environmentState, type EnvironmentFixture } from "./RenderDiagnostics";
@@ -22,6 +23,7 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
   let scene: Scene;
   let treeRoot: Vector3 | undefined;
   let unit: Vector3 | undefined;
+  let displayEvents: WorldEvent[] = [];
 
   function report() {
     const cloud = cloudDiagnostics.get(renderer)!;
@@ -35,7 +37,8 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       resolution: [gl.drawingBufferWidth, gl.drawingBufferHeight],
       enemies: world.enemies.length,
       projectiles: world.projectiles.count,
-      effects: world.effects.count,
+      effects: renderer.diagnostics.effects,
+      content: renderer.diagnostics.content,
     };
   }
 
@@ -43,7 +46,8 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     if (live) world.frame(dt);
     else if (world.clock.timeScale > 0) world.wind.update(dt);
     const start = performance.now();
-    renderer.render(world, dt, { display: false });
+    renderer.render(world, dt, { display: false, events: [...world.consumeEvents(), ...displayEvents] });
+    displayEvents = [];
     const result = { frameCpuMs: performance.now() - start, ...report() };
     renderer.canvas.dataset.frame = JSON.stringify({
       quality: result.quality,
@@ -79,7 +83,7 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       const weapon = world.player.weapons[0].config;
       for (let i = 0; i < RULES.maxProjectiles; i++) {
         world.shoot(i % 14 - 7, 3 + i / 7, 0, weapon, i % 2 ? "player" : "enemy");
-        if (i < 12) world.effect(i % 7 - 3, 5 + i, "hit", 1.2, .75);
+        if (i < 12) world.effect(i % 7 - 3, 5 + i, "burst", 1.2, .75);
       }
     }
 
@@ -120,6 +124,36 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     advance,
     report,
     pause(paused: boolean) { world.clock.timeScale = paused ? 0 : 1; },
+    soak(dt: number, time: number, burst: boolean) {
+      world.player.x = world.player.prevX = 8 * Math.sin(time * .14);
+      world.player.z = world.player.prevZ = 8 * Math.sin(time * .11);
+      for (const enemy of world.enemies) {
+        if (enemy.layer === "air") {
+          enemy.heading += dt * .17;
+          enemy.bank = Math.sin(time * .7 + enemy.id) * .5;
+        }
+      }
+      for (const [index, projectile] of world.projectiles.items.entries()) {
+        if (!projectile.active) continue;
+        projectile.z = 4 + ((index / 7 + time * projectile.speed) % 22);
+        projectile.heading = .2 * Math.sin(time + index % 5);
+      }
+      return burst ? environment.combatEffects(dt) : draw(dt);
+    },
+    combatEffects(dt = 1 / 60) {
+      const weaponIds = ["machinegun", "light_cannon", "rocket_pod", "lock_missile"];
+      for (const [index, weaponId] of weaponIds.entries()) {
+        const snapshot: CombatSnapshot = {
+          position: { x: (index - 1.5) * 3.2, y: RULES.flightAltitude + .2, z: 3 },
+          direction: { x: 0, y: .08, z: 1 }, velocity: { x: 0, y: 0, z: 0 },
+          heading: 0, bank: 0, weaponId, damageType: index < 2 ? "kinetic" : "explosive",
+        };
+        displayEvents.push({ type: "weapon_fired", time: world.elapsed, owner: "player", entityId: "player", anchorId: weaponId, snapshot });
+        displayEvents.push({ type: "enemy_hit", time: world.elapsed, enemyId: -1, amount: 10,
+          snapshot: { ...snapshot, position: { ...snapshot.position, z: 9 } } });
+      }
+      return draw(dt);
+    },
     frame() {
       draw();
       return renderer.canvas.toDataURL("image/png");
@@ -140,10 +174,14 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       fixture.clouds = visible;
       return draw();
     },
-    flight(x: number, z: number, bombing: boolean, dt = 1 / 60) {
+    flight(x: number, z: number, bombing: boolean, dt = 1 / 60, velocityX = 0, velocityZ = 0) {
       fixture.camera = fixture.lookAt = undefined;
       world.player.x = world.player.prevX = x;
       world.player.z = world.player.prevZ = z;
+      // The acceptance fixture can place the aircraft without advancing the
+      // simulation, so expose its local velocity for cloud-body and wake checks.
+      world.player.vx = velocityX;
+      world.player.vz = velocityZ;
       if (world.isBombing !== bombing) world.toggleBombing();
       world.aim.x = x;
       world.aim.z = z + 13;
@@ -153,6 +191,11 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
   };
   Object.assign(window, { __koa: { renderer, environment } });
   const params = new URLSearchParams(location.search);
+  const requestedScene = params.get("scene");
+  const initialScene: Scene = requestedScene === "occlusion" || requestedScene === "cloudscape" ||
+    requestedScene === "grass" || requestedScene === "tree" || requestedScene === "terrain" || requestedScene === "battle"
+    ? requestedScene
+    : "battle";
   if (params.get("environmentTest") === "terrain") {
     const quality = params.get("quality");
     setup("terrain", quality === "low" || quality === "high" ? quality : "standard");
@@ -161,6 +204,13 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     const bombing = params.get("view") === "bombing";
     environment.flight(0, bombing ? 7 : -4, bombing, .5);
   } else {
-    setup("battle");
+    setup(initialScene);
+    if (initialScene === "cloudscape" || initialScene === "terrain") {
+      const x = Number(params.get("x") ?? 0);
+      const z = Number(params.get("z") ?? -10);
+      const velocityX = Number(params.get("velocityX") ?? 0);
+      const velocityZ = Number(params.get("velocityZ") ?? 0);
+      environment.flight(x, z, params.get("bombing") === "1", .5, velocityX, velocityZ);
+    }
   }
 }

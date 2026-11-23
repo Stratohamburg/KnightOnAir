@@ -930,6 +930,13 @@ button:active:not(:disabled) {
   border-radius: 1px;
   background: #e8e9d9;
 }
+.radar-contact.breaking, .edge-indicator.breaking {
+  opacity: 0.52;
+}
+.radar-contact[hidden], .edge-indicator[hidden], .enemy-label[hidden],
+.aim-label[hidden], .lock-label[hidden], .combat-hud[hidden] {
+  display: none;
+}
 .radar-contact.firing {
   background: #ef8864;
   box-shadow: 0 0 0 4px #ef886455;
@@ -2395,3 +2402,42 @@ button:active:not(:disabled) {
   border-color: #f0ce83;
 }
 .mode-button:disabled { opacity: .55; cursor: default; }
+
+.showroom-page {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 1rem;
+  width: min(100% - 2rem, 54rem);
+  margin: 1rem auto 6.5rem;
+  padding: 1.2rem 1.2rem 2rem;
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+  background: linear-gradient(180deg, #112a2b55 0%, #112a2b55 25%, #112a2be8 42%, #183b37ee 100%);
+  border: 1px solid #6d9d87;
+  border-radius: 1rem;
+  box-shadow: 0 1.2rem 4rem #0717199c;
+}
+.showroom-heading h1 { margin: .25rem 0 .4rem; font-size: clamp(1.7rem, 5vw, 3rem); }
+.showroom-heading p { max-width: 36rem; color: #c0d7c5; }
+.showroom-toolbar, .showroom-build, .showroom-actions { display: flex; align-items: center; gap: .75rem; }
+.showroom-toolbar { justify-content: space-between; padding: .7rem .9rem; border: 1px solid #4e766c; border-radius: .65rem; color: #e8efcf; font-size: .82rem; }
+.showroom-build, .showroom-aircraft-list, .showroom-card-list { padding: .7rem; border: 1px solid #4e766c; border-radius: .65rem; background: #112a2bd9; }
+.showroom-build { justify-content: space-between; align-items: flex-end; gap: 1rem; }
+.showroom-build ol { display: flex; flex-wrap: wrap; gap: .4rem; margin: .45rem 0 0; padding: 0; list-style: none; }
+.showroom-build li { display: inline-flex; gap: .35rem; align-items: center; padding: .35rem .55rem; border-radius: .4rem; background: #244e47; color: #f0d58e; font-size: .75rem; }
+.showroom-build li span { color: #8bb9a1; font-family: monospace; }
+.showroom-build .empty-build { color: #b9d0be; background: #183833; }
+.showroom-aircraft-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .45rem; max-height: 9rem; overflow: auto; padding: .15rem; }
+.showroom-aircraft { display: grid; gap: .18rem; padding: .55rem .65rem; text-align: left; border: 1px solid #496d68; border-radius: .45rem; background: #142f31; color: #d9e9d6; cursor: pointer; }
+.showroom-aircraft small { color: #90b59f; font-size: .65rem; }
+.showroom-aircraft.selected { border-color: #f1ce85; box-shadow: 0 0 0 1px #f1ce85 inset; color: #ffe5a8; }
+.showroom-card-list { display: grid; gap: .55rem; }
+.showroom-upgrade-card { width: 100%; min-height: 6.5rem; }
+.showroom-return { justify-self: start; }
+@media (max-width: 600px) {
+  .showroom-page { width: min(100% - 1rem, 54rem); margin-top: .5rem; padding: .85rem .8rem 5.2rem; }
+  .showroom-build { display: grid; align-items: stretch; }
+  .showroom-actions { justify-content: flex-end; }
+  .showroom-toolbar { align-items: flex-start; flex-direction: column; gap: .25rem; }
+}

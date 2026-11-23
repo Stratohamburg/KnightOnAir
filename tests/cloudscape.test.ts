@@ -56,6 +56,12 @@ describe("coastal cloudscape", () => {
     expect(below - cap).toBeGreaterThan(.15);
   });
 
+  it("bridges lobe gaps with a continuous volumetric curtain", () => {
+    const wall = bakeCloudWall(bakeCloudNoise(491));
+    expect(sampleCloudWall(wall, 60, 38, -35)).toBeGreaterThan(.08);
+    expect(sampleCloudWall(wall, 60, 38, 35)).toBeGreaterThan(.08);
+  });
+
   it("blends the detailed wall out at its edges and at a distance", () => {
     expect(cloudWallWeight(0, -30, 30)).toBe(0);
     expect(cloudWallWeight(16, -30, 30)).toBe(1);

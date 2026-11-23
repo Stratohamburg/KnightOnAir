@@ -41,11 +41,11 @@
 #### Scenario: Aircraft banks
 
 - **WHEN** 飞机在转向中产生 bank
-- **THEN** 武器挂点、发动机烟雾、命中特效和部件碎屑跟随同一个根节点姿态
+- **THEN** 武器挂点和发动机烟雾发射器跟随同一个根节点姿态。命中爆点和碎屑使用事件发生时的接触点或部件姿态
 
 ### Requirement: Damage presentation without hit flash
 
-玩家和敌人 MUST 根据部件损伤显示局部受损材质、外发光火花、烟雾、火焰或结构碎裂。开火和命中爆点 MUST 使用外发光核心与柔和光晕形成局部亮度对比。系统 MUST NOT 使用覆盖整架飞机的显眼受击闪白作为主要命中反馈。
+玩家和敌人 MUST 根据部件损伤显示局部受损材质、外发光火花、烟雾、火焰或结构碎裂。开火和命中爆点 MUST 使用外发光核心与柔和光晕形成局部亮度对比。开火和命中 MUST 将发光限制在爆点及粒子范围内，受击时整架飞机的材质不得闪白。
 
 #### Scenario: Damaged engine
 
@@ -64,7 +64,7 @@
 
 ### Requirement: Persistent impact smoke
 
-命中烟雾 MUST 绑定到命中世界坐标，短时间保留在原地后逐渐漂移、变淡并消失。局部部件烟雾 MUST 随机体移动，命中残留烟雾 MUST 保留命中时的世界位置。
+命中烟雾 MUST 绑定到命中世界坐标，短时间保留在原地后逐渐漂移、变淡并消失。持续损伤的烟雾发射源 MUST 随机体移动。烟粒离开发射源后按自己的世界轨迹更新。
 
 #### Scenario: Hit smoke remains in world space
 
@@ -74,7 +74,7 @@
 #### Scenario: Engine smoke follows aircraft
 
 - **WHEN** 发动机持续损伤并且飞机改变航向或 bank
-- **THEN** 发动机烟雾从发动机局部锚点持续生成，并跟随飞机姿态和移动
+- **THEN** 发动机烟雾从发动机局部锚点持续生成，发射源跟随飞机姿态和移动，已发出的烟粒形成尾迹
 
 ### Requirement: Part debris and detachment
 

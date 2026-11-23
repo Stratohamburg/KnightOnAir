@@ -10,8 +10,8 @@ const healthFactor = (part: Part) =>
   part.maxHealth > 0 ? Math.max(0, Math.min(1, part.health / part.maxHealth)) : 0;
 
 export function stateFor(part: Part): PartDamageState {
-  if (part.health <= 0)
-    return "disabled";
+  if (part.destroyed || part.state === "destroyed") return "destroyed";
+  if (part.health <= 0) return part.visual?.detachable ? "destroyed" : "disabled";
   const ratio = healthFactor(part);
   return ratio > 0.7 ? "intact" : ratio > 0.4 ? "damaged" : "critical";
 }
@@ -107,7 +107,8 @@ export function evaluateDamage(parts: readonly Part[]): ControlDamage {
 
 export interface PartDamageResult {
   appliedDamage: number;
-  state: PartDamageState;
+  transitions: { part: Part; state: PartDamageState }[];
+  destroyed: boolean;
 }
 
 const repairPriority: Record<string, number> = {
@@ -125,11 +126,11 @@ const repairPriority: Record<string, number> = {
 };
 
 export function totalPartHealth(parts: readonly Part[]) {
-  return parts.reduce((sum, part) => sum + Math.max(0, part.health), 0);
+  return parts.reduce((sum, part) => sum + (part.destroyed ? 0 : Math.max(0, part.health)), 0);
 }
 
 export function totalPartMaxHealth(parts: readonly Part[]) {
-  return parts.reduce((sum, part) => sum + part.maxHealth, 0);
+  return parts.reduce((sum, part) => sum + (part.destroyed ? 0 : part.maxHealth), 0);
 }
 
 /** Repairs damaged parts in a deterministic structural priority order. */
@@ -140,32 +141,51 @@ export function repairPartsWithOverflow(parts: Part[], amount: number) {
   );
   for (const part of ordered) {
     if (remaining <= 0) break;
+    if (part.destroyed || part.state === "destroyed") continue;
     const missing = Math.max(0, part.maxHealth - part.health);
     if (!missing) continue;
     const restored = Math.min(missing, remaining);
     part.health += restored;
     remaining -= restored;
-    part.destroyed = false;
     part.state = stateFor(part);
     part.disabled = part.state === "disabled";
   }
   return { used: amount - remaining, remaining, repaired: ordered.filter((part) => part.health > 0) };
 }
 
-/** Applies damage using the same transfer calculation for every combat entity. */
 export function applyPartDamage(
-  entity: Pick<CombatEntity, "health" | "maxHealth" | "parts" | "damageTransfer" | "partRevision" | "damageRevision">,
-  part: Part,
+  entity: Pick<CombatEntity, "health" | "maxHealth" | "parts" | "damage" | "partRevision" | "damageRevision">,
+  part: Part | undefined,
   amount: number,
 ): PartDamageResult {
-  const before = stateFor(part);
-  const safeAmount = Math.max(0, amount);
-  part.health = Math.max(0, part.health - safeAmount);
-  entity.health = Math.max(0, entity.health - safeAmount);
-  const state = stateFor(part);
-  part.state = state;
-  part.disabled = state === "disabled";
-  if (state !== before) entity.partRevision++;
+  const previousHealth = totalPartHealth(entity.parts);
+  const appliedDamage = Math.min(previousHealth, Math.max(0, amount));
+  const transitions: PartDamageResult["transitions"] = [];
+  if (!(appliedDamage > 0)) return { appliedDamage: 0, transitions, destroyed: false };
+  let remaining = appliedDamage;
+  const spend = (target: Part, share: number) => {
+    const damage = Math.min(target.health, share);
+    target.health = Math.max(0, target.health - damage);
+    const previous = target.state ?? "intact";
+    target.state = stateFor(target);
+    target.destroyed = target.state === "destroyed";
+    target.disabled = target.destroyed || target.state === "disabled";
+    if (target.state !== previous) transitions.push({ part: target, state: target.state });
+    return damage;
+  };
+  if (part && part.health > 0 && !part.destroyed && part.state !== "disabled") remaining -= spend(part, remaining);
+  const available = entity.parts.filter((candidate) => candidate.health > 0 && !candidate.destroyed)
+    .sort((a, b) => a.health - b.health);
+  const fatal = appliedDamage === previousHealth;
+  for (let i = 0; i < available.length && (remaining > 0 || fatal); i++) {
+    const target = available[i];
+    const share = fatal ? target.health : remaining / (available.length - i);
+    remaining = Math.max(0, remaining - spend(target, share));
+  }
+  entity.health = totalPartHealth(entity.parts);
+  entity.maxHealth = totalPartMaxHealth(entity.parts);
+  if (transitions.length) entity.partRevision++;
   entity.damageRevision++;
-  return { appliedDamage: safeAmount, state };
+  entity.damage = evaluateDamage(entity.parts);
+  return { appliedDamage, transitions, destroyed: entity.health === 0 };
 }

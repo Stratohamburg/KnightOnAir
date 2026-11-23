@@ -30,10 +30,21 @@ const cloudSampling = `
   uniform sampler3D detailNoise, wallVolume;
   uniform vec2 drift;
   uniform float flowDistance, selfMorphSpeed, selfStrength, detailStrength;
-  uniform vec2 flowDirection;
+  uniform vec3 playerPosition, playerVelocity;
+  uniform float playerRadius, wakeStrength;
   uniform vec3 sunDirection;
 
   ${cloudFlowGLSL}
+
+  // Blend fixed samples to morph the volume without scrolling its noise
+  // coordinates. This keeps the cloud anchored in world space while still
+  // allowing the interior to breathe in calm air.
+  vec2 sampleSelfNoise(vec3 at) {
+    vec2 base = texture(detailNoise, at).rg;
+    vec2 alternate = texture(detailNoise, at + vec3(.37, .17, .53)).rg;
+    float phase = .5 + .5 * sin(selfTime * .37 + dot(at, vec3(.011, .017, .013)));
+    return mix(base, alternate, phase * .32);
+  }
 
   // RGB stores density and the density-weighted ambient and direct light.
   vec3 sampleDistantCloud(vec3 at) {
@@ -44,12 +55,10 @@ const cloudSampling = `
     float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r);
     float ceilingY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.g);
     if (at.y < floorY - 3. || at.y > ceilingY + 4.) return vec3(0.);
-    vec3 noiseAt = vec3(at.x, at.y * 1.22, at.z) * .045 +
-      vec3(.003, .001, .004) * selfTime * selfMorphSpeed;
+    vec3 noiseAt = vec3(at.x, at.y * 1.22, at.z) * .045;
     vec2 detail = texture(detailNoise, noiseAt).rg;
-    vec3 morphAt = vec3(at.x * .018, at.y * .031, at.z * .018) +
-      vec3(flowDirection.x, .41, flowDirection.y) * selfTime * (.006 * selfMorphSpeed);
-    vec2 morph = texture(detailNoise, morphAt).rg;
+    vec3 morphAt = vec3(at.x * .018, at.y * .031, at.z * .018);
+    vec2 morph = sampleSelfNoise(morphAt);
     float erode = (detail.x - .54) * 7. +
       (detail.y - .4) * 2.6 * detailStrength +
       (morph.y - .5) * 1.8 * selfStrength;
@@ -75,24 +84,52 @@ const cloudSampling = `
   const vec3 wallMax = vec3(${cloudWall.max.map(value => value.toFixed(1)).join(", ")});
 
   vec3 sampleCloud(vec3 at, float distance) {
-    vec2 edge = min(at.xz - wallMin.xz, wallMax.xz - at.xz);
+    vec2 playerVelocityXZ = playerVelocity.xz;
+    float playerSpeed = length(playerVelocityXZ);
+    vec2 playerDirection = playerSpeed > .01
+      ? playerVelocityXZ / playerSpeed
+      : vec2(.0, 1.0);
+    vec3 playerDelta = at - playerPosition;
+    float verticalInfluence = exp(-pow(playerDelta.y / max(playerRadius * 1.35, .001), 2.));
+    vec2 playerOffset = playerDelta.xz;
+    float bodyInfluence = exp(-dot(playerOffset, playerOffset) /
+      max(playerRadius * playerRadius, .001));
+    bodyInfluence *= verticalInfluence;
+    float alongWake = dot(playerOffset, playerDirection);
+    vec2 sideOffset = playerOffset - playerDirection * alongWake;
+    float wakeInfluence = exp(-dot(sideOffset, sideOffset) /
+      max(playerRadius * playerRadius * 1.8, .001)) *
+      exp(-max(alongWake, 0.) / max(playerRadius * 5.5, .001)) *
+      smoothstep(-playerRadius * 1.2, playerRadius * 1.8, alongWake) *
+      wakeStrength * smoothstep(.02, .6, playerSpeed);
+    vec2 pushDirection = normalize(playerOffset + vec2(.0001));
+    vec2 disturbance = pushDirection * bodyInfluence * playerRadius * .72 -
+      playerDirection * wakeInfluence * playerRadius * .52;
+    at.xz += disturbance;
+    vec3 advected = at - vec3(drift.x, 0., drift.y);
+    vec2 edge = min(advected.xz - wallMin.xz, wallMax.xz - advected.xz);
     vec2 fade = smoothstep(vec2(0.), vec2(${cloudWall.edgeFade.map(value => value.toFixed(1)).join(", ")}), edge);
     float lod = 1. - smoothstep(${cloudWall.detailDistance[0].toFixed(1)}, ${cloudWall.detailDistance[1].toFixed(1)}, distance);
     float wallWeight = fade.x * fade.y * lod;
-    vec3 advected = at - vec3(drift.x, 0., drift.y);
     vec3 flowing = cloudSelfShapePosition(advected);
     vec3 distant = wallWeight < 1. ? sampleDistantCloud(mix(advected, flowing, ${distantFlowWeight})) : vec3(0.);
-    if (wallWeight <= 0.) return distant;
-    vec2 voxel = texture(wallVolume, (flowing - wallMin) / (wallMax - wallMin)).rg;
-    vec3 wallMorphAt = flowing * .021 +
-      vec3(.003, .004, .002) * selfTime * selfMorphSpeed;
-    vec2 wallMorph = texture(detailNoise, wallMorphAt).rg;
+    float interaction = clamp(1. - bodyInfluence * .98 - wakeInfluence * .42, .025, 1.);
+    if (wallWeight <= 0.) return distant * interaction;
+    vec3 wallUv = (flowing - wallMin) / (wallMax - wallMin);
+    vec3 wallStep = vec3(.014, .018, .014);
+    vec2 voxel = texture(wallVolume, wallUv).rg * .46;
+    voxel += texture(wallVolume, clamp(wallUv + vec3(wallStep.x, 0., 0.), 0., 1.)).rg * .135;
+    voxel += texture(wallVolume, clamp(wallUv - vec3(wallStep.x, 0., 0.), 0., 1.)).rg * .135;
+    voxel += texture(wallVolume, clamp(wallUv + vec3(0., wallStep.y, 0.), 0., 1.)).rg * .135;
+    voxel += texture(wallVolume, clamp(wallUv - vec3(0., wallStep.y, 0.), 0., 1.)).rg * .135;
+    vec3 wallMorphAt = flowing * .021;
+    vec2 wallMorph = sampleSelfNoise(wallMorphAt);
     voxel.r = clamp(voxel.r * mix(.88, 1.12, wallMorph.x * selfStrength) +
       (wallMorph.y - .5) * .08 * selfStrength, 0., 1.);
     float sunDepth = voxel.g * ${cloudWall.maxOpticalDepth.toFixed(1)};
     float sunlight = exp(-sunDepth * 1.55);
     float skylight = mix(.22, .58, smoothstep(20., 66., at.y)) * exp(-sunDepth * .22);
-    return mix(distant, vec3(1., skylight, sunlight) * voxel.r, wallWeight);
+    return mix(distant, vec3(1., skylight, sunlight) * voxel.r, wallWeight) * interaction;
   }
 
   vec3 cloudInEstuary(vec3 at, float distance) {
@@ -163,10 +200,10 @@ const cloudFragment = `
       // Resolve thin lips and grooves with a second midpoint only where
       // the base interval crosses the local cloud wall.
       if (wallEnd > wallStart && travel < wallEnd && travel + stride > wallStart) {
-        integrateCloud(fieldEye, ray, travel + stride * .25, stride * .5, towardSun, transmittance, scatter);
-        integrateCloud(fieldEye, ray, travel + stride * .75, stride * .5, towardSun, transmittance, scatter);
+        integrateCloud(eye, ray, travel + stride * .25, stride * .5, towardSun, transmittance, scatter);
+        integrateCloud(eye, ray, travel + stride * .75, stride * .5, towardSun, transmittance, scatter);
       } else {
-        integrateCloud(fieldEye, ray, travel + stride * .5, stride, towardSun, transmittance, scatter);
+        integrateCloud(eye, ray, travel + stride * .5, stride, towardSun, transmittance, scatter);
       }
       travel += stride;
     }
@@ -182,7 +219,8 @@ const cloudShadowFragment = `
   out vec4 shadowColor;
 
   void main() {
-    vec2 receiver = cloudShadowCenter + (vUv - .5) * ${shadowSpan}. - drift;
+    // sampleCloud applies the world-to-field drift exactly once.
+    vec2 receiver = cloudShadowCenter + (vUv - .5) * ${shadowSpan}.;
     vec2 solarSlope = sunDirection.xz / sunDirection.y;
     const float stride = ${(cloudTop - cloudBase) / 16};
     vec2 depth = vec2(0.);
@@ -337,6 +375,10 @@ export class Cloudscape {
         selfMorphSpeed: { value: this.selfMorphSpeed },
         selfStrength: { value: this.selfStrength },
         flowDirection: { value: new THREE.Vector2(this.flowX, this.flowZ) },
+        playerPosition: { value: new THREE.Vector3() },
+        playerVelocity: { value: new THREE.Vector3() },
+        playerRadius: { value: 2.5 },
+        wakeStrength: { value: 1 },
         detailStrength: { value: 0 },
         sampleCount: { value: 0 },
         sunDirection: { value: new THREE.Vector3(...cloudSun).normalize() },
@@ -385,6 +427,11 @@ export class Cloudscape {
     windZ: number,
     gust: number,
     camera: THREE.Vector3,
+    playerX: number,
+    playerY: number,
+    playerZ: number,
+    playerVelocityX: number,
+    playerVelocityZ: number,
     enabled: boolean,
   ) {
     this.enabled = enabled;
@@ -423,6 +470,14 @@ export class Cloudscape {
     this.march.uniforms.selfTime.value = this.selfTime;
     this.march.uniforms.selfMorphSpeed.value = this.selfMorphSpeed;
     this.march.uniforms.selfStrength.value = this.selfStrength;
+    this.march.uniforms.playerPosition.value.set(playerX, playerY, playerZ);
+    this.march.uniforms.playerVelocity.value.set(playerVelocityX, 0, playerVelocityZ);
+    this.march.uniforms.playerRadius.value = 2.5;
+    this.march.uniforms.wakeStrength.value = THREE.MathUtils.clamp(
+      .55 + Math.hypot(playerVelocityX, playerVelocityZ) * .08,
+      .55,
+      1.25,
+    );
     this.march.uniforms.flowDirection.value.set(this.flowX, this.flowZ);
     if (!enabled) this.shadowTime = Number.NEGATIVE_INFINITY;
     this.cameraDensity = enabled ? this.density(camera.x, camera.y, camera.z, 0) : 0;
