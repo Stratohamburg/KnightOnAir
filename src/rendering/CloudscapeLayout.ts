@@ -142,6 +142,23 @@ export function bakeCloudNoise(seed: number) {
   return data;
 }
 
+// Coordinates are in texel space with integer values at the texel centers.
+export function sampleCloudNoise(data: Uint8Array, x: number, y: number, z: number, channel: 0 | 1) {
+  const size = cloudNoiseSize;
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const ax = (ix % size + size) % size, bx = (ax + 1) % size;
+  const ay = (iy % size + size) % size, by = (ay + 1) % size;
+  const az = (iz % size + size) % size, bz = (az + 1) % size;
+  const slice = (sliceY: number) => {
+    const rowA = (az * size + sliceY) * size;
+    const rowB = (bz * size + sliceY) * size;
+    const a = lerp(data[(rowA + ax) * 2 + channel], data[(rowA + bx) * 2 + channel], x - ix);
+    const b = lerp(data[(rowB + ax) * 2 + channel], data[(rowB + bx) * 2 + channel], x - ix);
+    return lerp(a, b, z - iz);
+  };
+  return lerp(slice(ay), slice(by), y - iy) / 255;
+}
+
 export function sampleCloudColumn(data: Uint8Array, x: number, z: number) {
   const px = (x / cloudMapSpan + .5) * cloudMapSize - .5;
   const pz = (z / cloudMapSpan + .5) * cloudMapSize - .5;
@@ -159,11 +176,13 @@ export function sampleCloudColumn(data: Uint8Array, x: number, z: number) {
   };
 }
 
-export function estimateCloudDensity(data: Uint8Array, x: number, y: number, z: number) {
+export function estimateCloudDensity(
+  data: Uint8Array, x: number, y: number, z: number, roofOffset = 0, coverageOffset = 0,
+) {
   if (y <= cloudBase || y >= cloudTop) return 0;
   const column = sampleCloudColumn(data, x, z);
   if (!column) return 0;
   const { base, top, coverage } = column;
-  return smooth(.25, .58, coverage) * smooth(base - 2, base + 7, y) *
-    (1 - smooth(top - 10, top + 2, y));
+  return smooth(.25, .58, coverage + coverageOffset) * smooth(base - 2, base + 7, y) *
+    (1 - smooth(top - 10, top + 2, y - roofOffset));
 }

@@ -41,4 +41,13 @@ describe("showroom refit builds", () => {
     expect(world.player.weapons.at(-1)?.config.fireRate).toBeGreaterThan(0);
     expect(world.player.weapons.every((weapon) => 1 / (weapon.config.fireRate * world.player.stats.fireRate) < 1 / weapon.config.fireRate)).toBe(true);
   });
+
+  it("keeps showroom fire as a mount preview without battle actors", () => {
+    const world = new World(airframeById("mastodon_03"), 9, { director: false, supply: false, showroom: true });
+    world.previewFire();
+    const events = world.consumeEvents();
+    expect(world.enemies).toHaveLength(0);
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((event) => event.type === "weapon_fired")).toBe(true);
+  });
 });

@@ -2403,41 +2403,32 @@ button:active:not(:disabled) {
 }
 .mode-button:disabled { opacity: .55; cursor: default; }
 
-.showroom-page {
-  position: relative;
-  z-index: 2;
-  display: grid;
-  gap: 1rem;
-  width: min(100% - 2rem, 54rem);
-  margin: 1rem auto 6.5rem;
-  padding: 1.2rem 1.2rem 2rem;
-  max-height: calc(100% - 2rem);
-  overflow: auto;
-  background: linear-gradient(180deg, #112a2b55 0%, #112a2b55 25%, #112a2be8 42%, #183b37ee 100%);
-  border: 1px solid #6d9d87;
-  border-radius: 1rem;
-  box-shadow: 0 1.2rem 4rem #0717199c;
-}
-.showroom-heading h1 { margin: .25rem 0 .4rem; font-size: clamp(1.7rem, 5vw, 3rem); }
-.showroom-heading p { max-width: 36rem; color: #c0d7c5; }
-.showroom-toolbar, .showroom-build, .showroom-actions { display: flex; align-items: center; gap: .75rem; }
-.showroom-toolbar { justify-content: space-between; padding: .7rem .9rem; border: 1px solid #4e766c; border-radius: .65rem; color: #e8efcf; font-size: .82rem; }
-.showroom-build, .showroom-aircraft-list, .showroom-card-list { padding: .7rem; border: 1px solid #4e766c; border-radius: .65rem; background: #112a2bd9; }
-.showroom-build { justify-content: space-between; align-items: flex-end; gap: 1rem; }
-.showroom-build ol { display: flex; flex-wrap: wrap; gap: .4rem; margin: .45rem 0 0; padding: 0; list-style: none; }
-.showroom-build li { display: inline-flex; gap: .35rem; align-items: center; padding: .35rem .55rem; border-radius: .4rem; background: #244e47; color: #f0d58e; font-size: .75rem; }
-.showroom-build li span { color: #8bb9a1; font-family: monospace; }
-.showroom-build .empty-build { color: #b9d0be; background: #183833; }
-.showroom-aircraft-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: .45rem; max-height: 9rem; overflow: auto; padding: .15rem; }
+.showroom-page { position: absolute; inset: 0 0 calc(73px + env(safe-area-inset-bottom)); display: grid; grid-template-rows: minmax(0, 2fr) minmax(0, 1fr); overflow: hidden; }
+.showroom-stage { position: relative; min-height: 0; pointer-events: auto; }
+.showroom-stage-caption { position: absolute; top: 1.2rem; left: 1.25rem; display: grid; gap: .22rem; text-shadow: 0 2px 10px #071719cc; }
+.showroom-stage-caption strong { font-size: clamp(1.15rem, 4vw, 1.7rem); color: #f4d993; }
+.showroom-stage-caption small { color: #c5dcc9; font-size: .72rem; }
+.showroom-stage-stats { position: absolute; right: 1.25rem; top: 1.25rem; color: #d6e5ca; font-size: .72rem; text-align: right; }
+.showroom-controls { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: .55rem; padding: .75rem 1rem .7rem; background: #112a2bf2; border-top: 1px solid #6d9d87; }
+.showroom-active { display: flex; align-items: flex-end; justify-content: space-between; gap: .7rem; min-width: 0; }
+.showroom-actions { display: flex; align-items: center; gap: .4rem; flex-shrink: 0; }
+.showroom-active ol { display: flex; gap: .32rem; max-width: 14rem; margin: .28rem 0 0; padding: 0; overflow-x: auto; list-style: none; }
+.showroom-active li { display: inline-flex; flex: 0 0 auto; gap: .28rem; align-items: center; padding: .28rem .42rem; border-radius: .35rem; background: #244e47; color: #f0d58e; font-size: .66rem; white-space: nowrap; }
+.showroom-active li span { color: #8bb9a1; font-family: monospace; }
+.showroom-active .empty-build { color: #b9d0be; background: #183833; }
 .showroom-aircraft { display: grid; gap: .18rem; padding: .55rem .65rem; text-align: left; border: 1px solid #496d68; border-radius: .45rem; background: #142f31; color: #d9e9d6; cursor: pointer; }
 .showroom-aircraft small { color: #90b59f; font-size: .65rem; }
 .showroom-aircraft.selected { border-color: #f1ce85; box-shadow: 0 0 0 1px #f1ce85 inset; color: #ffe5a8; }
-.showroom-card-list { display: grid; gap: .55rem; }
-.showroom-upgrade-card { width: 100%; min-height: 6.5rem; }
+.showroom-card-list { display: grid; gap: .45rem; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: .25rem; }
+.showroom-upgrade-card { width: 100%; min-height: 5.25rem; }
 .showroom-return { justify-self: start; }
+.showroom-aircraft-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .45rem; max-height: 55vh; overflow-y: auto; }
+.showroom-aircraft-modal .modal { width: min(92vw, 28rem); }
 @media (max-width: 600px) {
-  .showroom-page { width: min(100% - 1rem, 54rem); margin-top: .5rem; padding: .85rem .8rem 5.2rem; }
-  .showroom-build { display: grid; align-items: stretch; }
+  .showroom-stage-caption { top: .8rem; left: .8rem; }
+  .showroom-stage-stats { top: .85rem; right: .8rem; }
+  .showroom-controls { padding: .6rem .65rem .55rem; }
+  .showroom-active { align-items: stretch; flex-direction: column; }
   .showroom-actions { justify-content: flex-end; }
-  .showroom-toolbar { align-items: flex-start; flex-direction: column; gap: .25rem; }
+  .showroom-active ol { max-width: 100%; }
 }

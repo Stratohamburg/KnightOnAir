@@ -1,5 +1,5 @@
 import { clamp, lerp } from "../services/Random";
-import { cloudBase, cloudNoiseSize, cloudSun, cloudTop } from "./CloudscapeLayout";
+import { cloudBase, cloudSun, cloudTop, sampleCloudNoise } from "./CloudscapeLayout";
 
 export const cloudWall = {
   min: [2, cloudBase, -70],
@@ -46,24 +46,6 @@ const smooth01 = (t: number) => {
 
 const bilinear = (a: number, b: number, c: number, d: number, x: number, z: number) =>
   lerp(lerp(a, b, x), lerp(c, d, x), z);
-
-function edgeNoise(data: Uint8Array, x: number, y: number, z: number, channel: number) {
-  const size = cloudNoiseSize;
-  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
-  const ax = (ix % size + size) % size, bx = (ax + 1) % size;
-  const ay = (iy % size + size) % size, by = (ay + 1) % size;
-  const az = (iz % size + size) % size, bz = (az + 1) % size;
-  const slice = (sliceY: number) => {
-    const rowA = (az * size + sliceY) * size;
-    const rowB = (bz * size + sliceY) * size;
-    return bilinear(
-      data[(rowA + ax) * 2 + channel], data[(rowA + bx) * 2 + channel],
-      data[(rowB + ax) * 2 + channel], data[(rowB + bx) * 2 + channel],
-      x - ix, z - iz,
-    );
-  };
-  return lerp(slice(ay), slice(by), y - iy) / 255;
-}
 
 function stampLobes() {
   const field = new Float32Array(width * height * depth).fill(-8);
@@ -145,13 +127,13 @@ export function bakeCloudWall(noise: Uint8Array) {
         // The curtain is a broad 3D bridge between lobes. Keep its noise
         // scale large enough that it reads as one cloud mass instead of
         // horizontal bands at the voxel slices.
-        const curtainNoise = edgeNoise(noise, wx * .055, wy * .041, wz * .055, 0);
+        const curtainNoise = sampleCloudNoise(noise, wx * .055, wy * .041, wz * .055, 0);
         const curtain = curtainX * curtainY * (.74 + curtainNoise * .26);
         const distance = Math.max(field[index], curtain * 1.35 - .32);
         if (distance <= -3.5) continue;
         field[index] = distance;
-        const broad = edgeNoise(noise, wx * .34, wy * .18, wz * .34, 0);
-        const fine = edgeNoise(noise, wx * 1.45, wy * .92, wz * 1.45, 1);
+        const broad = sampleCloudNoise(noise, wx * .34, wy * .18, wz * .34, 0);
+        const fine = sampleCloudNoise(noise, wx * 1.45, wy * .92, wz * 1.45, 1);
         const perturbation = (broad - .56) * 3.1 + (fine - .47) * 1.05;
         const density = smooth01((distance + perturbation + 1.62) / 5.1) * (.7 + .3 * broad);
         data[index * 2] = Math.round(density * 255);

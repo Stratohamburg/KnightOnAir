@@ -6,12 +6,10 @@ import {
 } from "./CloudscapeLayout";
 import { bakeCloudWall, cloudWall, cloudWallWeight, sampleCloudWall } from "./CloudWall";
 import {
-  cloudFlowGLSL, cloudFlowSpeed, cloudSelfMorphSpeed, cloudSelfShapePosition,
-  smoothCloudFlow,
-  defaultCloudWind,
+  cloudFlowGLSL, cloudMorph, cloudSelfMorphSpeed, cloudVelocity, morphWallDensity, smoothCloudFlow,
+  distantCoverageMorph, distantRoofMorph, distantVerticalMorph,
 } from "./CloudFlow";
 
-const distantFlowWeight = .44;
 const shadowSpan = 352;
 // Leave a view of the estuary while keeping the banks dense away from its opening.
 const estuaryOpening = { centerX: -8, inner: 16, outer: 36, centerZ: -13, length: 37, fade: 70, clearance: .94 };
@@ -29,49 +27,35 @@ const cloudSampling = `
   uniform sampler2D columns;
   uniform sampler3D detailNoise, wallVolume;
   uniform vec2 drift;
-  uniform float flowDistance, selfMorphSpeed, selfStrength, detailStrength;
+  uniform float detailStrength;
   uniform vec3 playerPosition, playerVelocity;
   uniform float playerRadius, wakeStrength;
   uniform vec3 sunDirection;
 
   ${cloudFlowGLSL}
 
-  // Blend fixed samples to morph the volume without scrolling its noise
-  // coordinates. This keeps the cloud anchored in world space while still
-  // allowing the interior to breathe in calm air.
-  vec2 sampleSelfNoise(vec3 at) {
-    vec2 base = texture(detailNoise, at).rg;
-    vec2 alternate = texture(detailNoise, at + vec3(.37, .17, .53)).rg;
-    float phase = .5 + .5 * sin(selfTime * .37 + dot(at, vec3(.011, .017, .013)));
-    return mix(base, alternate, phase * .32);
-  }
-
   // RGB stores density and the density-weighted ambient and direct light.
-  vec3 sampleDistantCloud(vec3 at) {
+  vec3 sampleDistantCloud(vec3 at, vec2 morph) {
     vec2 cell = at.xz / ${cloudMapSpan.toFixed(1)} + .5;
     if (any(greaterThan(abs(cell - .5), vec2(.499)))) return vec3(0.);
     vec4 column = texture2D(columns, cell);
     if (column.b < .22) return vec3(0.);
-    float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r);
+    float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r) + morph.x * ${distantVerticalMorph};
     float ceilingY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.g);
-    if (at.y < floorY - 3. || at.y > ceilingY + 4.) return vec3(0.);
+    if (at.y < floorY - 3. || at.y > ceilingY + 12.) return vec3(0.);
     vec3 noiseAt = vec3(at.x, at.y * 1.22, at.z) * .045;
     vec2 detail = texture(detailNoise, noiseAt).rg;
-    vec3 morphAt = vec3(at.x * .018, at.y * .031, at.z * .018);
-    vec2 morph = sampleSelfNoise(morphAt);
     float erode = (detail.x - .54) * 7. +
-      (detail.y - .4) * 2.6 * detailStrength +
-      (morph.y - .5) * 1.8 * selfStrength;
-    float roof = ceilingY + erode;
+      (detail.y - .4) * 2.6 * detailStrength;
+    float roof = ceilingY + erode + morph.x * ${distantVerticalMorph} + morph.y * ${distantRoofMorph};
     float height = (at.y - floorY) / max(roof - floorY, 1.);
     float coverage = smoothstep(
       .25, .63,
-      column.b + erode * .024 + (morph.x - .5) * .16 * selfStrength
+      column.b + erode * .024 + morph.y * ${distantCoverageMorph}
     );
     float verticalFade = smoothstep(-3., 6., at.y - floorY) *
       (1. - smoothstep(-5.0, 2.2, at.y - roof));
-    float density = coverage * verticalFade * mix(.56, 1.04, detail.x) *
-      mix(.86, 1.14, morph.x * selfStrength);
+    float density = coverage * verticalFade * mix(.56, 1.04, detail.x);
     if (density < .004) return vec3(0.);
     float ambient = smoothstep(.02, .95, height);
     float sunwardDensity = texture(detailNoise, noiseAt + sunDirection * .073).r;
@@ -111,21 +95,18 @@ const cloudSampling = `
     vec2 fade = smoothstep(vec2(0.), vec2(${cloudWall.edgeFade.map(value => value.toFixed(1)).join(", ")}), edge);
     float lod = 1. - smoothstep(${cloudWall.detailDistance[0].toFixed(1)}, ${cloudWall.detailDistance[1].toFixed(1)}, distance);
     float wallWeight = fade.x * fade.y * lod;
-    vec3 flowing = cloudSelfShapePosition(advected);
-    vec3 distant = wallWeight < 1. ? sampleDistantCloud(mix(advected, flowing, ${distantFlowWeight})) : vec3(0.);
+    vec2 morph = cloudMorph(advected);
+    vec3 distant = wallWeight < 1. ? sampleDistantCloud(advected, morph) : vec3(0.);
     float interaction = clamp(1. - bodyInfluence * .98 - wakeInfluence * .42, .025, 1.);
     if (wallWeight <= 0.) return distant * interaction;
-    vec3 wallUv = (flowing - wallMin) / (wallMax - wallMin);
+    vec3 wallUv = (advected - vec3(0., morph.x, 0.) - wallMin) / (wallMax - wallMin);
     vec3 wallStep = vec3(.014, .018, .014);
     vec2 voxel = texture(wallVolume, wallUv).rg * .46;
     voxel += texture(wallVolume, clamp(wallUv + vec3(wallStep.x, 0., 0.), 0., 1.)).rg * .135;
     voxel += texture(wallVolume, clamp(wallUv - vec3(wallStep.x, 0., 0.), 0., 1.)).rg * .135;
     voxel += texture(wallVolume, clamp(wallUv + vec3(0., wallStep.y, 0.), 0., 1.)).rg * .135;
     voxel += texture(wallVolume, clamp(wallUv - vec3(0., wallStep.y, 0.), 0., 1.)).rg * .135;
-    vec3 wallMorphAt = flowing * .021;
-    vec2 wallMorph = sampleSelfNoise(wallMorphAt);
-    voxel.r = clamp(voxel.r * mix(.88, 1.12, wallMorph.x * selfStrength) +
-      (wallMorph.y - .5) * .08 * selfStrength, 0., 1.);
+    voxel.r = morphWallDensity(voxel.r, morph.y);
     float sunDepth = voxel.g * ${cloudWall.maxOpticalDepth.toFixed(1)};
     float sunlight = exp(-sunDepth * 1.55);
     float skylight = mix(.22, .58, smoothstep(20., 66., at.y)) * exp(-sunDepth * .22);
@@ -299,6 +280,7 @@ export const cloudShadowGLSL = `
 export class Cloudscape {
   private readonly map: Uint8Array;
   private readonly columns: THREE.DataTexture;
+  private readonly noise: Uint8Array;
   private readonly detail: THREE.Data3DTexture;
   private readonly wallData: Uint8Array;
   private readonly wallVolume: THREE.Data3DTexture;
@@ -317,8 +299,8 @@ export class Cloudscape {
   private readonly march: THREE.ShaderMaterial;
   private readonly shadowPass: THREE.ShaderMaterial;
   private readonly shadowMap = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
-  private shadowTime = Number.NEGATIVE_INFINITY;
-  private shadowDirection = new THREE.Vector2();
+  private shadowMorphTime = Number.NEGATIVE_INFINITY;
+  private readonly shadowDrift = new THREE.Vector2();
   private readonly composite: THREE.ShaderMaterial;
 
   readonly shadowUniforms;
@@ -326,12 +308,9 @@ export class Cloudscape {
   height = 1;
   cameraDensity = 0;
   private enabled = true;
-  private flowDistance = 0;
   private selfTime = 0;
-  private flowX: number = defaultCloudWind[0];
-  private flowZ: number = defaultCloudWind[1];
-  private flowSpeed = cloudFlowSpeed(this.flowX, this.flowZ, 0);
-  private selfMorphSpeed = cloudSelfMorphSpeed(this.flowX, this.flowZ, 0);
+  private velocity = { x: 0, z: 0 };
+  private selfMorphSpeed = cloudSelfMorphSpeed(0, 0, 0);
   private selfStrength = .72;
 
   constructor(renderer: THREE.WebGLRenderer, seed: number) {
@@ -339,13 +318,13 @@ export class Cloudscape {
     this.columns = new THREE.DataTexture(this.map, cloudMapSize, cloudMapSize);
     this.columns.minFilter = this.columns.magFilter = THREE.LinearFilter;
     this.columns.needsUpdate = true;
-    const noise = bakeCloudNoise(seed);
-    this.detail = new THREE.Data3DTexture(noise, cloudNoiseSize, cloudNoiseSize, cloudNoiseSize);
+    this.noise = bakeCloudNoise(seed);
+    this.detail = new THREE.Data3DTexture(this.noise, cloudNoiseSize, cloudNoiseSize, cloudNoiseSize);
     this.detail.format = THREE.RGFormat;
     this.detail.minFilter = this.detail.magFilter = THREE.LinearFilter;
     this.detail.wrapR = this.detail.wrapS = this.detail.wrapT = THREE.RepeatWrapping;
     this.detail.needsUpdate = true;
-    this.wallData = bakeCloudWall(noise);
+    this.wallData = bakeCloudWall(this.noise);
     this.wallVolume = new THREE.Data3DTexture(this.wallData, ...cloudWall.size);
     this.wallVolume.format = THREE.RGFormat;
     this.wallVolume.minFilter = this.wallVolume.magFilter = THREE.LinearFilter;
@@ -369,12 +348,8 @@ export class Cloudscape {
         inverseProjection: { value: new THREE.Matrix4() },
         cameraWorld: { value: new THREE.Matrix4() },
         drift: { value: this.drift },
-        flowDistance: { value: 0 },
-        flowSpeed: { value: this.flowSpeed },
         selfTime: { value: 0 },
-        selfMorphSpeed: { value: this.selfMorphSpeed },
         selfStrength: { value: this.selfStrength },
-        flowDirection: { value: new THREE.Vector2(this.flowX, this.flowZ) },
         playerPosition: { value: new THREE.Vector3() },
         playerVelocity: { value: new THREE.Vector3() },
         playerRadius: { value: 2.5 },
@@ -435,20 +410,9 @@ export class Cloudscape {
     enabled: boolean,
   ) {
     this.enabled = enabled;
-    const length = Math.hypot(windX, windZ);
-    if (length > .001) {
-      const targetX = windX / length, targetZ = windZ / length;
-      this.flowX = smoothCloudFlow(this.flowX, targetX, sceneDelta);
-      this.flowZ = smoothCloudFlow(this.flowZ, targetZ, sceneDelta);
-      const directionLength = Math.hypot(this.flowX, this.flowZ);
-      this.flowX /= directionLength;
-      this.flowZ /= directionLength;
-    }
-    this.flowSpeed = smoothCloudFlow(
-      this.flowSpeed,
-      cloudFlowSpeed(windX, windZ, gust),
-      sceneDelta,
-    );
+    this.velocity = cloudVelocity(windX, windZ, gust);
+    this.drift.x += this.velocity.x * sceneDelta;
+    this.drift.y += this.velocity.z * sceneDelta;
     this.selfMorphSpeed = smoothCloudFlow(
       this.selfMorphSpeed,
       cloudSelfMorphSpeed(windX, windZ, gust),
@@ -460,15 +424,7 @@ export class Cloudscape {
       sceneDelta,
     );
     this.selfTime += sceneDelta * this.selfMorphSpeed;
-    this.flowDistance += sceneDelta * this.flowSpeed;
-    this.drift.set(
-      this.flowX * this.flowDistance * .42,
-      this.flowZ * this.flowDistance * .42,
-    );
-    this.march.uniforms.flowDistance.value = this.flowDistance;
-    this.march.uniforms.flowSpeed.value = this.flowSpeed;
     this.march.uniforms.selfTime.value = this.selfTime;
-    this.march.uniforms.selfMorphSpeed.value = this.selfMorphSpeed;
     this.march.uniforms.selfStrength.value = this.selfStrength;
     this.march.uniforms.playerPosition.value.set(playerX, playerY, playerZ);
     this.march.uniforms.playerVelocity.value.set(playerVelocityX, 0, playerVelocityZ);
@@ -478,8 +434,7 @@ export class Cloudscape {
       .55,
       1.25,
     );
-    this.march.uniforms.flowDirection.value.set(this.flowX, this.flowZ);
-    if (!enabled) this.shadowTime = Number.NEGATIVE_INFINITY;
+    if (!enabled) this.shadowMorphTime = Number.NEGATIVE_INFINITY;
     this.cameraDensity = enabled ? this.density(camera.x, camera.y, camera.z, 0) : 0;
   }
 
@@ -487,30 +442,27 @@ export class Cloudscape {
     if (y <= cloudBase || y >= cloudTop) return 0;
     const cloudX = x - this.drift.x, cloudZ = z - this.drift.y;
     const weight = cloudWallWeight(cloudX, cloudZ, distance);
-    const flowing = cloudSelfShapePosition(cloudX, y, cloudZ, this.selfTime);
+    const { lift, pulse } = cloudMorph(this.noise, cloudX, y, cloudZ, this.selfTime, this.selfStrength);
     const distant = weight < 1 ? estimateCloudDensity(
-      this.map,
-      THREE.MathUtils.lerp(cloudX, flowing.x, distantFlowWeight),
-      THREE.MathUtils.lerp(y, flowing.y, distantFlowWeight),
-      THREE.MathUtils.lerp(cloudZ, flowing.z, distantFlowWeight),
+      this.map, cloudX, y - lift * distantVerticalMorph, cloudZ,
+      pulse * distantRoofMorph, pulse * distantCoverageMorph,
     ) : 0;
-    const density = weight > 0
-      ? distant * (1 - weight) + sampleCloudWall(this.wallData, flowing.x, flowing.y, flowing.z) * weight
-      : distant;
+    const wall = weight > 0 ? sampleCloudWall(this.wallData, cloudX, y - lift, cloudZ) : 0;
+    const density = THREE.MathUtils.lerp(distant, morphWallDensity(wall, pulse), weight);
     const opening = estuaryOpening;
-    const across = 1 - THREE.MathUtils.smoothstep(Math.abs(cloudX - opening.centerX), opening.inner, opening.outer);
-    const along = 1 - THREE.MathUtils.smoothstep(Math.abs(cloudZ - opening.centerZ), opening.length, opening.fade);
+    const across = 1 - THREE.MathUtils.smoothstep(Math.abs(x - opening.centerX), opening.inner, opening.outer);
+    const along = 1 - THREE.MathUtils.smoothstep(Math.abs(z - opening.centerZ), opening.length, opening.fade);
     return density * (1 - opening.clearance * across * along);
   }
 
   get flow() {
+    const speed = Math.hypot(this.velocity.x, this.velocity.z);
     return {
-      x: this.flowX,
-      z: this.flowZ,
-      speed: this.flowSpeed,
-      distance: this.flowDistance,
+      x: speed > 0 ? this.velocity.x / speed : 0,
+      z: speed > 0 ? this.velocity.z / speed : 0,
+      speed,
+      drift: this.drift.toArray(),
       selfTime: this.selfTime,
-      selfSpeed: this.selfMorphSpeed,
     };
   }
 
@@ -537,12 +489,12 @@ export class Cloudscape {
       const z = Math.round(camera.position.z / texel) * texel;
       const center = this.shadowUniforms.cloudShadowCenter.value;
       if (this.shadowMap.width !== size || center.x !== x || center.y !== z ||
-        this.flowDistance - this.shadowTime >= .3 ||
-        this.shadowDirection.distanceToSquared(this.march.uniforms.flowDirection.value) >= .012) {
+        this.selfTime - this.shadowMorphTime >= .24 ||
+        this.shadowDrift.distanceToSquared(this.drift) >= .16 ** 2) {
         this.shadowMap.setSize(size, size);
         center.set(x, z);
-        this.shadowTime = this.flowDistance;
-        this.shadowDirection.set(this.flowX, this.flowZ);
+        this.shadowMorphTime = this.selfTime;
+        this.shadowDrift.copy(this.drift);
         this.march.uniforms.detailStrength.value = QUALITIES[quality].cloud.detail;
         renderer.setRenderTarget(this.shadowMap);
         renderer.render(this.shadowScene, this.camera);

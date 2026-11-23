@@ -631,24 +631,31 @@ export class World {
     return enemy;
   }
 
-  startShowroomDemo() {
-    this.projectiles.clear();
-    this.bombs.length = 0;
-    this.fires.length = 0;
-    this.enemies.length = 0;
-    for (let i = this.actors.length - 1; i > 0; i--) this.actors.splice(i, 1);
-    this.spawnEnemy("hunter", this.player.x, this.player.z + 14);
-    this.spawnEnemy("hunter", this.player.x - 7, this.player.z + 19);
-    const surfaceKind = ERAS[this.era].surface[0];
-    if (surfaceKind) this.spawnEnemy(surfaceKind, this.player.x + 6, this.player.z + 18);
-    const waterKind = ERAS[this.era].surface.find((kind) => {
-      const profile = npcProfileById(kind, this.era);
-      return profile && combatantById(profile.combatantId)?.layer === "water";
-    });
-    if (waterKind) this.spawnEnemy(waterKind, this.player.x - 8, this.player.z + 24);
-    this.phase = "battle";
-    this.clock.timeScale = 1;
-    this.clock.accumulator = 0;
+  previewFire() {
+    for (const weapon of this.player.weapons) {
+      const part = this.player.parts.find((candidate) => candidate.id === weapon.partId);
+      if (!part || part.health <= 0 || part.destroyed || part.state === "disabled") continue;
+      for (let index = 0; index < weapon.config.count; index++) {
+        const muzzle = this.weaponMuzzle(this.player, weapon, index);
+        if (!muzzle) continue;
+        this.emit({
+          type: "weapon_fired",
+          time: this.elapsed,
+          owner: "player",
+          entityId: this.player.id,
+          anchorId: weapon.anchorId,
+          snapshot: {
+            position: { x: muzzle.x, y: muzzle.y, z: muzzle.z },
+            direction: muzzle.direction,
+            heading: weapon.heading,
+            bank: this.player.bank,
+            velocity: muzzle.velocity,
+            damageType: weapon.config.explosion > 0 || weapon.config.homing > 0 ? "explosive" : "kinetic",
+            weaponId: weapon.config.id,
+          },
+        });
+      }
+    }
   }
 
   spawnReplayOpponent(frame: Airframe, controller: NetworkController, x: number, z: number) {

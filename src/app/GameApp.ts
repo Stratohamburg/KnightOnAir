@@ -4,7 +4,6 @@ import { combatantById } from "../data/combatants";
 import { QUALITIES, type Quality } from "../data/config";
 import { upgradeById, type Upgrade } from "../data/upgrades";
 import type { Stats } from "../simulation/types";
-import { NO_INPUT } from "../simulation/types";
 import { WEAPONS } from "../data/weapons";
 import { World, requiredXp } from "../simulation/World";
 import { Renderer } from "../rendering/Renderer";
@@ -20,7 +19,7 @@ import { button, dialog } from "../content/2d/components";
 import type { ThreatView } from "../content/2d/combatHints";
 
 type Tab = "sortie" | "equipment" | "shop" | "reservedA" | "showroom";
-type Modal = "" | "settings" | "help" | "pause" | "upgrade";
+type Modal = "" | "settings" | "help" | "pause" | "upgrade" | "showroomAircraft";
 const tabs: { id: Tab; name: string; icon: string }[] = [
   { id: "shop", name: "商店", icon: "crate" },
   { id: "equipment", name: "装备", icon: "wrench" },
@@ -45,8 +44,6 @@ export class GameApp {
   private displayWorld: World;
   private showroom?: World;
   private showroomBuild: string[] = [];
-  private showroomDemoTime = 0;
-  private showroomBombTriggered = false;
   private showroomPointer?: { id: number; x: number; y: number };
   private showroomOrbitYaw = 0;
   private showroomOrbitPitch = 0.14;
@@ -150,8 +147,6 @@ export class GameApp {
       this.showroom.dispose();
       this.showroom = undefined;
       this.showroomBuild = [];
-      this.showroomDemoTime = 0;
-      this.showroomBombTriggered = false;
     }
     this.tab = tab;
     this.highlight = "";
@@ -273,8 +268,6 @@ export class GameApp {
     const frame = frameId ? airframeById(frameId) : this.showroom?.player.frame ?? airframeById(this.save.data.equipped);
     this.showroom?.dispose();
     this.showroomBuild = [...build];
-    this.showroomDemoTime = 0;
-    this.showroomBombTriggered = false;
     this.showroom = new World(frame, 1, { director: false, supply: false, showroom: true });
     for (const id of this.showroomBuild) {
       const upgrade = upgradeById(id);
@@ -289,11 +282,18 @@ export class GameApp {
     const weaponCount = world.player.weapons.reduce((total, weapon) => total + weapon.config.count, 0);
     const selected = this.showroomBuild.map((id, index) =>
       `<li><span>${String(index + 1).padStart(2, "0")}</span>${upgradeById(id)?.name ?? id}</li>`).join("");
-    const aircrafts = AIRFRAMES.map((candidate, index) =>
-      `<button class="showroom-aircraft ${candidate.id === frame.id ? "selected" : ""}" data-preview="${index}">${candidate.name}<small>${ERAS[eraOf(candidate)].label}</small></button>`).join("");
     const cards = options.map((upgrade) =>
       `<button class="upgrade-card showroom-upgrade-card ${upgrade.rarity}" data-showroom-upgrade="${upgrade.id}">${planePreview(upgrade.preview)}<div><span class="upgrade-rarity">${upgrade.rarity === "common" ? "标准" : upgrade.rarity === "rare" ? "稀有" : "史诗"} / ${upgrade.tag}</span><h3>${upgrade.name}</h3><p class="upgrade-gain">${upgrade.benefit}</p><p class="upgrade-delta">${this.upgradeComparison(upgrade, world)}</p><small>${upgrade.description}</small></div>${icon("arrow")}</button>`).join("");
-    return `<section class="showroom-page"><div class="showroom-heading"><span class="eyebrow">AIRCRAFT SHOWROOM</span><h1>把构型，<br>留在眼前<span>。</span></h1><p>拖动上方机体环绕观察，按顺序试装卡牌，再用固定步进试射。</p></div><div class="showroom-toolbar"><span>${frame.name}</span><span>部件 ${world.player.parts.length} · 炮位 ${world.player.weapons.length} · 枪管 ${weaponCount}</span></div><div class="showroom-build"><div><span class="eyebrow">ORDERED BUILD</span><ol>${selected || "<li class=empty-build>原装构型</li>"}</ol></div><div class="showroom-actions"><button class="secondary" data-action="showroom-undo" ${this.showroomBuild.length ? "" : "disabled"}>撤销</button><button class="secondary" data-action="showroom-reset" ${this.showroomBuild.length ? "" : "disabled"}>重置</button><button class="primary" data-action="showroom-fire">开火 ${icon("target")}</button></div></div><div class="showroom-aircraft-list" aria-label="展厅机型">${aircrafts}</div><div class="showroom-card-list"><span class="eyebrow">LEGAL REFITS · ${options.length}</span>${cards || "<p class=empty-build>当前构型没有更多合法卡牌。</p>"}</div><button class="text-button showroom-return" data-tab="sortie">返回出击 ${icon("arrow")}</button></section>`;
+    return `<section class="showroom-page"><div class="showroom-stage"><div class="showroom-stage-caption"><span class="eyebrow">AIRCRAFT SHOWROOM</span><strong>${frame.name}</strong><small>拖动展示区环绕观察</small></div><div class="showroom-stage-stats">部件 ${world.player.parts.length} · 炮位 ${world.player.weapons.length} · 枪管 ${weaponCount}</div></div><section class="showroom-controls"><div class="showroom-active"><div><span class="eyebrow">当前生效构型</span><ol>${selected || "<li class=empty-build>原装构型</li>"}</ol></div><div class="showroom-actions"><button class="secondary" data-action="showroom-aircraft">切换机体</button><button class="secondary" data-action="showroom-undo" ${this.showroomBuild.length ? "" : "disabled"}>撤销</button><button class="secondary" data-action="showroom-reset" ${this.showroomBuild.length ? "" : "disabled"}>重置</button><button class="primary" data-action="showroom-fire">试射 ${icon("target")}</button></div></div><div class="showroom-card-list"><span class="eyebrow">可用强化 · ${options.length}</span>${cards || "<p class=empty-build>当前构型没有更多合法卡牌。</p>"}</div><button class="text-button showroom-return" data-tab="sortie">返回出击 ${icon("arrow")}</button></section></section>`;
+  }
+  private showShowroomAircraftPicker() {
+    this.showroomPointer = undefined;
+    this.modal = "showroomAircraft";
+    const current = this.showroom?.player.frame.id;
+    const choices = AIRFRAMES.map((candidate, index) =>
+      `<button class="showroom-aircraft ${candidate.id === current ? "selected" : ""}" data-preview="${index}">${candidate.name}<small>${ERAS[eraOf(candidate)].label}</small></button>`).join("");
+    this.overlays.innerHTML = dialog("选择展厅机体", `<div class="modal-heading"><span class="eyebrow">AIRCRAFT ROSTER</span><h2>选择机体</h2><p>只改变展厅预览，当前出击装备保持不变。</p></div><div class="showroom-aircraft-picker">${choices}</div>${button("close-modal", "返回展厅", "secondary")}`, "showroom-aircraft-modal");
+    this.ui.setAttribute("inert", "");
   }
   private onShowroomPointerDown(e: PointerEvent) {
     const target = e.target as HTMLElement;
@@ -530,7 +530,7 @@ export class GameApp {
       content = `<div class="pause-emblem">${icon("pause")}</div><div class="modal-heading"><span class="eyebrow">TAKE A BREATH</span><h2>航线已为你保留。</h2><p>战斗、弹道与风场已暂停。</p></div>${button("resume", `继续飞行 ${icon("play")}`, "primary")}${button("settings", `飞行设置 ${icon("gear")}`, "secondary")}${button("retreat", "结束本次飞行并结算", "text-button retreat-button")}`;
     if (kind === "upgrade" && this.world)
       content = `<div class="modal-heading"><span class="eyebrow">FIELD MODIFICATION / LV.${this.world.level}</span><h2>为下一段航线改装<span>。</span></h2><p>选择一个部件 · 战斗已暂停 · 可用 ${this.world.upgradesAvailable} 次</p></div><div class="upgrade-choices">${this.world.choices.map((u) => `<button class="upgrade-card ${u.rarity}" data-upgrade="${u.id}">${planePreview(u.preview)}<div><span class="upgrade-rarity">${u.rarity === "common" ? "标准" : u.rarity === "rare" ? "稀有" : "史诗"} / ${u.tag}</span><h3>${u.name}</h3><p class="upgrade-gain">${u.benefit}</p><p class="upgrade-cost">${u.cost}</p><p class="upgrade-delta">${this.upgradeComparison(u)}</p><small>${u.description}</small></div>${icon("arrow")}</button>`).join("")}</div>`;
-    const label = { settings: "飞行设置", help: "飞行指南", pause: "暂停游戏", upgrade: "选择升级" }[kind];
+    const label = { settings: "飞行设置", help: "飞行指南", pause: "暂停游戏", upgrade: "选择升级", showroomAircraft: "选择展厅机体" }[kind] ?? "页面";
     const close = kind === "settings" || kind === "help"
       ? button("close-modal", icon("close"), "icon-button modal-close", 'aria-label="关闭"')
       : "";
@@ -604,6 +604,11 @@ export class GameApp {
     }
     if (el.dataset.preview) {
       this.browse(Number(el.dataset.preview));
+      if (this.modal === "showroomAircraft") {
+        this.modal = "";
+        this.overlays.innerHTML = "";
+        this.ui.removeAttribute("inert");
+      }
       return;
     }
     if (el.dataset.part) {
@@ -693,12 +698,11 @@ export class GameApp {
       case "reload":
         location.reload();
         break;
+      case "showroom-aircraft":
+        this.showShowroomAircraftPicker();
+        break;
       case "showroom-fire":
-        if (this.showroom) {
-          this.showroom.startShowroomDemo();
-          this.showroomDemoTime = 8;
-          this.showroomBombTriggered = false;
-        }
+        this.showroom?.previewFire();
         break;
       case "showroom-undo":
         if (this.showroomBuild.length) {
@@ -811,19 +815,6 @@ export class GameApp {
         if (!previewWorld) p.z +=
           (this.screen === "launching" ? 8 + this.launchTime * 20 : 2) * dt;
         if (this.screen === "launching") this.launchTime += dt;
-        if (previewWorld && this.showroomDemoTime > 0) {
-          if (!this.showroomBombTriggered && this.showroomDemoTime <= 5 && previewWorld.bombWeapon) {
-            previewWorld.toggleBombing();
-            previewWorld.aim.x = p.x + Math.sin(p.heading) * 8;
-            previewWorld.aim.z = p.z + Math.cos(p.heading) * 8;
-            previewWorld.stability = 1;
-            previewWorld.dropBomb();
-            previewWorld.toggleBombing();
-            this.showroomBombTriggered = true;
-          }
-          previewWorld.frame(dt, NO_INPUT);
-          this.showroomDemoTime = Math.max(0, this.showroomDemoTime - dt);
-        }
         const events = previewWorld?.consumeEvents();
         this.renderer?.render(previewWorld, dt, {
           display: true,

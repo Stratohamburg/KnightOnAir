@@ -9,6 +9,8 @@ export interface CloudDiagnostics {
   cameraDensity: number;
   windDirection: [number, number];
   windSpeed: number;
+  drift: [number, number];
+  morphTime: number;
 }
 
 export const cloudDiagnostics = new WeakMap<object, CloudDiagnostics>();

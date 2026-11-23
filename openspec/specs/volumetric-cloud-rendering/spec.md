@@ -92,7 +92,7 @@
 #### Scenario: Calm cloud keeps breathing
 
 - **WHEN** 模拟风速接近零且世界时钟继续运行
-- **THEN** 云瓣覆盖和边缘密度缓慢变化，云场保持空间位置稳定，不出现突然跳跃或快速横向漂移
+- **THEN** 相邻云瓣可分别鼓起和收缩，边缘密度与高度缓慢变化，云场的水平位移在零风速下保持固定
 
 #### Scenario: Wind accelerates cloud morphing
 
@@ -122,6 +122,16 @@
 
 - **WHEN** 模拟风向、风速或阵风发生变化
 - **THEN** 云形推进使用对应的风向与强度，云影和遮挡判断跟随同一流动状态
+
+#### Scenario: Turning wind preserves accumulated displacement
+
+- **WHEN** 云场已随风移动一段距离，随后风向转为正交或反向
+- **THEN** 下一步位移从当前世界位置沿新的风速向量推进，已经累积的位移保持原值
+
+#### Scenario: No wind source keeps cloud drift stationary
+
+- **WHEN** 渲染没有接入风场的预览，或者采样点的风速向量为零
+- **THEN** 云场保持当前的水平位移，局部形变继续随场景时钟推进
 
 #### Scenario: Pause freezes cloud animation
 

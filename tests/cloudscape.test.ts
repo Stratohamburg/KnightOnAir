@@ -1,9 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { Vector3, type WebGLRenderer } from "three";
 import { QUALITIES } from "../src/data/config";
-import {
-  cloudFlowAdvance, cloudFlowPosition, cloudFlowSpeed, cloudSelfMorphSpeed,
-  smoothCloudFlow,
-} from "../src/rendering/CloudFlow";
+import { cloudMorph, cloudSelfMorphSpeed, cloudVelocity, morphWallDensity } from "../src/rendering/CloudFlow";
+import { Cloudscape } from "../src/rendering/Cloudscape";
 import { bakeCloudWall, cloudWallWeight, sampleCloudWall } from "../src/rendering/CloudWall";
 import {
   bakeCloudMap, bakeCloudNoise, cloudBase, cloudMapSize, cloudNoiseSize, cloudTop,
@@ -78,25 +77,55 @@ describe("coastal cloudscape", () => {
     expect(QUALITIES.high.cloud.samples).toBeLessThanOrEqual(24);
   });
 
-  it("uses wind direction and magnitude for cloud flow", () => {
-    const east = cloudFlowPosition(12, 38, -7, 16, 1, 0);
-    const north = cloudFlowPosition(12, 38, -7, 16, 0, 1);
-    expect(east).not.toEqual(north);
-    expect(cloudFlowSpeed(0.8, 0, 0)).toBeGreaterThan(cloudFlowSpeed(0.2, 0, 0));
-    expect(cloudFlowSpeed(0, 0, 0)).toBe(0);
-    expect(cloudFlowSpeed(0.2, 0, 1.1)).toBeGreaterThan(cloudFlowSpeed(0.2, 0, 0));
-    expect(cloudSelfMorphSpeed(0, 0, 0)).toBeGreaterThan(0);
+  it("integrates the wind vector without rotating past cloud displacement", () => {
+    const renderer = { extensions: { has: () => false } } as unknown as WebGLRenderer;
+    const clouds = new Cloudscape(renderer, 491);
+    const camera = new Vector3(16, 38, -30);
+    const advance = (dt: number, x: number, z: number, gust = 0) =>
+      clouds.update(dt, x, z, gust, camera, 0, 24, 0, 0, 0, true);
+
+    try {
+      advance(60, 1, 0);
+      const east = clouds.flow.drift[0];
+      advance(.25, 0, 1);
+      const north = clouds.flow.drift[1];
+      expect(clouds.flow.drift[0]).toBe(east);
+      expect(north).toBeCloseTo(cloudVelocity(0, 1, 0).z * .25);
+      expect(north).toBeGreaterThan(0);
+      advance(.25, -1, 0);
+      const afterTurn = clouds.flow.drift;
+      expect(afterTurn[0]).toBeCloseTo(east - north);
+      expect(afterTurn[1]).toBe(north);
+
+      const afterTurnTime = clouds.flow.selfTime;
+      advance(2, 0, 0, 1);
+      expect(clouds.flow.drift).toEqual(afterTurn);
+      expect(clouds.flow.selfTime).toBeGreaterThan(afterTurnTime);
+      const pausedTime = clouds.flow.selfTime;
+      advance(0, 1, 1, 1);
+      expect(clouds.flow.drift).toEqual(afterTurn);
+      expect(clouds.flow.selfTime).toBe(pausedTime);
+    } finally {
+      clouds.dispose();
+    }
+  });
+
+  it("changes local cloud density and lift at different phases in calm air", () => {
+    expect(cloudVelocity(.8, 0, 0).x).toBeGreaterThan(cloudVelocity(.2, 0, 0).x);
+    expect(cloudVelocity(.2, 0, 1.1).x).toBeGreaterThan(cloudVelocity(.2, 0, 0).x);
+    const calm = cloudSelfMorphSpeed(0, 0, 0);
+    expect(calm).toBeGreaterThan(0);
     expect(cloudSelfMorphSpeed(.8, 0, 0)).toBeGreaterThan(cloudSelfMorphSpeed(0, 0, 0));
     expect(cloudSelfMorphSpeed(.2, 0, 1.1)).toBeGreaterThan(cloudSelfMorphSpeed(.2, 0, 0));
-    expect(cloudFlowAdvance(0, 1, 0, 0)).toBe(0);
-    expect(cloudFlowAdvance(1, 1, 0, 0)).toBeCloseTo(cloudFlowSpeed(1, 0, 0));
-    const lower = cloudFlowPosition(12, 24, -7, 16, 1, 0);
-    const upper = cloudFlowPosition(12, 52, -7, 16, 1, 0);
-    expect(Math.abs(upper.x - lower.x) + Math.abs(upper.z - lower.z)).toBeGreaterThan(.01);
-    const still = cloudFlowPosition(12, 38, -7, 0, 1, 0, 0);
-    const bubbled = cloudFlowPosition(12, 38, -7, 0, 1, 0, 5);
-    expect(Math.abs(still.x - bubbled.x) + Math.abs(still.y - bubbled.y) + Math.abs(still.z - bubbled.z)).toBeGreaterThan(.01);
-    const abrupt = Math.abs(cloudFlowSpeed(1, 0, 0) - cloudFlowSpeed(.2, 0, 0));
-    expect(Math.abs(smoothCloudFlow(.5, 1, 1) - .5)).toBeLessThan(abrupt);
+
+    const noise = bakeCloudNoise(491);
+    const sample = (y: number, z: number, time: number) => cloudMorph(noise, 20, y, z, time, .72);
+    const densityChange = (y: number, z: number) =>
+      morphWallDensity(.2, sample(y, z, 3 * calm).pulse) - morphWallDensity(.2, sample(y, z, 0).pulse);
+    const changes = [-45, -30, -15, 0, 15, 30].map(z => densityChange(36, z));
+    expect(Math.max(...changes)).toBeGreaterThan(.025);
+    expect(Math.min(...changes)).toBeLessThan(-.025);
+    expect(sample(36, -30, 0).lift).not.toBeCloseTo(sample(52, -30, 0).lift);
+    expect(morphWallDensity(0, sample(36, -30, 3 * calm).pulse)).toBe(0);
   });
 });

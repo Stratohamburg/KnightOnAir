@@ -20,3 +20,8 @@
 
 - **WHEN** 玩家点击主界面底部最右侧的「展厅」，随后使用返回出击入口
 - **THEN** 应用打开飞机展厅，返回后出击页显示当前装备机体
+
+#### Scenario: Choose showroom aircraft without changing sortie equipment
+
+- **WHEN** 玩家在展厅操作区点击“切换机体”并从弹窗选择另一架机体
+- **THEN** 弹窗关闭，展示区显示所选机体的原装构型，当前出击装备、金币、解锁和战绩保持入厅前状态

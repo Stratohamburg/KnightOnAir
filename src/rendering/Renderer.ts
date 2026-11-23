@@ -121,7 +121,9 @@ export class Renderer {
         cpuMs: 0,
         rayMarchCpuMs: 0,
         cameraDensity: 0,
-        windDirection: [-0.36, 0.93295],
+        windDirection: [0, 0],
+        drift: [0, 0],
+        morphTime: 0,
         windSpeed: 0,
       });
     }
@@ -407,11 +409,11 @@ export class Renderer {
     updateVegetationWind(this.vegetationWind, this.time, wind, x, z);
     this.terrainChunks.updateTime(this.time);
     const cloudsEnabled = fixture?.clouds ?? true;
-    const cloudWind = wind?.sample(x, z) ?? { x: -0.36, z: 0.93295 };
+    const cloudWind = wind?.sample(x, z);
     this.cloudscape.update(
       sceneDt,
-      cloudWind.x,
-      cloudWind.z,
+      cloudWind?.x ?? 0,
+      cloudWind?.z ?? 0,
       wind?.gust ?? 0,
       this.camera.position,
       x,
@@ -436,12 +438,19 @@ export class Renderer {
       x, this.aircraft.group.position.y, z, this.aircraft.group.rotation.y,
       p.stats.wingspan, p.stats.length, .68, p.frame.shape === "airship",
     );
-    if (world && (options.showroom || !display)) {
+    if (world && !display) {
       this.updateBattle(world, sceneDt);
       this.effects.update(
         sceneDt, this.camera, this.quality, world.projectiles.items, world.wind, options.events,
         [world.player, ...world.enemies].map((actor) => ({ id: actor.id, pose: world.actorPose(actor), parts: actor.parts })),
         world.fires.map((zone) => ({ zone, y: world.surfaceHeight(zone.x, zone.z) + .2 })),
+      );
+    } else if (world && options.showroom) {
+      this.hideBattle(false);
+      this.effects.update(
+        sceneDt, this.camera, this.quality, [], undefined, options.events,
+        [{ id: world.player.id, pose: world.actorPose(world.player), parts: world.player.parts }],
+        [],
       );
     } else {
       this.hideBattle();
@@ -464,8 +473,11 @@ export class Renderer {
       diagnostics.resolution[1] = cloudsEnabled ? this.cloudscape.height : 0;
       diagnostics.samples = cloudsEnabled ? QUALITIES[this.quality].cloud.samples : 0;
       diagnostics.cameraDensity = this.cloudscape.cameraDensity;
-      diagnostics.windDirection = [this.cloudscape.flow.x, this.cloudscape.flow.z];
-      diagnostics.windSpeed = this.cloudscape.flow.speed;
+      const flow = this.cloudscape.flow;
+      diagnostics.windDirection = [flow.x, flow.z];
+      diagnostics.windSpeed = flow.speed;
+      diagnostics.drift = flow.drift;
+      diagnostics.morphTime = flow.selfTime;
       diagnostics.rayMarchCpuMs = cloudMarchMs;
       diagnostics.cpuMs = cloudsEnabled ? performance.now() - cloudStart : 0;
     }
@@ -637,9 +649,9 @@ export class Renderer {
       this.bombPath.computeLineDistances();
     }
   }
-  private hideBattle() {
+  private hideBattle(resetEffects = true) {
     for (const batch of this.bulletBatches) batch.count = 0;
-    this.effects.reset();
+    if (resetEffects) this.effects.reset();
     this.enemies.forEach((actor) => (actor.group.visible = false));
     this.groundMarkers.forEach((m) => (m.visible = false));
     this.bombs.forEach((m) => (m.visible = false));
