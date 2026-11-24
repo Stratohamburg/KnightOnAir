@@ -8,9 +8,9 @@ import {
   type EraId,
 } from "../data/combatants";
 import { WEAPONS, type WeaponConfig, type TargetLayer } from "../data/weapons";
-import { UPGRADES, upgradeById, type Upgrade } from "../data/upgrades";
-import { AIRFRAMES, eraOf, type Airframe } from "../data/aircrafts";
-import { ERAS } from "../data/eras";
+import { FOKKER_UPGRADES, UPGRADES, type Upgrade } from "../data/upgrades";
+import { AIRFRAMES, type Airframe } from "../data/aircrafts";
+import { ERAS, missionEraOf } from "../data/eras";
 import {
   Random,
   RAD,
@@ -41,6 +41,7 @@ import { separationTarget } from "./Separation";
 import { createDefaultRoutes, nearestRouteDistance, routeHeading, routeHeight, routePosition } from "./Routes";
 import { npcIntent, playerIntent, type NetworkController } from "./Controllers";
 import { partFromRecipe, refreshAirframeSilhouette } from "./parts";
+import { applyCenterlineLayout, defaultTopology, lineExtension, mountForPart, mountForUpgrade } from "./CenterlineLayout";
 import { legalUpgrades, refitWeaponForEra } from "./RefitRules";
 import {
   NO_INPUT,
@@ -156,6 +157,8 @@ export class World {
   private energyWasEmpty = false;
   private supplyTimer = 0;
   private supplyEnabled: boolean;
+  private layoutBaseWingspan: number;
+  private layoutBaseLength: number;
   private readonly eventQueue: WorldEvent[] = [];
   readonly events: readonly WorldEvent[] = this.eventQueue;
   notice: string;
@@ -171,7 +174,9 @@ export class World {
     seed = Date.now(),
     private options: { director?: boolean; supply?: boolean; showroom?: boolean } = {},
   ) {
-    this.era = eraOf(frame);
+    this.era = missionEraOf(frame);
+    this.layoutBaseWingspan = frame.wingspan;
+    this.layoutBaseLength = frame.length;
     this.notice = ERAS[this.era].label + " · " + ERAS[this.era].mission;
     this.supplyEnabled = options.supply ?? options.director !== false;
     this.random = new Random(seed);
@@ -218,7 +223,8 @@ export class World {
     };
     const p = this.player;
     p.parts = this.partsFromConfig(playerConfig);
-    refreshAirframeSilhouette(p.parts, p.stats.wingspan, p.stats.length, frame.engines === 4 ? .75 : .48, frame.wingCount ?? 1, frame.length);
+    refreshAirframeSilhouette(p.parts, p.stats.wingspan, p.stats.length, frame.engines === 4 ? .75 : .48, frame.wingCount ?? 1, frame.length, undefined, frame.geometryProfile);
+    this.applyPlayerCenterlineLayout();
     p.hitExtent = silhouetteExtent(p.parts);
     for (const mount of playerConfig.mounts)
       if (mount.weaponId !== frame.bomb)
@@ -265,11 +271,13 @@ export class World {
     };
   }
   private partsFromConfig(config: CombatantConfig) {
+    const frame = AIRFRAMES.find((candidate) => candidate.id === config.id);
     return config.parts.map((recipe) => {
       const part = partFromRecipe(recipe.id, {
         kind: recipe.kind ?? recipe.role,
         role: recipe.role,
         side: recipe.side,
+        parentId: recipe.parentId,
         slot: recipe.slot,
         x: recipe.x,
         y: recipe.y,
@@ -281,9 +289,48 @@ export class World {
         damageTransfer: recipe.damageTransfer,
         weight: recipe.weight,
         detachable: recipe.detachable,
+        centerline: frame ? recipe.centerline ?? mountForPart({ ...recipe, x: recipe.x ?? 0, z: recipe.z ?? 0 }, frame) : recipe.centerline,
+        engineInstallation: recipe.engineInstallation,
       });
       return part;
     });
+  }
+  private applyPlayerCenterlineLayout() {
+    const config = combatantById(this.player.configId);
+    const topology = config?.topology ?? defaultTopology(this.player.frame);
+    const wingExtension = Math.max(
+      lineExtension(this.player.parts, "left-wing-0"),
+      lineExtension(this.player.parts, "right-wing-0"),
+    ) * 2;
+    const statWingspan = Math.max(this.player.frame.wingspan, this.layoutBaseWingspan);
+    const scale = this.player.frame.wingspan > 0 ? statWingspan / this.player.frame.wingspan : 1;
+    const structuralLength = lineExtension(this.player.parts, "fuselage") + lineExtension(this.player.parts, "tail");
+    const statLength = Math.max(this.player.frame.length, this.layoutBaseLength);
+    const adjusted = {
+      ...topology,
+      centerlines: topology.centerlines.map((line) => ({
+        ...line,
+        length: line.kind === "wing" ? line.length * scale : line.kind === "fuselage" ? Math.max(line.length, statLength) : line.length,
+        nodes: line.tipStart === undefined ? line.nodes : line.nodes.map(node => ({ ...node, station: node.station * scale })),
+        origin: line.kind === "wing" ? { ...line.origin, x: line.origin.x * scale } : line.origin,
+      })),
+    };
+    applyCenterlineLayout(adjusted, this.player.parts);
+    if (this.player.frame.geometryProfile === "fokkerDr1") {
+      const extent = (side: number) => Math.max(...adjusted.centerlines
+        .filter(line => line.kind === "wing" && line.side === side)
+        .map(line => Math.abs(line.origin.x) + line.length + lineExtension(this.player.parts, line.id)));
+      this.player.stats.wingspan = extent(-1) + extent(1);
+    } else this.player.stats.wingspan = statWingspan + wingExtension;
+    this.player.stats.length = statLength + structuralLength;
+  }
+  private playerWingSpans() {
+    if (this.player.frame.geometryProfile === "fokkerDr1")
+      return { left: this.layoutBaseWingspan, right: this.layoutBaseWingspan };
+    return {
+      left: this.layoutBaseWingspan + lineExtension(this.player.parts, "left-wing-0") * 2,
+      right: this.layoutBaseWingspan + lineExtension(this.player.parts, "right-wing-0") * 2,
+    };
   }
   private addConfiguredWeapon(
     entity: Player | Enemy,
@@ -299,13 +346,14 @@ export class World {
       anchorId: mount.id,
       partId: mount.partId,
       offset: mount.offset ?? mountOffset(part, weaponConfig),
-      barrelSpacing: part.role === "turret" ? .3 : .46,
+      barrelSpacing: mount.barrelSpacing ?? (part.role === "turret" ? .3 : .46),
       cooldown: entity === this.player ? 0 : this.random.range(1.5, 3.5),
       targetId: 0,
       lockProgress: 0,
       lockLost: false,
       heading: entity.heading + mount.baseAngle,
       baseAngle: mount.baseAngle,
+      centerline: mount.centerline,
     };
     part.weaponIds = [...(part.weaponIds ?? []), weapon.config.id];
     entity.weapons.push(weapon);
@@ -342,7 +390,9 @@ export class World {
       config,
       anchorId: `${partId}:${config.id}`,
       partId,
-      offset: mountOffset(mount, config),
+      offset: this.player.frame.geometryProfile === "fokkerDr1" && mount.centerline?.insertion === "tip-before"
+        ? { x: 0, y: .21, z: .56 }
+        : mountOffset(mount, config),
       barrelSpacing: mount.role === "turret" ? .3 : .46,
       cooldown: 0,
       targetId: 0,
@@ -350,6 +400,7 @@ export class World {
       lockLost: false,
       heading: this.player.heading + baseAngle,
       baseAngle,
+      centerline: mount.centerline,
     });
   }
   get elapsed() {
@@ -681,7 +732,8 @@ export class World {
       const shape = frame
         ? { wingspan: frame.wingspan, length: frame.length, width: frame.engines === 4 ? .75 : .48, tiers: frame.wingCount ?? 1, wingLength: frame.length }
         : npcAirframeShape(config.visual.modelKey, config.era);
-      refreshAirframeSilhouette(parts, shape.wingspan, shape.length, shape.width, shape.tiers, shape.wingLength);
+      refreshAirframeSilhouette(parts, shape.wingspan, shape.length, shape.width, shape.tiers, shape.wingLength, undefined, frame?.geometryProfile ?? config.id);
+      if (frame?.geometryProfile === "fokkerDr1" && config.topology) applyCenterlineLayout(config.topology, parts);
     }
     const totalHealth = totalPartHealth(parts);
     const totalMaxHealth = totalPartMaxHealth(parts);
@@ -1499,13 +1551,7 @@ export class World {
     this.phase = "upgrade";
     this.clock.timeScale = 0;
     const p = this.player;
-    const available = legalUpgrades({
-      frame: p.frame,
-      era: this.era,
-      upgrades: p.upgrades,
-      parts: p.parts,
-      weapons: p.weapons,
-    }, UPGRADES);
+    const available = this.legalUpgradeOptions;
     const weighted = available
       .map((u) => ({
         u,
@@ -1515,7 +1561,10 @@ export class World {
       }))
       .sort((a, b) => a.weight - b.weight);
     this.choices = weighted.slice(0, 3).map((v) => v.u);
-    if (
+    if (p.frame.geometryProfile === "fokkerDr1" && p.upgrades.length === 0) {
+      const wing = weighted.find(({ u }) => u.id === "left_wing_segment" || u.id === "right_wing_segment");
+      if (wing) this.choices = [...available.filter(u => u.id === "quick_feed" || u.id === "radiator"), wing.u];
+    } else if (
       p.upgrades.length === 0 &&
       !this.choices.some((u) => ["动力", "机动"].includes(u.tag))
     ) {
@@ -1536,7 +1585,7 @@ export class World {
       upgrades: this.player.upgrades,
       parts: this.player.parts,
       weapons: this.player.weapons,
-    }, UPGRADES);
+    }, this.player.frame.geometryProfile === "fokkerDr1" ? FOKKER_UPGRADES : UPGRADES);
   }
   private refitWeapon(id: string) { return refitWeaponForEra(id, this.era); }
   private upgradeWeight(u: Upgrade) {
@@ -1560,13 +1609,13 @@ export class World {
     return w;
   }
   chooseUpgrade(id: string) {
+    const u = this.choices.find((choice) => choice.id === id);
     if (
       this.phase !== "upgrade" ||
-      !this.choices.some((u) => u.id === id) ||
+      !u ||
       this.upgradesAvailable <= 0
     )
       return false;
-    const u = upgradeById(id)!;
     this.installUpgrade(u);
     this.upgradesAvailable--;
     this.choices = [];
@@ -1595,6 +1644,9 @@ export class World {
     if (u.add)
       for (const [key, val] of Object.entries(u.add))
         p.stats[key as keyof Stats] += val;
+    this.layoutBaseWingspan += u.add?.wingspan ?? 0;
+    if (!['tail_side_bay', 'serial_bomb_bay'].includes(u.id))
+      this.layoutBaseLength += u.add?.length ?? 0;
     if (u.multiply)
       for (const [key, val] of Object.entries(u.multiply))
         p.stats[key as keyof Stats] *= val;
@@ -1637,7 +1689,16 @@ export class World {
         recipe.health,
         recipe.kind === "wing" ? 1.1 : 0.5,
       );
-      const parent = u.id === "left_wing_segment" || u.id === "right_wing_segment"
+      part.centerline = mountForUpgrade(u.id, part, p.frame, p.parts);
+      if (part.role === "engine") {
+        part.engineInstallation = p.frame.id === "stingray_16" ? "pusher" : "tractor";
+        part.centerline.axis = part.engineInstallation;
+        part.centerline.clearance = .8;
+      }
+      const terminal = p.frame.geometryProfile === "fokkerDr1" && part.centerline.insertion === "tip-before"
+        ? p.parts.find(candidate => candidate.centerline?.lineId === part.centerline!.lineId && candidate.centerline.segmentRole === "tip")
+        : undefined;
+      const parent = terminal ? p.parts.find(candidate => candidate.id === terminal.parentId) : u.id === "left_wing_segment" || u.id === "right_wing_segment"
         ? p.parts.slice().reverse().find((candidate) => candidate.slot === recipe.slot && candidate.role === "wing" && candidate.health > 0)
         : u.id === "tail_side_bay" ? p.parts.find((candidate) => candidate.id === "tail")
           : u.id === "airship_gun_gallery" ? p.parts.find((candidate) => candidate.slot === "leftWing" && candidate.role === "wing")
@@ -1647,6 +1708,7 @@ export class World {
         part.parentId = parent.id;
         part.connection = { side, x: x - parent.x, z: z - parent.z };
       }
+      if (terminal) terminal.parentId = part.id;
       part.weight = recipe.weight ?? 5;
       part.addedMass = part.weight * 10 * (p.frame.refit?.massPenalty ?? 1);
       if (part.role === "wing") part.lift = (part.lift ?? 1) * (p.frame.refit?.wing ?? 1);
@@ -1686,7 +1748,9 @@ export class World {
         part.maxHealth *= 1.1;
         part.health *= 1.1;
       }
-    refreshAirframeSilhouette(p.parts, p.stats.wingspan, p.stats.length, p.frame.engines === 4 ? .75 : .48, p.frame.wingCount ?? 1, p.frame.length);
+    this.applyPlayerCenterlineLayout();
+    refreshAirframeSilhouette(p.parts, p.stats.wingspan, p.stats.length, p.frame.engines === 4 ? .75 : .48, p.frame.wingCount ?? 1, p.frame.length, this.playerWingSpans(), p.frame.geometryProfile);
+    this.applyPlayerCenterlineLayout();
     p.hitExtent = silhouetteExtent(p.parts);
     this.syncPlayerHealth();
     p.revision++;

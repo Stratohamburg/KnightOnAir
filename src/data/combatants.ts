@@ -1,3 +1,4 @@
+import { stationZ, unit, wingSegments } from "./fokkerDr1Sheet";
 import { AIRFRAMES, eraOf, type EraId } from "./aircrafts";
 import { ENEMIES } from "./enemies";
 import { ERA_ENEMIES } from "./eraEnemies";
@@ -5,11 +6,13 @@ import { ERAS } from "./eras";
 import { WEAPONS } from "./weapons";
 import type { PartRole, Slot, ControllerIntent } from "../simulation/types";
 import type { Point3 } from "../content/3d/anchors";
+import { aircraftGeometryProfile } from "../content/3d/airframeShape";
+import { defaultTopology, mountForPart, type AircraftTopology, type CenterlineMount } from "../simulation/CenterlineLayout";
 
 export type { EraId } from "./aircrafts";
 export type Layer = "air" | "ground" | "water";
 export type BehaviorKind = "chase" | "patrol" | "intercept" | "escort" | "crossing" | "strafe" | "dive" | "standoff" | "convoy" | "static" | "flee";
-export interface CombatPartRecipe { id: string; role: PartRole; slot: Slot; side: -1 | 0 | 1; health: number; damageTransfer: number; detachable: boolean; kind?: string; x?: number; y?: number; z?: number; radius?: number; weight?: number; lift?: number; thrust?: number; }
+export interface CombatPartRecipe { id: string; parentId?: string; role: PartRole; slot: Slot; side: -1 | 0 | 1; health: number; damageTransfer: number; detachable: boolean; kind?: string; x?: number; y?: number; z?: number; radius?: number; weight?: number; lift?: number; thrust?: number; centerline?: CenterlineMount; engineInstallation?: "tractor" | "pusher"; }
 export type AirframeMotionConfig = {
   model: "air";
   mass: number;
@@ -27,8 +30,8 @@ export type AirframeMotionConfig = {
   bankLimit?: number;
 };
 export type MotionConfig = AirframeMotionConfig | { model: "ground" | "water"; mass: number; length: number; radius: number; maxSpeed: number; acceleration: number; turnRate: number; routeKinds: ("road" | "rail" | "water")[] };
-export interface MountRecipe { id: string; partId: string; weaponId: string; count: number; arc: number; baseAngle: number; targetLayers: Layer[]; offset?: Point3; overrides?: Partial<Record<string, number>>; }
-export interface CombatantConfig { id: string; name?: string; era: EraId; layer: Layer; tags: string[]; frame: MotionConfig; parts: CombatPartRecipe[]; mounts: MountRecipe[]; capabilities: { bombing: boolean; lock: boolean; boost: boolean; routeKinds: ("road" | "rail" | "water")[] }; visual: { modelKey: string; eraSkin: EraId; color: string; accent: string; scale: number }; combat: { collisionRadius: number; weaponDamage: number; fireInterval: number }; }
+export interface MountRecipe { id: string; partId: string; weaponId: string; count: number; arc: number; baseAngle: number; targetLayers: Layer[]; offset?: Point3; barrelSpacing?: number; overrides?: Partial<Record<string, number>>; centerline?: CenterlineMount; }
+export interface CombatantConfig { id: string; name?: string; era: EraId; layer: Layer; tags: string[]; frame: MotionConfig; parts: CombatPartRecipe[]; mounts: MountRecipe[]; topology?: AircraftTopology; capabilities: { bombing: boolean; lock: boolean; boost: boolean; routeKinds: ("road" | "rail" | "water")[] }; visual: { modelKey: string; eraSkin: EraId; color: string; accent: string; scale: number }; combat: { collisionRadius: number; weaponDamage: number; fireInterval: number }; }
 export interface AirAttackProfile {
   attackWindow: number;
   attackAngle: number;
@@ -58,12 +61,73 @@ const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
     parts[0].health += parts[bay].health;
     parts.splice(bay, 1);
   }
+  if (frame.geometryProfile === "fokkerDr1") {
+    // Keep total native wing health, weight and lift while giving every
+    // station an independently addressable part on its own half-wing line.
+    for (let i = parts.length - 1; i >= 0; i--) if (parts[i].role === "wing") parts.splice(i, 1);
+    for (const segment of wingSegments) {
+      const share = (segment.end - segment.start) / (segment.wing.span / 2) / 3;
+      parts.push({
+        id: segment.id, parentId: segment.parentId, role: "wing", side: segment.side,
+        slot: segment.side < 0 ? "leftWing" : "rightWing", health: frame.health * .12 * share,
+        weight: 10 * share, lift: share, damageTransfer: .5, detachable: segment.role === "tip",
+        centerline: { lineId: segment.lineId, nodeId: segment.role, layer: "structure",
+          segmentRole: segment.role === "main" ? "mount" : segment.role },
+      });
+    }
+    const gearHealth = frame.health * .04;
+    parts[0].health -= gearHealth;
+    parts.push({
+      id: "landing_gear",
+      kind: "landingGear",
+      role: "body",
+      slot: "bottom",
+      side: 0,
+      x: 0,
+      y: -55 * unit,
+      z: stationZ(42),
+      health: gearHealth,
+      damageTransfer: .4,
+      detachable: false,
+      radius: .56,
+      weight: 2,
+    });
+  }
   for (let i = 0; i < frame.engines; i++) {
-    const x = frame.engines === 1 ? 0 : (i - (frame.engines - 1) / 2) * frame.wingspan * .2;
-    parts.push({ id: `engine_${i}`, role: "engine", slot: x < 0 ? "leftWing" : x > 0 ? "rightWing" : "tail", side: x < 0 ? -1 : x > 0 ? 1 : 0, x, z: -frame.length * .2, health: frame.health * .1 / Math.max(1, frame.engines), damageTransfer: .35, detachable: false, thrust: 1 });
+    const x = frame.engines === 1
+      ? 0
+      : (i - (frame.engines - 1) / 2) * frame.wingspan * (frame.geometryProfile === "ho229" ? .32 : .2);
+    const profile = frame.geometryProfile;
+    const jet = profile === "vampire" || profile === "ho229";
+    const side = x < 0 ? -1 : x > 0 ? 1 : 0;
+    const slot: Slot = profile === "vampire" && side === 0
+      ? "center"
+      : side < 0 ? "leftWing" : side > 0 ? "rightWing" : "nose";
+    const z = profile === "fokkerDr1" ? stationZ(12) : profile === "vampire"
+      ? -frame.length * .02
+      : profile === "ho229"
+        ? frame.length * .02
+        : frame.length * .38;
+    parts.push({ id: `engine_${i}`, role: "engine", slot, side, x, z, health: frame.health * .1 / Math.max(1, frame.engines), damageTransfer: .35, detachable: false, thrust: 1, engineInstallation: jet ? "pusher" : "tractor" });
   }
   if (frame.turret) parts.push({ id: "top_turret", role: "turret", slot: "top", side: 0, health: frame.health * .08, damageTransfer: 1, detachable: false });
-  return parts;
+  const wingProfile = aircraftGeometryProfile(frame.geometryProfile)?.wing;
+  const wingRootOffset = wingProfile?.layers?.[0]?.rootOffset ?? frame.wingspan * .06;
+  const wingLineLength = Math.max(.1, frame.wingspan * .5 - wingRootOffset) * (wingProfile?.spanScale ?? 1);
+  return parts.map((part) => ({
+    ...part,
+    centerline: part.centerline ?? mountForPart(part, frame, {
+      segmentRole: part.id.endsWith("_tip") || part.id === "tail" ? "tip" : part.role === "wing" ? "root" : "mount",
+      layer: part.role === "engine" ? "engine" : part.role === "gun" || part.role === "turret" ? "weapon" : part.role === "bay" ? "payload" : "structure",
+      station: part.id.endsWith("_tip")
+        ? wingLineLength * .78
+        : frame.geometryProfile === "fokkerDr1" && part.role === "wing"
+          ? 0
+          : undefined,
+      axis: part.engineInstallation,
+      clearance: part.role === "engine" ? .8 : undefined,
+    }),
+  }));
 };
 
 const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
@@ -79,13 +143,31 @@ const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
   if (frame.missile) mounts.push({ id: "lock", partId: "nose", weaponId: "lock_missile", count: 1, arc: 26, baseAngle: 0, targetLayers: ["air"] });
   if (frame.turret) mounts.push({ id: "turret", partId: "top_turret", weaponId: "top_turret", count: 1, arc: WEAPONS.top_turret.arc, baseAngle: 0, targetLayers: ["air"] });
   if (frame.bomb) mounts.push({ id: "bomb", partId: "bay", weaponId: frame.bomb, count: 1, arc: 360, baseAngle: 0, targetLayers: WEAPONS[frame.bomb].targetLayers ?? ["ground", "water"] });
-  return mounts;
+  return mounts.map((mount) => ({
+    ...mount,
+    ...(frame.geometryProfile === "fokkerDr1" && mount.id === "primary"
+      ? { offset: { x: 0, y: .2, z: .9 }, barrelSpacing: .2 }
+      : {}),
+    centerline: mountForPart(
+      {
+        id: mount.partId,
+        kind: mount.partId === "top_turret" ? "turret" : mount.partId === "bay" ? "bombBay" : "gun",
+        role: mount.partId === "top_turret" ? "turret" : mount.partId === "bay" ? "bay" : "gun",
+        slot: mount.partId === "left_wing" ? "leftWing" : mount.partId === "right_wing" ? "rightWing" : mount.partId === "top_turret" ? "top" : mount.partId === "bay" ? "bottom" : "nose",
+        side: mount.partId === "left_wing" ? -1 : mount.partId === "right_wing" ? 1 : 0,
+        x: 0,
+        z: 0,
+      },
+      frame,
+      { layer: mount.weaponId.includes("bomb") || mount.weaponId.includes("torpedo") ? "payload" : "weapon" },
+    ),
+  }));
 };
 
 export const COMBATANT_CONFIGS: Record<string, CombatantConfig> = Object.fromEntries(AIRFRAMES.map((frame) => [frame.id, {
   id: frame.id, name: frame.name, era: eraOf(frame), layer: "air" as Layer, tags: [frame.role],
   frame: { model: "air" as const, mass: frame.mass, length: frame.length, wingspan: frame.wingspan, wingArea: frame.wingArea, maxSpeed: frame.maxSpeed, cruiseSpeed: frame.cruiseSpeed, acceleration: frame.acceleration, turnRate: frame.turnRate, energyMax: frame.energyMax, energyDrain: frame.energyDrain, energyRecover: frame.energyRecover },
-  parts: partsFor(frame), mounts: mountsFor(frame), capabilities: { bombing: Boolean(frame.bomb), lock: frame.missile, boost: true, routeKinds: [] }, visual: { modelKey: frame.id, eraSkin: eraOf(frame), color: frame.color, accent: frame.accent, scale: 1 }, combat: { collisionRadius: frame.footprint, weaponDamage: 0, fireInterval: 2 },
+  parts: partsFor(frame), mounts: mountsFor(frame), topology: defaultTopology(frame), capabilities: { bombing: Boolean(frame.bomb), lock: frame.missile, boost: true, routeKinds: [] }, visual: { modelKey: frame.id, eraSkin: eraOf(frame), color: frame.color, accent: frame.accent, scale: 1 }, combat: { collisionRadius: frame.footprint, weaponDamage: 0, fireInterval: 2 },
 }]));
 
 for (const [id, enemy] of Object.entries(ENEMIES)) {
@@ -257,6 +339,27 @@ export function validateCombatantConfig(config: CombatantConfig): ConfigDiagnost
     if (!Number.isFinite(mount.count) || mount.count < 1) errors.push(`invalid mount count ${mount.id}`);
     if ([mount.baseAngle, ...Object.values(mount.offset ?? {})].some((value) => !Number.isFinite(value)))
       errors.push(`invalid mount anchor ${mount.id}`);
+  }
+  if (config.topology) {
+    const lineIds = new Set<string>();
+    for (const line of config.topology.centerlines) {
+      if (lineIds.has(line.id)) errors.push(`duplicate centerline ${line.id}`);
+      lineIds.add(line.id);
+      if (!Number.isFinite(line.length) || line.length <= 0) errors.push(`invalid centerline length ${line.id}`);
+      if (Math.hypot(line.direction.x, line.direction.y, line.direction.z) < 1e-6) errors.push(`centerline has no direction ${line.id}`);
+      for (const node of line.nodes) {
+        if (!Number.isFinite(node.station) || Math.abs(node.station) > line.length * 1.5) errors.push(`invalid centerline node ${line.id}:${node.id}`);
+      }
+    }
+    for (const part of config.parts) {
+      if (part.centerline && !lineIds.has(part.centerline.lineId)) errors.push(`unknown part centerline ${part.id}`);
+    }
+    for (const mount of config.mounts) {
+      if (mount.centerline && !lineIds.has(mount.centerline.lineId)) errors.push(`unknown mount centerline ${mount.id}`);
+    }
+    for (const connection of config.topology.connections) {
+      if (!lineIds.has(connection.from) || !lineIds.has(connection.to)) errors.push(`unknown centerline connection ${connection.id}`);
+    }
   }
   if (config.layer === "air" && !config.parts.some((part) => (part.lift ?? 0) > 0)) errors.push("air combatant needs a lift source");
   if (config.frame.model !== config.layer) errors.push("motion model does not match layer");

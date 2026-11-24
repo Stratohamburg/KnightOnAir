@@ -1,4 +1,6 @@
-import type { EraId } from "./aircrafts";
+import { eraOf, type Airframe, type EraId } from "./aircrafts";
+
+export const missionEraOf = (frame: Airframe) => frame.missionEra ?? eraOf(frame);
 
 interface Era {
   label: string;

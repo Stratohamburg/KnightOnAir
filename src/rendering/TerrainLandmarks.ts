@@ -169,6 +169,12 @@ export class TerrainLandmarks {
     this.shadows.visible = visible;
   }
 
+  setVisible(visible: boolean) {
+    this.rocks.visible = visible;
+    this.water.visible = visible;
+    this.shadows.visible = visible;
+  }
+
   dispose() {
     for (const mesh of [this.rocks, this.water, this.shadows]) {
       this.scene.remove(mesh);

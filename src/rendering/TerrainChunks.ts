@@ -245,4 +245,13 @@ export class TerrainChunks {
     this.water.uniforms.time.value = time;
     this.landmarks.updateTime(time);
   }
+
+  setVisible(visible: boolean) {
+    for (const chunk of this.chunks.values()) {
+      chunk.mesh.visible = visible;
+      if (chunk.water) chunk.water.visible = visible;
+    }
+    for (const object of this.routeObjects) object.visible = visible;
+    this.landmarks.setVisible(visible);
+  }
 }

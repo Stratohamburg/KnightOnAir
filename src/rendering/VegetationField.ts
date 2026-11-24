@@ -198,6 +198,11 @@ export class VegetationField {
     }
   }
 
+  setVisible(visible: boolean) {
+    this.trees.visible = visible;
+    this.tufts.visible = visible;
+  }
+
   private write(mesh: typeof this.trees, plant: VegetationPlant, index: number) {
     this.transform.position.set(plant.x, plant.y, plant.z);
     this.transform.rotation.y = plant.rotation;

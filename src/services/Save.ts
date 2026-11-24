@@ -17,7 +17,7 @@ export interface SaveData {
 const defaults = (): SaveData => ({
   version: 2,
   equipped: STARTER_FRAME_ID,
-  unlocked: [STARTER_FRAME_ID],
+  unlocked: AIRFRAMES.filter((frame) => frame.unlockScore === 0).map((frame) => frame.id),
   bestScore: 0,
   bestTime: 0,
   currency: 0,

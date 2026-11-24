@@ -1,0 +1,4 @@
+interface:
+  display_name: "Aircraft Reference Pipeline"
+  short_description: "Build faithful low-poly aircraft from reference views"
+  default_prompt: "Use $aircraft-reference-pipeline to rebuild this aircraft as a modular low-poly model, preserving its identifying geometry from the reference views."

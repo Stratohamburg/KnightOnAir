@@ -47,7 +47,8 @@ export function partAnchor(part: Pick<Part, "x" | "y" | "z" | "kind">): LocalAnc
 }
 
 export function engineOutlet(part: Part): LocalAnchor {
-  return { ...partAnchor(part), z: part.z - .74, yaw: Math.PI };
+  const pusher = part.engineInstallation === "pusher";
+  return { ...partAnchor(part), z: part.z + (pusher ? .74 : -.74), yaw: pusher ? 0 : Math.PI };
 }
 
 export function mountOffset(part: Part, weapon: WeaponConfig): Point3 {

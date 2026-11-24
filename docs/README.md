@@ -27,6 +27,7 @@
 7. [程序化 3D 和 shader 表现](systems/06-procedural-3d.md)
 8. [局外 UI 和主界面系统](systems/07-meta-ui.md)
 9. [M0–M3 实现与验收记录](IMPLEMENTATION.md)
+10. [局内核心玩法与构筑](GAMEPLAY_CORE.md)
 
 ## 初版内容目录
 

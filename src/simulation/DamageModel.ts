@@ -182,7 +182,8 @@ export function applyPartDamage(
     const share = fatal ? target.health : remaining / (available.length - i);
     remaining = Math.max(0, remaining - spend(target, share));
   }
-  entity.health = totalPartHealth(entity.parts);
+  const remainingHealth = totalPartHealth(entity.parts);
+  entity.health = remainingHealth < 1e-6 ? 0 : remainingHealth;
   entity.maxHealth = totalPartMaxHealth(entity.parts);
   if (transitions.length) entity.partRevision++;
   entity.damageRevision++;

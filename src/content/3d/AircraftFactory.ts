@@ -4,12 +4,12 @@ import { partAnchor } from "./anchors";
 import { aircraftMaterial, effectMaterial } from "../../rendering/ShaderMaterials";
 import { combatantById } from "../../data/combatants";
 import { airframeById } from "../../data/aircrafts";
-import { FUSELAGE_SECTIONS, npcAirframeShape } from "./airframeShape";
+import { aircraftGeometryProfile, FUSELAGE_SECTIONS, npcAirframeShape, type AircraftGeometryProfile } from "./airframeShape";
 import { ContentCatalog, geometryKey } from "./ContentCatalog";
+import { aircraftModelBuilder } from "./aircraftModels";
 
 // Flat normals are generated from actual sections; no imported mesh or texture is used.
-export function fuselageGeometry(length: number, width = 0.48) {
-  const sections = FUSELAGE_SECTIONS;
+export function fuselageGeometry(length: number, width = 0.48, sections: readonly (readonly [number, number, number])[] = FUSELAGE_SECTIONS) {
   const vertices: number[] = [];
   const point = (s: readonly number[], a: number) => [
     Math.cos(a) * s[1] * width,
@@ -52,18 +52,17 @@ export function wingGeometry(
 }
 
 function wingVolume(p: number[][], side: number) {
-  const indices =
-    side > 0
-      ? [
-          0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 3, 7, 6, 3, 6,
-          2, 1, 2, 6, 1, 6, 5, 0, 4, 7, 0, 7, 3,
-        ]
-      : [
-          0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 5, 1, 0, 4, 5, 3, 6, 7, 3, 2,
-          6, 1, 6, 2, 1, 5, 6, 0, 7, 4, 0, 3, 7,
-        ];
-  for (let i = 0; i < indices.length; i += 3)
-    [indices[i + 1], indices[i + 2]] = [indices[i + 2], indices[i + 1]];
+  const corners = p.length / 2;
+  const indices: number[] = [];
+  const forward = side > 0;
+  for (let index = 1; index < corners - 1; index++) {
+    indices.push(0, forward ? index : index + 1, forward ? index + 1 : index);
+    indices.push(corners, forward ? corners + index + 1 : corners + index, forward ? corners + index : corners + index + 1);
+  }
+  for (let index = 0; index < corners; index++) {
+    const next = (index + 1) % corners;
+    indices.push(index, next, corners + index, next, corners + next, corners + index);
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(p.flat(), 3));
   g.setIndex(indices);
@@ -129,6 +128,7 @@ export class ProceduralAircraft {
     const config = combatantById(p.configId ?? "");
     const playerFrame = "frame" in p ? p.frame : airframeById(p.configId ?? "");
     const npc = !("frame" in p) && playerFrame.id !== p.configId;
+    const geometry: AircraftGeometryProfile | undefined = npc ? undefined : aircraftGeometryProfile(playerFrame.geometryProfile);
     const shape = npc ? npcAirframeShape(config.visual.modelKey, config.era) : undefined;
     const f = shape ? {
       ...playerFrame, color: config.visual.color, accent: config.visual.accent, era: config.era,
@@ -138,7 +138,35 @@ export class ProceduralAircraft {
     const trim = this.paint(f.accent, true),
       metal = this.paint("#46535a"),
       glass = this.paint("#29464b");
+    const handledParts = new Set<string>();
+    const dedicatedBuilder = !npc ? aircraftModelBuilder(geometry?.id) : undefined;
+    if (dedicatedBuilder && geometry) {
+      dedicatedBuilder({
+        actor: p,
+        frame: playerFrame,
+        stats: { length: s.length, wingspan: s.wingspan },
+        profile: geometry,
+        group: this.group,
+        handledParts,
+        partRoot: (part) => {
+          const existing = this.parts.get(part.id);
+          if (existing) return { root: existing, material: this.materials.get(part.id)! };
+          const root = new THREE.Group();
+          root.name = part.id;
+          this.group.add(root);
+          this.parts.set(part.id, root);
+          const material = this.paint(f.color).clone();
+          this.materials.set(part.id, material);
+          return { root, material };
+        },
+        geometry: (key, create) => this.geometry(key, create),
+        paint: (color, accent = false) => this.paint(color, accent),
+        mesh: (meshGeometry, material, parent, x = 0, y = 0, z = 0) => this.mesh(meshGeometry, material, parent, x, y, z),
+        registerPropeller: (mesh, part) => this.propellers.push({ mesh, part }),
+      });
+    }
     for (const part of p.parts) {
+      if (handledParts.has(part.id)) continue;
       const root = new THREE.Group();
       root.name = part.id;
       this.group.add(root);
@@ -147,12 +175,24 @@ export class ProceduralAircraft {
       this.materials.set(part.id, mat);
       const side = part.slot === "leftWing" ? -1 : 1;
       if (part.id === "center_body") {
-        if (f.shape === "airship") {
+        if (geometry?.layout === "flyingWing") {
+          const integrated = geometry.fuselage.construction === "integratedWing";
+          const pod = this.mesh(
+            this.geometry(geometryKey(`fuselage:${geometry.id}`, s.length * (integrated ? .24 : .28), geometry.fuselage.width), () => fuselageGeometry(s.length * (integrated ? .24 : .28), geometry.fuselage.width, geometry.fuselage.sections)),
+            mat,
+            root,
+            0,
+            .08,
+            s.length * (integrated ? .02 : .04),
+          );
+          pod.scale.set(integrated ? 1.12 : .92, integrated ? .84 : .76, 1);
+        } else if (f.shape === "airship") {
           const hull = this.mesh(this.geometry(geometryKey("icosahedron", 1, 2), () => new THREE.IcosahedronGeometry(1, 2)), mat, root, 0, s.length * .14, 0);
           hull.scale.set(shape?.width ?? s.length * .14, s.length * .15, s.length * .5);
           this.mesh(this.geometry(geometryKey("box", s.length * .10, .9, s.length * .36), () => new THREE.BoxGeometry(s.length * .10, .9, s.length * .36)), trim, root);
         } else {
-          this.mesh(this.geometry(geometryKey("fuselage", s.length, shape?.width ?? (f.engines === 4 ? .75 : .48)), () => fuselageGeometry(s.length, shape?.width ?? (f.engines === 4 ? .75 : .48))), mat, root);
+          const bodyWidth = geometry?.fuselage.width ?? shape?.width ?? (f.engines === 4 ? .75 : .48);
+          this.mesh(this.geometry(geometryKey(`fuselage:${geometry?.id ?? "default"}`, s.length, bodyWidth), () => fuselageGeometry(s.length, bodyWidth, geometry?.fuselage.sections)), mat, root);
           if (f.shape === "flyingBoat") {
             const hull = this.mesh(this.geometry(geometryKey("fuselage", s.length * .96, s.length * .11), () => fuselageGeometry(s.length * .96, s.length * .11)), trim, root, 0, -.55);
             hull.scale.y = .64;
@@ -165,9 +205,9 @@ export class ProceduralAircraft {
             root,
             0,
             0.36,
-            s.length * 0.11,
+            geometry?.fuselage.cockpitZ ?? s.length * 0.11,
           );
-          cockpit.scale.set(0.68, 0.75, 1.65);
+          cockpit.scale.set(geometry?.layout === "flyingWing" ? .58 : .68, geometry?.layout === "flyingWing" ? .6 : .75, geometry?.layout === "twinBoom" ? 1.2 : 1.65);
           const stripe = this.mesh(
             this.geometry(geometryKey("box", 0.065, 0.025, s.length * 0.3), () => new THREE.BoxGeometry(0.065, 0.025, s.length * 0.3)),
             trim,
@@ -177,6 +217,53 @@ export class ProceduralAircraft {
             -s.length * 0.12,
           );
           stripe.rotation.x = 0.05;
+          if (geometry?.layout === "twinBoom") {
+            for (const dir of [-1, 1]) {
+              const intake = this.mesh(
+                this.geometry(geometryKey("vampire-intake", .18, .22, dir), () => new THREE.BoxGeometry(.18, .22, .5)),
+                metal,
+                root,
+                dir * s.wingspan * .13,
+                .04,
+                s.length * .08,
+              );
+              intake.rotation.y = dir * .2;
+            }
+          }
+          if (geometry?.id === "spitfire") {
+            // The Mk Vb radiator fairings sit below the inner wing roots.
+            for (const dir of [-1, 1]) {
+              const radiator = this.mesh(
+                this.geometry(geometryKey("spitfire-radiator", dir), () => new THREE.BoxGeometry(.34, .16, .72)),
+                metal,
+                root,
+                dir * s.wingspan * .17,
+                -.2,
+                -.02,
+              );
+              radiator.rotation.y = dir * .08;
+            }
+          }
+          if (geometry?.id === "fokkerDr1") {
+            // The Dr.I's interplane struts are part of the airframe silhouette.
+            // They bridge the measured lower, middle and upper wing seams and
+            // keep the three layers readable in the fixed front view.
+            const strut = this.geometry(
+              geometryKey("fokker-strut", .88, .05),
+              () => new THREE.CylinderGeometry(.026, .038, .88, 6),
+            );
+            for (const dir of [-1, 1]) {
+              for (const x of [1.08, 2.45]) {
+                this.mesh(strut, trim, root, dir * x, .01, 1.78);
+              }
+            }
+            const cabane = this.geometry(
+              geometryKey("fokker-cabane", .34, .045),
+              () => new THREE.CylinderGeometry(.024, .034, .34, 6),
+            );
+            for (const dir of [-1, 1])
+              this.mesh(cabane, trim, root, dir * .22, .28, 1.86);
+          }
         }
       } else if (part.role === "wing" && part.silhouette) {
         const anchor = partAnchor(part);
@@ -194,22 +281,102 @@ export class ProceduralAircraft {
           this.mesh(this.geometry(geometryKey("box", .13, .82, .15), () => new THREE.BoxGeometry(.13, .82, .15)), metal, root, x, -.46 - anchor.y, -anchor.z);
         }
       } else if (part.id === "tail") {
-        root.position.z = -s.length * 0.34;
-        for (const dir of [-1, 1]) {
-          this.mesh(
-            this.geometry(geometryKey("wing", s.wingspan * 0.2, dir, s.length * 0.19, 0.3, 0.08), () => wingGeometry(s.wingspan * 0.2, dir, s.length * 0.19, 0.3, 0.08)),
-            mat,
-            root,
-          );
+        const tail = geometry?.tail;
+        root.position.z = geometry?.id === "ho229"
+          ? -s.length * .18
+          : tail ? s.length * tail.z : -s.length * 0.34;
+        if (tail?.kind === "twin") {
+          for (const dir of [-1, 1]) {
+            const boom = this.mesh(
+              this.geometry(geometryKey("twin-boom", s.length * .76, .16, dir), () => fuselageGeometry(s.length * .76, .16, geometry?.fuselage.sections)),
+              mat,
+              root,
+              dir * s.wingspan * .22,
+              .04,
+              -s.length * .17,
+            );
+            boom.scale.set(.72, .72, 1);
+            const fin = this.mesh(
+              this.geometry(geometryKey("twin-fin", .58, dir), () => wingGeometry(.58, 1, .66, .18, .065)),
+              trim,
+              root,
+              dir * s.wingspan * .22,
+              .22,
+              -s.length * .54,
+            );
+            fin.rotation.z = Math.PI / 2;
+          }
+          for (const dir of [-1, 1]) {
+            this.mesh(
+              this.geometry(geometryKey("twin-stabilizer", s.wingspan * .28, dir, s.length * .16), () => wingGeometry(s.wingspan * .28, dir, s.length * .16, .12, .07)),
+              mat,
+              root,
+              0,
+              .32,
+              -s.length * .54,
+            );
+          }
+        } else if (tail?.kind === "none") {
+          for (const dir of [-1, 1]) {
+            this.mesh(
+              this.geometry(geometryKey("flying-wing-elevon", s.wingspan * .22, dir, s.length * .16), () => wingGeometry(s.wingspan * .22, dir, s.length * .16, .38, .055)),
+              trim,
+              root,
+              dir * s.wingspan * .24,
+              .02,
+              -s.length * .08,
+            );
+          }
+        } else {
+          for (const dir of [-1, 1]) {
+            this.mesh(
+              this.geometry(geometryKey("tail-wing", s.wingspan * (tail?.span ?? .2), dir, s.length * (tail?.chord ?? .19), .3, .08), () => wingGeometry(s.wingspan * (tail?.span ?? .2), dir, s.length * (tail?.chord ?? .19), 0.3, 0.08)),
+              mat,
+              root,
+            );
+          }
           const fin = this.mesh(
-            this.geometry(geometryKey("wing", 0.7, 1, 0.8, 0.35, 0.065), () => wingGeometry(0.7, 1, 0.8, 0.35, 0.065)),
+            this.geometry(geometryKey("tail-fin", .7, 1, .8, .35, .065), () => wingGeometry(.7, 1, .8, .35, .065)),
             trim,
             root,
-            dir * 0.4,
-            0.1,
-            -0.2,
+            0,
+            .1,
+            -.2,
           );
-          fin.rotation.z = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+          fin.rotation.z = Math.PI / 2;
+        }
+      } else if (part.kind === "landingGear") {
+        const anchor = partAnchor(part);
+        root.position.set(anchor.x, anchor.y, anchor.z);
+        const strutGeometry = this.geometry(
+          geometryKey("landing-strut", .42, .06),
+          () => new THREE.CylinderGeometry(.045, .06, .42, 6),
+        );
+        for (const dir of [-1, 1]) {
+          const strut = this.mesh(strutGeometry, metal, root, dir * .22, .02, 0);
+          strut.rotation.z = dir * .28;
+        }
+        this.mesh(
+          this.geometry(geometryKey("landing-axle", .78, .055), () => new THREE.CylinderGeometry(.045, .055, .78, 6)),
+          metal,
+          root,
+          0,
+          -.2,
+          0,
+        ).rotation.z = Math.PI / 2;
+        const wheelGeometry = this.geometry(
+          geometryKey("landing-wheel", .16, .1),
+          () => new THREE.CylinderGeometry(.16, .16, .1, 10),
+        );
+        const wheelTrim = this.geometry(
+          geometryKey("landing-wheel-trim", .15, .035),
+          () => new THREE.TorusGeometry(.15, .035, 6, 12),
+        );
+        for (const dir of [-1, 1]) {
+          const wheel = this.mesh(wheelGeometry, metal, root, dir * .39, -.3, 0);
+          wheel.rotation.z = Math.PI / 2;
+          const tire = this.mesh(wheelTrim, trim, root, dir * .39, -.3, 0);
+          tire.rotation.y = Math.PI / 2;
         }
       } else if (part.kind === "engine") {
         const anchor = partAnchor(part);
@@ -221,13 +388,14 @@ export class ProceduralAircraft {
         );
         engine.rotation.x = Math.PI / 2;
         if (!npc) {
+          const engineFront = part.engineInstallation === "pusher" ? -.7 : .7;
           const ring = this.mesh(
             this.geometry(geometryKey("torus", 0.24, 0.065, 4, 10), () => new THREE.TorusGeometry(0.24, 0.065, 4, 10)),
             metal,
             root,
             0,
             0,
-            -0.7,
+            engineFront,
           );
           ring.rotation.x = 0;
           this.mesh(
@@ -236,11 +404,11 @@ export class ProceduralAircraft {
             root,
             0,
             0,
-            -0.74,
+            engineFront + (part.engineInstallation === "pusher" ? -.04 : .04),
           ).rotation.x = Math.PI / 2;
         }
-        if (f.era && f.era !== "jet") {
-          const propeller = this.mesh(this.geometry(geometryKey("box", .14, f.shape === "airship" ? 2.3 : 1.7, .07), () => new THREE.BoxGeometry(.14, f.shape === "airship" ? 2.3 : 1.7, .07)), trim, root, 0, 0, .75);
+        if (geometry?.engine.style === "propeller" || (!geometry && f.era && f.era !== "jet")) {
+          const propeller = this.mesh(this.geometry(geometryKey("box", .14, f.shape === "airship" ? 2.3 : 1.7, .07), () => new THREE.BoxGeometry(.14, f.shape === "airship" ? 2.3 : 1.7, .07)), trim, root, 0, 0, part.engineInstallation === "pusher" ? -.75 : .75);
           this.propellers.push({ mesh: propeller, part });
           continue;
         }

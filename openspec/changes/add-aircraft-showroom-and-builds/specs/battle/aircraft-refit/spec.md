@@ -2,6 +2,85 @@
 
 ## ADDED Requirements
 
+### Requirement: Centerline-based aircraft layout
+
+局内构型 MUST 由战斗配置提供的中心线结构图解析。部件、延长段、武器挂点和发动机挂点 MUST 通过中心线、连接节点、纵向站位和局部偏移确定位置，不能依赖按升级次数累加的全局绝对坐标。
+
+#### Scenario: Accumulate a wing extension
+
+- **WHEN** 玩家连续安装两节右翼延长段
+- **THEN** 两节按安装顺序插在原右翼尖段内侧。翼尖及其附件外移，两节各自承载枪位与受击区域，左翼端点保持原位置
+
+#### Scenario: Reflow after a later structural change
+
+- **WHEN** 玩家先安装机枪、发动机和翼段，再安装会改变同一中心线长度的结构卡
+- **THEN** 已有部件沿中心线重新解析到对应节点，部件间距、枪口、尾焰、碰撞区域和视觉轮廓保持连接
+
+### Requirement: Wing assembly and profile
+
+每条半翼 MUST 以翼根段开始、翼尖段收尾。带一台原装翼载发动机的半翼默认由翼根段、发动机段、翼尖段组成。插段 MUST 遵循选定翼线的分段方向、折点和截面。
+
+#### Scenario: Insert mixed modules in an engine-bearing wing
+
+- **WHEN** 右翼原装一台发动机，并依次加装各长 1 米的机枪段和辅助发动机段
+- **THEN** 从内向外依次为翼根、原发动机段、机枪段、辅助发动机段、原翼尖。该翼线增长 2 米，原翼尖保留附件与损伤，两处新增挂载各占其段，接缝连续
+
+#### Scenario: Preserve the profile of the selected wing
+
+- **WHEN** 对平直、上反、下反、海鸥和倒海鸥五种原装翼形分别在翼尖前插段
+- **THEN** 从正面可辨原型的水平走向、升降方向或内外段折点，新段沿所选外翼方向接合。上下分层及前后串列构型只有卡牌指定的翼线参与插段
+
+### Requirement: Engine installation and fuselage contour
+
+战斗构型 MUST 指定发动机的承载部件、站位和轴向，并按动力形式配置桨毂或喷口。各机身 MUST 由本机型沿中心线的截面形成连续轮廓。
+
+#### Scenario: Inspect tractor and pusher installations
+
+- **WHEN** 从侧面观察前置牵引式和后置推进式构型，再沿相邻中心线插入结构段
+- **THEN** 可分别看到桨盘位于相应桨轴前端和后端。桨毂对齐轴心，桨叶旋转范围与邻近机身、机翼、尾翼及挂载保持净距
+
+#### Scenario: Insert a fuselage bay
+
+- **WHEN** 在带驾驶舱和尾翼的机身上插入尾舱
+- **THEN** 新舱两端衔接相邻截面，机鼻、驾驶舱和尾部仍可从轮廓辨认，尾翼及下游动力附件随所属段移动，受击范围对应新外形
+
+### Requirement: Multiple centerline topologies
+
+构型解析 MUST 支持多条互相连接或平行的中心线。中心线图 MUST 能表达多机身、上下或前后串列的多层机翼、左右分置的翼段、分支短舱及连接梁。
+
+#### Scenario: Twin fuselage build
+
+- **WHEN** 战斗配置定义左右两条机身中心线，并通过横向连接线挂载共同的机翼和武器段
+- **THEN** 两条机身各自拥有独立的部件、受击区和挂点，连接梁按自己的中心线解析，新增左侧或右侧部件不会被压到另一条机身上
+
+#### Scenario: Biplane and tandem-wing build
+
+- **WHEN** 战斗配置定义上下双翼或前后串列双翼中心线，并在其中一条线上安装延长段
+- **THEN** 只有被选中的翼层或前后翼线延长，其他翼线保持其原有站位、间距、碰撞区域和挂点
+
+### Requirement: Deterministic structure graph resolution
+
+相同基础机型和相同有序升级卡 MUST 从基础中心线图重建出相同的结构图。升级顺序、撤销、展厅重放和正式出击重建不得依赖上一次运行留下的绝对坐标。
+
+#### Scenario: Rebuild the same card sequence
+
+- **WHEN** 展厅和正式出击使用同一基础机型与同一有序卡序重建构型
+- **THEN** 两处得到相同的中心线、连接节点、部件位置、枪口位置、受击区域、外包围范围和飞行统计
+
+#### Scenario: Branch from an earlier build
+
+- **WHEN** 玩家从 A+B 撤销 B 并改装 C，或从基础构型重新应用 A+C
+- **THEN** 结构图只包含当前卡序产生的中心线和部件，不保留 B 的连接节点、挂点、碰撞区域或视觉残留
+
+### Requirement: Resolved layout drives combat and presentation
+
+模拟、碰撞、武器锚点、发动机出口、部件脱落和渲染 MUST 消费同一份解析后的中心线布局结果。父节点损坏或脱落时，子节点及其挂点 MUST 按结构图规则失去支撑。
+
+#### Scenario: Detached parent segment
+
+- **WHEN** 承载机枪的外翼段被摧毁或脱落
+- **THEN** 该翼段的下游部件、枪口和碰撞区域从同一连接节点中移除或停用，其他中心线上的武器继续工作
+
 ### Requirement: Fleet of mounts benefits from common rate cards
 
 普通整机射速卡 MUST 以同一倍率提高机上每一个自动开火挂点的发射频率，包括原装和后续安装的挂点。
@@ -38,7 +117,7 @@
 #### Scenario: Extend a single wing
 
 - **WHEN** 机体安装左翼延长机枪段，并在允许重复时继续向同侧扩建
-- **THEN** 每次只在左翼外端增加一节可见翼面和独立枪位，右翼端点保持原位；枪口、受击区域和损伤效果位于对应的新翼段
+- **THEN** 每次在左翼尖段之前插入一节可见翼面和独立枪位，右翼端点保持原位；枪口、受击区域和损伤效果位于对应的新翼段
 
 #### Scenario: Extend the rear fuselage
 

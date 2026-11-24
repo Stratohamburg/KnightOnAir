@@ -20,6 +20,20 @@
 - **WHEN** 飞机从战斗场景移除
 - **THEN** 机体工厂释放实体节点和动态资源，不销毁仍被其他实例使用的共享内容
 
+### Requirement: Dedicated aircraft model registry
+
+每个可玩载具 MUST 在统一的飞机模型注册表中绑定自己的模型装配器。注册表只负责模型选择和共享的内容库接口，模型的机身截面、翼面边缘、发动机、座舱、尾翼、支柱、起落架和专属挂点 MUST 由对应机型装配器定义。通用装配器不得覆盖已注册机型的基础外形。
+
+#### Scenario: Build the Fokker Dr.I model
+
+- **WHEN** 参考校验台或战斗场景创建 `fokkerDr1`
+- **THEN** 工厂从飞机模型注册表取得 Fokker Dr.I 专属装配器，生成三层圆角翼、开放式座舱、九缸旋转发动机、双叶螺旋桨、层间支柱、尾翼和双轮起落架，基础模型不经过通用机身加翼模板
+
+#### Scenario: Keep refits on the dedicated model
+
+- **WHEN** 已注册机型安装翼尖、侧舱或武器扩建件
+- **THEN** 基础模型继续由专属装配器提供，扩建件通过现有部件锚点和中心线挂点附着，内容租约仍由机体实例统一释放
+
 ### Requirement: Configuration-driven aircraft shape
 
 飞机和主要空中载具 MUST 根据机体配置生成可辨识的机身、机翼、发动机、尾翼、炮塔、浮筒或飞艇结构。玩家和敌人的轮廓 MUST 能表达时代、角色和机体大小差异。

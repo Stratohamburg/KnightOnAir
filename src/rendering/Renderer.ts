@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { RULES, QUALITIES, type Quality } from "../data/config";
 import { eraOf } from "../data/aircrafts";
-import { ERAS } from "../data/eras";
+import { ERAS, missionEraOf } from "../data/eras";
 import { routeHeight } from "../simulation/Routes";
 import { clamp, damp, RAD } from "../services/Random";
 import { World } from "../simulation/World";
@@ -25,6 +25,7 @@ import { cloudDiagnostics, environmentFixture, environmentState } from "./Render
 import { frameBattleCamera } from "./BattleCamera";
 import { updateVegetationWind, vegetationWindUniforms } from "./VegetationWind";
 import { VegetationField } from "./VegetationField";
+import { ShowroomBackdrop } from "../content/3d/ShowroomBackdrop";
 
 export class Renderer {
   readonly renderer: THREE.WebGLRenderer;
@@ -41,6 +42,7 @@ export class Renderer {
   private readonly terrainDetail = createTerrainDetail();
   private readonly terrainMat = terrainMaterial(this.terrainDetail, this.vegetationWind);
   private readonly content = new ContentCatalog();
+  private readonly showroomBackdrop = new ShowroomBackdrop(this.content);
   private readonly projectileContent = createProjectileBatches(this.content);
   private readonly bombContent = createBombs(this.content, 8);
   private readonly enemies = new Map<number, SceneActor>();
@@ -60,6 +62,7 @@ export class Renderer {
   private displayAnchor = new THREE.Vector3();
   private displayOrbitYaw = 0;
   private displayOrbitPitch = 0.14;
+  private displayView: "orbit" | "front" | "side" | "top" = "orbit";
   private time = 0;
   private crashTime = 0;
   private cameraBombing = 0;
@@ -100,6 +103,8 @@ export class Renderer {
     const sun = new THREE.DirectionalLight("#fff1ca", 3);
     sun.position.set(...cloudSun);
     this.scene.add(sun);
+    this.scene.add(this.showroomBackdrop.group);
+    this.showroomBackdrop.setVisible(false);
     this.skyDome = new THREE.Mesh(
       new THREE.SphereGeometry(420, 24, 16),
       skyDomeMaterial(),
@@ -271,8 +276,12 @@ export class Renderer {
     this.displayAnchor.set(p.x, 0, p.z);
   }
   setDisplayOrbit(yaw: number, pitch = this.displayOrbitPitch) {
+    this.displayView = "orbit";
     this.displayOrbitYaw = yaw;
     this.displayOrbitPitch = clamp(pitch, -0.35, 0.55);
+  }
+  setDisplayView(view: "front" | "side" | "top") {
+    this.displayView = view;
   }
   setQuality(q: Quality) {
     this.quality = q;
@@ -318,7 +327,7 @@ export class Renderer {
     this.time += sceneDt;
     this.resize();
     const p = this.aircraft.actor as Player;
-    const era = eraOf(p.frame);
+    const era = world?.era ?? missionEraOf(p.frame);
     if (era !== this.era) {
       this.era = era;
       const { colors } = ERAS[era];
@@ -364,18 +373,48 @@ export class Renderer {
       this.cameraBombing = 0;
       this.displayAnchor.x = damp(this.displayAnchor.x, x, 7, dt);
       this.displayAnchor.z = damp(this.displayAnchor.z, z, 7, dt);
-      const distance = 26 * Math.max(1, p.stats.wingspan / 9, p.stats.length / 10) *
+      const distance = 16 * Math.max(1, p.stats.wingspan / 9, p.stats.length / 10) *
         (this.camera.aspect < 0.55 ? 1.12 : 1);
-      const yaw = this.displayOrbitYaw;
-      const pitch = this.displayOrbitPitch;
-      const horizontal = Math.cos(pitch) * distance;
-      const cameraBase = RULES.flightAltitude - 9;
-      this.camera.position.set(
-        this.displayAnchor.x + Math.sin(yaw) * horizontal,
-        cameraBase + Math.sin(pitch) * distance,
-        this.displayAnchor.z - Math.cos(yaw) * horizontal,
-      );
-      this.camera.lookAt(this.displayAnchor.x, cameraBase + 2, this.displayAnchor.z - 2);
+      const targetY = RULES.flightAltitude + .05;
+      const targetZ = this.displayAnchor.z;
+      if (this.displayView === "front" || this.displayView === "side" || this.displayView === "top") {
+        const viewHeight = Math.max(9.2, p.stats.length * 1.2, p.stats.wingspan * 1.12 / this.camera.aspect);
+        const viewWidth = viewHeight * this.camera.aspect;
+        this.camera.projectionMatrix.makeOrthographic(
+          -viewWidth * .5,
+          viewWidth * .5,
+          viewHeight * .5,
+          -viewHeight * .5,
+          RULES.camera.near,
+          RULES.camera.far,
+        );
+        this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
+        if (this.displayView === "top") {
+          this.camera.up.set(0, 0, 1);
+          this.camera.position.set(this.displayAnchor.x, targetY + distance, targetZ);
+        } else if (this.displayView === "side") {
+          this.camera.up.set(0, 1, 0);
+          this.camera.position.set(this.displayAnchor.x + distance, targetY, targetZ);
+        } else {
+          this.camera.up.set(0, 1, 0);
+          this.camera.position.set(this.displayAnchor.x, targetY, targetZ + distance);
+        }
+        this.camera.lookAt(this.displayAnchor.x, targetY, targetZ);
+      } else {
+        this.camera.fov = RULES.camera.fov;
+        this.camera.updateProjectionMatrix();
+        this.camera.up.set(0, 1, 0);
+        const yaw = this.displayOrbitYaw;
+        const pitch = this.displayOrbitPitch;
+        const horizontal = Math.cos(pitch) * distance;
+        const cameraBase = RULES.flightAltitude + 5;
+        this.camera.position.set(
+          this.displayAnchor.x + Math.sin(yaw) * horizontal,
+          cameraBase + Math.sin(pitch) * distance,
+          this.displayAnchor.z - Math.cos(yaw) * horizontal,
+        );
+        this.camera.lookAt(this.displayAnchor.x, RULES.flightAltitude, this.displayAnchor.z - 2);
+      }
       this.camera.updateMatrixWorld();
     } else {
       this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
@@ -394,7 +433,9 @@ export class Renderer {
     this.aircraft.group.position.x = x;
     this.aircraft.group.position.y = RULES.flightAltitude;
     this.aircraft.group.position.z = z;
-    if (display) {
+    if (display && (options.showroom === true && this.displayView !== "orbit")) {
+      this.aircraft.group.rotation.set(0, 0, 0);
+    } else if (display) {
       this.aircraft.group.rotation.z = Math.sin(this.time * 0.8) * 0.045;
       this.aircraft.group.rotation.x = Math.sin(this.time * 0.6) * 0.015;
     }
@@ -403,14 +444,27 @@ export class Renderer {
       this.aircraft.group.position.y -= this.crashTime * this.crashTime * 2;
       this.aircraft.group.rotation.z += this.crashTime * 0.9;
     }
-    this.terrainChunks.update(x, z);
-    this.vegetation.update(x, z, this.quality);
+    const showroom = options.showroom === true;
+    if (showroom) {
+      this.skyDome.visible = false;
+      this.showroomBackdrop.setVisible(true);
+      this.showroomBackdrop.update(this.displayAnchor.x, this.displayAnchor.z);
+      this.terrainChunks.setVisible(false);
+      this.vegetation.setVisible(false);
+    } else {
+      this.skyDome.visible = true;
+      this.showroomBackdrop.setVisible(false);
+      this.terrainChunks.setVisible(true);
+      this.vegetation.setVisible(true);
+      this.terrainChunks.update(x, z);
+      this.vegetation.update(x, z, this.quality);
+    }
     const wind = display ? undefined : world?.wind;
     updateVegetationWind(this.vegetationWind, this.time, wind, x, z);
-    this.terrainChunks.updateTime(this.time);
-    const cloudsEnabled = fixture?.clouds ?? true;
+    if (!showroom) this.terrainChunks.updateTime(this.time);
+    const cloudsEnabled = !showroom && (fixture?.clouds ?? true);
     const cloudWind = wind?.sample(x, z);
-    this.cloudscape.update(
+    if (!showroom) this.cloudscape.update(
       sceneDt,
       cloudWind?.x ?? 0,
       cloudWind?.z ?? 0,
@@ -456,16 +510,16 @@ export class Renderer {
       this.hideBattle();
     }
     this.renderer.info.reset();
-    this.cloudscape.begin(this.renderer, this.camera, this.quality, fixture?.cloudShadows);
+    if (!showroom) this.cloudscape.begin(this.renderer, this.camera, this.quality, fixture?.cloudShadows);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     const cloudStart = import.meta.env.DEV ? performance.now() : 0;
     let cloudMarchMs = 0;
-    if (cloudsEnabled) {
+    if (!showroom && cloudsEnabled) {
       this.cloudscape.renderClouds(this.renderer, this.camera, this.quality);
       if (import.meta.env.DEV) cloudMarchMs = performance.now() - cloudStart;
     }
-    this.cloudscape.compositeWorld(this.renderer, this.camera);
+    if (!showroom) this.cloudscape.compositeWorld(this.renderer, this.camera);
     if (import.meta.env.DEV) {
       const diagnostics = cloudDiagnostics.get(this)!;
       diagnostics.enabled = cloudsEnabled;
@@ -704,6 +758,7 @@ export class Renderer {
     this.projectileContent.dispose();
     this.bombContent.dispose();
     this.effects.dispose();
+    this.showroomBackdrop.dispose();
     this.terrainChunks.dispose();
     this.terrainMat.dispose();
     this.terrainDetail.dispose();

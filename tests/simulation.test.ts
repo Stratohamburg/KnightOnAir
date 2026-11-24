@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIRFRAMES } from "../src/data/aircrafts";
+import { AIRFRAMES, STARTER_FRAME_ID } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { UPGRADES, upgradeById } from "../src/data/upgrades";
 import { WEAPONS } from "../src/data/weapons";
@@ -286,12 +286,12 @@ describe("progression and saves", () => {
     expect(restored.data.equipped).toBe("mastodon_03");
     expect(restored.data.currency).toBe(w.coins);
     raw = "{bad json";
-    expect(new SaveStore(storage).data.equipped).toBe("sparrow_05");
+    expect(new SaveStore(storage).data.equipped).toBe(STARTER_FRAME_ID);
     raw =
       '{"version":1,"equipped":"unknown","unlocked":3,"currency":-50,"bestScore":"oops"}';
     const corrupt = new SaveStore(storage);
     expect(corrupt.data.currency).toBe(0);
-    expect(corrupt.data.equipped).toBe("sparrow_05");
+    expect(corrupt.data.equipped).toBe(STARTER_FRAME_ID);
     const unavailable = new SaveStore({
       getItem: () => {
         throw new Error("denied");

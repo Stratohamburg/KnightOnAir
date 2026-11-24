@@ -22,6 +22,7 @@ export function refitWeaponForEra(id: string, era: EraId): WeaponConfig {
 }
 
 export function refitLimit(context: RefitContext, upgrade: Upgrade) {
+  if (context.frame.geometryProfile === "fokkerDr1") return 1;
   const headroom = context.frame.refit?.headroom ??
     (context.frame.hardpoints >= 8 ? .8 : context.era === "ww1" ? .55 : .35);
   if (headroom >= .5 && upgrade.parts.some((part) =>

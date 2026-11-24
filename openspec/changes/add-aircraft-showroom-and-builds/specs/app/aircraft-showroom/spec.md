@@ -10,7 +10,9 @@
 
 展厅 MUST 在界面上方展示当前所选飞机的完整三维构型，并允许玩家通过滑动或拖动旋转观察。
 
-展示区 MUST 占展厅页面上方约三分之二，机体居中显示。下方操作区 MUST 独立承载机体切换、当前生效卡序、撤销、重置和强化卡列表。
+展示区 MUST 占展厅页面上方约三分之二，机体居中显示，并承载机体切换、撤销、重置、试射和返回出击按钮。下方操作区 MUST 只承载当前生效卡序和强化卡列表。
+
+展示区 MUST 使用独立的室内机库场景。展厅 MUST 不加载战斗地形、战斗云层、战斗路线或户外战斗背景，室内场景应提供地面、墙面、灯光和展示台以支撑机体观察。
 
 #### Scenario: Explore a large build on a phone
 
@@ -24,7 +26,7 @@
 
 ### Requirement: Showroom operation area
 
-展厅操作区 MUST 在顶部显示当前已生效的有序卡序，并在其下提供撤销、重置和可上下滚动的合法强化卡列表。选中强化卡后 MUST 立即重建展示构型并更新当前生效卡序。
+展厅操作区 MUST 在顶部显示当前已生效的有序卡序，并在其下提供可上下滚动的合法强化卡列表。展示区的按钮负责机体切换、撤销、重置、试射和返回出击。选中强化卡后 MUST 立即重建展示构型并更新当前生效卡序。
 
 #### Scenario: Keep active cards visible while browsing
 
@@ -39,6 +41,41 @@
 
 - **WHEN** 只在战斗配置中新增或移除可玩机体，重新载入并打开展厅
 - **THEN** 选机列表反映当前战斗目录，新增机体可按其原装配备展示和试射
+
+### Requirement: Reference orthographic views and topology-aware construction
+
+原型校验台 MUST provide fixed front, side and top inspection views whose camera direction is perpendicular to the aircraft local forward, lateral and vertical axes. Fixed views MUST suppress showroom banking and idle roll so measurements remain comparable with the source three-view drawing.
+
+Aircraft geometry profiles MUST declare whether the fuselage is a conventional tube or an integrated wing-body construction. An integrated flying-wing profile MUST share its wing-root centerline with the center body, keep the cockpit fairing inside the continuous wing planform, and place engines and control surfaces on that same structure.
+
+#### Scenario: Inspect a reference in three fixed views
+
+- **WHEN** the user selects front, side or top in the reference lab
+- **THEN** the model is aligned to the corresponding aircraft axis, remains level, and can be compared directly with the Wiki three-view source
+
+### Requirement: Feature abstraction before generated geometry
+
+原型校验台 MUST show a simplified H5 three-view feature plate before initializing the generated 3D model. The plate MUST expose the centerline, wing leading and trailing edges, fuselage and nacelle contours, propeller disk or tail-nozzle station, and the relative positions of the main modules across front, side, and top views. The plate MUST describe extracted relationships without claiming pixel-level tracing.
+
+#### Scenario: Review the 2D feature plate before model generation
+
+- **WHEN** the user opens a reference or changes the selected aircraft
+- **THEN** the lab shows the simplified front, side, and top feature plate, keeps fixed-view model controls disabled, and waits for feature-map approval
+
+#### Scenario: Approve the feature plate
+
+- **WHEN** the user confirms the extracted feature map
+- **THEN** the lab initializes the generated model and enables the fixed front, side, top, and orbit inspection controls
+
+#### Scenario: Reset the gate after changing aircraft
+
+- **WHEN** the user selects another aircraft after approving a feature plate
+- **THEN** the previous approval is cleared, the previous renderer is disposed, and the lab returns to the new aircraft's 2D feature plate
+
+#### Scenario: Display an integrated flying wing
+
+- **WHEN** the selected profile declares integrated wing-body construction
+- **THEN** the center body and wing roots form one continuous silhouette, the preview does not add a detached conventional fuselage, and root engines and trailing-edge controls remain anchored to the shared wing structure
 
 #### Scenario: Battle refit or weapon configuration changes
 
@@ -91,6 +128,11 @@
 
 - **WHEN** 以同一基础机型、相同卡序和完整部件重建展厅与局内构型
 - **THEN** 二者的轮廓、受击区、独立炮位数、发射位置、适用倍率与发射间隔一致，展厅不承担战斗目标、命中和奖励状态
+
+#### Scenario: Display a multi-centerline aircraft
+
+- **WHEN** 战斗配置返回双机身、双翼或前后串列双翼的解析布局
+- **THEN** 展厅按返回的多条中心线显示各机身、翼层、连接梁和挂点，展厅不维护另一份构型坐标或拓扑
 
 ### Requirement: Isolated preview session
 

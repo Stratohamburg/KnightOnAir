@@ -1,6 +1,7 @@
 import type { Airframe } from "../data/aircrafts";
 import type { WeaponConfig } from "../data/weapons";
 import type { Point3 } from "../content/3d/anchors";
+import type { CenterlineMount } from "./CenterlineLayout";
 export type Phase =
   "battle" | "bombing" | "upgrade" | "paused" | "dying" | "result";
 export type Slot =
@@ -41,6 +42,8 @@ export interface Part {
   detachSeed?: number;
   parentId?: string;
   connection?: { side: -1 | 0 | 1; x: number; z: number };
+  centerline?: CenterlineMount;
+  engineInstallation?: "tractor" | "pusher";
 }
 export type PartRole =
   | "body"
@@ -140,6 +143,7 @@ export interface RuntimeWeapon {
   lockLost: boolean;
   heading: number;
   baseAngle: number;
+  centerline?: CenterlineMount;
 }
 export interface Enemy extends AirMotionState {
   id: number;

@@ -549,3 +549,25 @@ export const UPGRADES: Upgrade[] = [
   },
 ];
 export const upgradeById = (id: string) => UPGRADES.find((u) => u.id === id);
+
+export const FOKKER_REFIT_IDS = [
+  "quick_feed", "left_wing_segment", "right_wing_segment",
+  "left_engine", "right_engine", "radiator", "cooling_loop", "ammo",
+  "heavy_armor", "armor_belt", "bomb_bay",
+] as const;
+
+export const FOKKER_UPGRADES = UPGRADES
+  .filter((upgrade) => FOKKER_REFIT_IDS.some((id) => id === upgrade.id))
+  .map((upgrade): Upgrade => {
+    if (upgrade.id === "left_engine" || upgrade.id === "right_engine")
+      return { ...upgrade, add: { maxSpeed: upgrade.add?.maxSpeed } };
+    if (upgrade.id === "heavy_armor")
+      return {
+        ...upgrade,
+        add: { health: 55 },
+        description: "在座舱两侧安装铆接护板，降低部件伤害传递。",
+        benefit: "生命 +55 · 伤害传递 −20%",
+        cost: "加速 −14% · 转向 −10%",
+      };
+    return upgrade;
+  });

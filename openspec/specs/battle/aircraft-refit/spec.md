@@ -20,6 +20,16 @@
 - **WHEN** 可用的唯一升级已经耗尽
 - **THEN** 系统从合法的可重复升级中补足候选数量
 
+#### Scenario: First Fokker Dr.I refit
+
+- **WHEN** 玩家首次打开福克 Dr.I 的局内强化
+- **THEN** 提供快速供弹、额外散热器和一张由当前出击随机种子决定侧别的延长机枪段
+
+#### Scenario: Fokker Dr.I battle and showroom pool
+
+- **WHEN** 玩家查看福克 Dr.I 的后续局内强化或在展厅试装
+- **THEN** 使用同一个机型卡池，提供供弹、左右下翼延长段、左右辅助螺旋桨发动机、散热器、冷却回路、弹药箱、重型装甲、快拆装甲带和机腹炸弹舱。卡面以三翼示意图标出受影响的部位
+
 ### Requirement: Refit changes the aircraft build
 
 确认升级后，系统 MUST 按升级效果更新对应的部件、武器挂点、质量、尺寸、操控统计、碰撞区域或可用能力。
@@ -60,3 +70,8 @@
 
 - **WHEN** 玩家只在一侧安装发动机或机翼
 - **THEN** 机体外观、左右操控差异和部件信息保持一致
+
+#### Scenario: Armed extension on the Fokker Dr.I
+
+- **WHEN** 玩家装上单侧延长机枪段
+- **THEN** 新翼段插在对应下翼翼尖之前，新机枪随该翼段显示并从同一挂点开火。更高两层机翼和另一侧下翼保持原有位置

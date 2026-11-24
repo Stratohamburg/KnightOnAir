@@ -6,6 +6,15 @@
 
 ## Requirements
 
+### Requirement: Starter sortie
+
+新档案默认装备解锁的福克 Dr.I（`heron_09`）。福克 Dr.I 的出击关卡为第 01 关「黎明草甸」，机库时代仍为一战。
+
+#### Scenario: Launch the first sortie
+
+- **WHEN** 玩家使用新档案的默认装备点击出击
+- **THEN** 出击页、准备页和战斗 HUD 显示「黎明草甸」，玩家在该关操控配有双联同步机枪的福克 Dr.I
+
 ### Requirement: Fixed-step battle progression
 
 战斗模拟 MUST 使用稳定的固定步进，并且渲染帧率变化不能改变同一输入序列下的战斗结果。

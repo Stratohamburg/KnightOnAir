@@ -1,9 +1,14 @@
+import { baseLength, sheetSpan, unit } from "./fokkerDr1Sheet";
+
 export type EraId = "pioneer" | "ww1" | "ww2" | "jet";
 export type AirframeShape = "plane" | "floatplane" | "flyingBoat" | "airship";
+export type AircraftGeometryProfileId = "fokkerDr1" | "spitfire" | "zero" | "vampire" | "ho229";
 
 export interface Airframe {
   era?: EraId;
+  missionEra?: EraId;
   shape?: AirframeShape;
+  geometryProfile?: AircraftGeometryProfileId;
   wingCount?: number;
   refit?: { wing: number; engine: number; weapon: number; headroom: number; massPenalty: number };
   id: string;
@@ -129,6 +134,7 @@ export const AIRFRAMES: Airframe[] = [
     description: "缩小轮廓，放大机动。为敢于贴近危险的飞行员而造。",
     color: "#c6c8a2",
     accent: "#a5e7bc",
+    geometryProfile: "vampire",
     maxSpeed: 15.5,
     cruiseSpeed: 5.8,
     acceleration: 11.5,
@@ -152,7 +158,7 @@ export const AIRFRAMES: Airframe[] = [
     unlockText: "单局积分达到 8,600",
   },
 ];
-export const STARTER_FRAME_ID = "sparrow_05";
+export const STARTER_FRAME_ID = "heron_09";
 export const eraOf = (frame: Airframe): EraId => frame.era ?? "jet";
 
 type EraFrame = Airframe & { era: EraId; wingCount: number; shape: AirframeShape };
@@ -161,7 +167,7 @@ function eraFrame(
   geometry: Pick<EraFrame, "mass" | "wingArea" | "wingspan" | "length" | "wingCount" | "engines">,
   flight: Pick<EraFrame, "maxSpeed" | "cruiseSpeed" | "acceleration" | "turnRate" | "energyMax">,
   loadout: Pick<EraFrame, "gun" | "bomb" | "health" | "hardpoints" | "unlockScore"> &
-    Partial<Pick<EraFrame, "turret" | "refit">>,
+    Partial<Pick<EraFrame, "name" | "description" | "turret" | "refit" | "geometryProfile" | "missionEra">>,
 ): EraFrame {
   return {
     id, name: id.toUpperCase().replace("_", "–"), role, era, shape, color,
@@ -182,7 +188,7 @@ AIRFRAMES.push(
   eraFrame("dragonfly_06", "单翼竞速机", "pioneer", "plane", "#58a4a1",
     { mass: 600, wingArea: 9, wingspan: 6.5, length: 4.6, wingCount: 1, engines: 1 },
     { maxSpeed: 7.8, cruiseSpeed: 3.2, acceleration: 6, turnRate: 250, energyMax: 60 },
-    { gun: "ww1_sync_mg", health: 60, hardpoints: 3, unlockScore: 250 }),
+    { gun: "ww1_sync_mg", health: 60, hardpoints: 3, unlockScore: 250, geometryProfile: "zero" }),
   eraFrame("moth_07", "早期飞艇", "pioneer", "airship", "#c79550",
     { mass: 5000, wingArea: 120, wingspan: 20, length: 22, wingCount: 1, engines: 2 },
     { maxSpeed: 3.2, cruiseSpeed: 2, acceleration: 2, turnRate: 70, energyMax: 180 },
@@ -192,9 +198,10 @@ AIRFRAMES.push(
     { maxSpeed: 9.6, cruiseSpeed: 4, acceleration: 6.5, turnRate: 250, energyMax: 90 },
     { gun: "ww1_twin_mg", health: 105, hardpoints: 6, unlockScore: 1100 }),
   eraFrame("heron_09", "三翼格斗机", "ww1", "plane", "#9263a5",
-    { mass: 1300, wingArea: 18, wingspan: 8.8, length: 6, wingCount: 3, engines: 1 },
+    { mass: 1300, wingArea: 18, wingspan: sheetSpan * unit, length: baseLength, wingCount: 3, engines: 1 },
     { maxSpeed: 8.4, cruiseSpeed: 3.6, acceleration: 7, turnRate: 280, energyMax: 85 },
-    { gun: "ww1_twin_mg", health: 90, hardpoints: 5, unlockScore: 1400 }),
+    { name: "福克 Dr.I", description: "三层短翼与双联同步机枪，擅长低速转向和近距格斗。",
+      gun: "ww1_twin_mg", health: 90, hardpoints: 5, unlockScore: 0, geometryProfile: "fokkerDr1", missionEra: "pioneer" }),
   eraFrame("condor_10", "双发轰炸机", "ww1", "plane", "#777f55",
     { mass: 4200, wingArea: 45, wingspan: 15, length: 11, wingCount: 2, engines: 2 },
     { maxSpeed: 7.4, cruiseSpeed: 3, acceleration: 4.2, turnRate: 150, energyMax: 140 },
@@ -211,7 +218,7 @@ AIRFRAMES.push(
   eraFrame("falcon_13", "单翼战斗机", "ww2", "plane", "#557792",
     { mass: 2600, wingArea: 22, wingspan: 11, length: 8.5, wingCount: 1, engines: 1 },
     { maxSpeed: 13.5, cruiseSpeed: 5, acceleration: 8.5, turnRate: 275, energyMax: 110 },
-    { gun: "ww2_autocannon", health: 120, hardpoints: 8, unlockScore: 3100 }),
+    { gun: "ww2_autocannon", health: 120, hardpoints: 8, unlockScore: 3100, geometryProfile: "spitfire" }),
   eraFrame("raptor_14", "双发重型战斗机", "ww2", "plane", "#527c72",
     { mass: 4800, wingArea: 32, wingspan: 13, length: 10.5, wingCount: 1, engines: 2 },
     { maxSpeed: 11.6, cruiseSpeed: 4.6, acceleration: 6.5, turnRate: 200, energyMax: 130 },
@@ -220,10 +227,10 @@ AIRFRAMES.push(
     { mass: 3400, wingArea: 34, wingspan: 13, length: 10, wingCount: 1, engines: 1 },
     { maxSpeed: 10.2, cruiseSpeed: 4.2, acceleration: 6, turnRate: 205, energyMax: 120 },
     { gun: "ww2_autocannon", bomb: "ww2_torpedo", health: 150, hardpoints: 8, unlockScore: 4200 }),
-  eraFrame("stingray_16", "双发飞行艇", "ww2", "flyingBoat", "#81929c",
+  eraFrame("stingray_16", "双发飞翼攻击机", "ww2", "plane", "#81929c",
     { mass: 5200, wingArea: 42, wingspan: 15, length: 12, wingCount: 1, engines: 2 },
     { maxSpeed: 8.6, cruiseSpeed: 3.8, acceleration: 4.6, turnRate: 145, energyMax: 140 },
-    { gun: "ww2_rocket_battery", health: 260, hardpoints: 10, unlockScore: 4800 }),
+    { gun: "ww2_rocket_battery", health: 260, hardpoints: 10, unlockScore: 4800, geometryProfile: "ho229" }),
   eraFrame("behemoth_17", "四发重型轰炸机", "ww2", "plane", "#6d825d",
     { mass: 9500, wingArea: 85, wingspan: 22, length: 17, wingCount: 1, engines: 4 },
     { maxSpeed: 7.2, cruiseSpeed: 3.4, acceleration: 3.6, turnRate: 110, energyMax: 180 },
