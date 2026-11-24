@@ -376,15 +376,38 @@ button:active:not(:disabled) {
   margin-top: 4px;
   letter-spacing: 1px;
 }
-.weather {
-  font-size: 8px;
-  line-height: 1.7;
-  color: #c6d2bd8c;
-  text-align: right;
+.mission-strip .mission-select {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  min-height: 36px;
+  padding: .4rem .65rem;
+  font-size: .75rem;
 }
-.weather b {
-  font-weight: 400;
-  color: #d0ddc5;
+.mission-select .icon,
+.mission-option .icon {
+  width: 1em;
+  height: 1em;
+}
+.mission-options {
+  display: grid;
+  gap: .55rem;
+}
+.mission-options .mission-option {
+  display: grid;
+  grid-template-columns: 2rem 1fr auto;
+  align-items: center;
+  gap: .75rem;
+  text-align: left;
+}
+.mission-option[aria-pressed="true"] {
+  border-color: var(--mint);
+  color: var(--mint);
+}
+.mission-option small {
+  display: block;
+  margin-top: .2rem;
+  opacity: .75;
 }
 .launch-button,
 .primary {

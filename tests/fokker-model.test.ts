@@ -3,6 +3,7 @@ import { expect, it } from "vitest";
 import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
 import { muzzleAnchor } from "../src/content/3d/anchors";
 import { airframeById } from "../src/data/aircrafts";
+import { combatantById } from "../src/data/combatants";
 import { ERAS } from "../src/data/eras";
 import { NetworkController } from "../src/simulation/Controllers";
 import { FOKKER_REFIT_IDS, upgradeById } from "../src/data/upgrades";
@@ -40,6 +41,19 @@ it("starts a fresh pilot in Dawn Meadow and installs a first-level refit through
     expect(bounds.max.z).toBeCloseTo(muzzle.z);
   } finally {
     model.dispose();
+    world.dispose();
+  }
+});
+
+it("uses the selected mission's encounters and the aircraft's compatible refits", () => {
+  const world = new World(airframeById("heron_09"), 1, { director: false, missionEra: "jet" });
+  try {
+    expect(ERAS[world.era].mission).toBe("翡翠海岸");
+    expect(world.enemies.map(enemy => combatantById(enemy.configId!)?.era)).toEqual(["jet", "jet"]);
+    const wing = world.legalUpgradeOptions.find(card => card.id === "left_wing_segment")!;
+    world.installUpgrade(wing);
+    expect(world.player.weapons.at(-1)?.config.id).toBe("ww1_wing_gun");
+  } finally {
     world.dispose();
   }
 });

@@ -319,7 +319,7 @@ export class Renderer {
   render(
     world: World | undefined,
     dt: number,
-    options: { display: boolean; showroom?: boolean; highlight?: string; launching?: number; events?: readonly WorldEvent[] },
+    options: { display: boolean; showroom?: boolean; missionEra?: ReturnType<typeof eraOf>; highlight?: string; launching?: number; events?: readonly WorldEvent[] },
   ) {
     if (!this.aircraft) return;
     const sceneDt =
@@ -327,7 +327,7 @@ export class Renderer {
     this.time += sceneDt;
     this.resize();
     const p = this.aircraft.actor as Player;
-    const era = world?.era ?? missionEraOf(p.frame);
+    const era = world?.era ?? options.missionEra ?? missionEraOf(p.frame);
     if (era !== this.era) {
       this.era = era;
       const { colors } = ERAS[era];

@@ -163,6 +163,7 @@ export class World {
   readonly events: readonly WorldEvent[] = this.eventQueue;
   notice: string;
   readonly era: EraId;
+  private readonly refitEra: EraId;
   noticeTime = 4;
   healPulse = 0;
   boostStatePulse = 0;
@@ -172,9 +173,10 @@ export class World {
   constructor(
     frame: Airframe,
     seed = Date.now(),
-    private options: { director?: boolean; supply?: boolean; showroom?: boolean } = {},
+    private options: { director?: boolean; supply?: boolean; showroom?: boolean; missionEra?: EraId } = {},
   ) {
-    this.era = missionEraOf(frame);
+    this.refitEra = missionEraOf(frame);
+    this.era = options.missionEra ?? this.refitEra;
     this.layoutBaseWingspan = frame.wingspan;
     this.layoutBaseLength = frame.length;
     this.notice = ERAS[this.era].label + " · " + ERAS[this.era].mission;
@@ -418,9 +420,9 @@ export class World {
   get bombWeapon(): WeaponConfig | undefined {
     const config = combatantById(this.player.configId);
     const mount = config?.mounts.find((value) => value.partId === "bay");
-    if (this.player.upgrades.includes("napalm")) return WEAPONS[this.era === "ww2" ? "ww2_incendiary" : "napalm_bomb"];
+    if (this.player.upgrades.includes("napalm")) return WEAPONS[this.refitEra === "ww2" ? "ww2_incendiary" : "napalm_bomb"];
     if (!mount && this.player.upgrades.includes("bomb_bay"))
-      return WEAPONS[this.era === "pioneer" ? "pioneer_light_bomb" : this.era === "ww1" ? "ww1_light_bomb" : this.era === "ww2" ? "ww2_medium_bomb" : "gravity_bomb"];
+      return WEAPONS[this.refitEra === "pioneer" ? "pioneer_light_bomb" : this.refitEra === "ww1" ? "ww1_light_bomb" : this.refitEra === "ww2" ? "ww2_medium_bomb" : "gravity_bomb"];
     return mount ? WEAPONS[mount.weaponId] : undefined;
   }
   get canBomb() {
@@ -1581,13 +1583,13 @@ export class World {
   get legalUpgradeOptions() {
     return legalUpgrades({
       frame: this.player.frame,
-      era: this.era,
+      era: this.refitEra,
       upgrades: this.player.upgrades,
       parts: this.player.parts,
       weapons: this.player.weapons,
     }, this.player.frame.geometryProfile === "fokkerDr1" ? FOKKER_UPGRADES : UPGRADES);
   }
-  private refitWeapon(id: string) { return refitWeaponForEra(id, this.era); }
+  private refitWeapon(id: string) { return refitWeaponForEra(id, this.refitEra); }
   private upgradeWeight(u: Upgrade) {
     let w = u.rarity === "common" ? 5 : u.rarity === "rare" ? 2 : 0.7;
     if (this.player.upgrades.includes("right_engine") && u.id === "left_engine")

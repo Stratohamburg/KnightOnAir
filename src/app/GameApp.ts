@@ -1,5 +1,5 @@
-import { AIRFRAMES, airframeById, eraOf, type Airframe } from "../data/aircrafts";
-import { ERAS, missionEraOf } from "../data/eras";
+import { AIRFRAMES, STARTER_FRAME_ID, airframeById, eraOf, type Airframe, type EraId } from "../data/aircrafts";
+import { ERAS } from "../data/eras";
 import { combatantById } from "../data/combatants";
 import { QUALITIES, type Quality } from "../data/config";
 import { upgradeById, type Upgrade } from "../data/upgrades";
@@ -19,7 +19,8 @@ import { button, dialog } from "../content/2d/components";
 import type { ThreatView } from "../content/2d/combatHints";
 
 type Tab = "sortie" | "equipment" | "shop" | "reservedA" | "showroom";
-type Modal = "" | "settings" | "help" | "pause" | "upgrade" | "showroomAircraft";
+type Modal = "" | "settings" | "help" | "pause" | "upgrade" | "showroomAircraft" | "mission";
+const missionEras = Object.keys(ERAS) as EraId[];
 const tabs: { id: Tab; name: string; icon: string }[] = [
   { id: "shop", name: "商店", icon: "crate" },
   { id: "equipment", name: "装备", icon: "wrench" },
@@ -48,6 +49,7 @@ export class GameApp {
   private showroomOrbitYaw = 0;
   private showroomOrbitPitch = 0.14;
   private tab: Tab = "sortie";
+  private sortieEra: EraId = "pioneer";
   private preview = 0;
   private highlight = "";
   private screen: "meta" | "launching" | "battle" | "result" = "meta";
@@ -70,7 +72,7 @@ export class GameApp {
   private battleStatus?: BattleStatus;
 
   constructor(private root: HTMLElement) {
-    this.displayWorld = new World(airframeById(this.save.data.equipped), 1);
+    this.displayWorld = new World(this.sortieFrame, 1);
     this.audio.enabled = this.save.data.sound;
     this.audio.vibration = this.save.data.vibration;
     root.innerHTML = `
@@ -191,15 +193,17 @@ export class GameApp {
     const frame =
       this.tab === "equipment" || this.tab === "showroom"
         ? AIRFRAMES[this.preview]
-        : airframeById(this.save.data.equipped);
+        : this.sortieFrame;
     if (this.tab === "showroom") {
       if (!this.showroom || this.showroom.player.frame.id !== frame.id)
         this.rebuildShowroom(frame.id);
       this.renderer?.setPlayer(this.showroom!.player);
       this.renderer?.setDisplayOrbit(this.showroomOrbitYaw, this.showroomOrbitPitch);
     } else {
-      if (this.displayWorld.player.frame.id !== frame.id)
+      if (this.displayWorld.player.frame.id !== frame.id) {
+        this.displayWorld.dispose();
         this.displayWorld = new World(frame, 1);
+      }
       this.renderer?.setPlayer(this.displayWorld.player);
     }
     this.root
@@ -207,16 +211,16 @@ export class GameApp {
       .classList.toggle("equipment-view", this.tab === "equipment");
     const isUnlocked = this.save.data.unlocked.includes(frame.id),
       isEquipped = this.save.data.equipped === frame.id;
-    const era = eraOf(frame), missionEra = missionEraOf(frame), mission = ERAS[missionEra];
+    const era = eraOf(frame), mission = ERAS[this.sortieEra];
     const eraFrames = AIRFRAMES.filter((candidate) => eraOf(candidate) === era);
-    const eraIndex = Object.keys(ERAS).indexOf(missionEra);
+    const missionNumber = String(missionEras.indexOf(this.sortieEra) + 1).padStart(2, "0");
     let body = "";
     if (this.tab === "sortie")
       body = `
       <div class="home-heading"><div class="eyebrow"><span class="live-dot"></span> ALL SYSTEMS READY</div><h1>风起，<br>即刻出发<span>。</span></h1><p>云层之上，下一段航线由你书写。</p></div>
       <div class="plane-caption"><span>01 / ${frame.role}</span><i></i><span>FLYING FREE</span></div>
-      <section class="home-card"><div class="card-heading"><div><span class="eyebrow">YOUR AIRCRAFT</span><h2>${frame.name}</h2></div><button class="text-button" data-tab="equipment">更换机体 ${icon("arrow")}</button></div><p class="frame-description">${frame.description}</p>${this.stats(frame)}${this.weapons(frame)}
-      <div class="mission-strip"><span class="mission-number">${String(eraIndex + 1).padStart(2, "0")}</span><div><strong>${mission.mission}</strong><small>${mission.label} / 无尽巡航</small></div><span class="weather">晴间多云<br><b>微风 02 kn</b></span></div>
+      <section class="home-card"><div class="card-heading"><div><span class="eyebrow">本关座机</span><h2>${frame.name}</h2></div>${this.sortieEra === "pioneer" ? "" : `<button class="text-button" data-tab="equipment">更换机体 ${icon("arrow")}</button>`}</div><p class="frame-description">${frame.description}</p>${this.stats(frame)}${this.weapons(frame)}
+      <div class="mission-strip"><span class="mission-number">${missionNumber}</span><div><strong>${mission.mission}</strong><small>${mission.label} / 无尽巡航</small></div>${button("missions", `选关 ${icon("chevron")}`, "secondary mission-select", 'aria-haspopup="dialog"')}</div>
       <button class="launch-button" data-action="launch" ${this.renderer ? "" : "disabled"}><span><small>READY WHEN YOU ARE</small>出击</span>${icon("arrow")}</button>
       <div class="home-footer"><button data-action="help">${icon("help")} 飞行指南</button><span>最高积分 <b>${fmt(this.save.data.bestScore)}</b></span></div></section>`;
     else if (this.tab === "equipment")
@@ -314,6 +318,9 @@ export class GameApp {
   private onShowroomPointerUp(e: PointerEvent) {
     if (this.showroomPointer?.id === e.pointerId) this.showroomPointer = undefined;
   }
+  private get sortieFrame() {
+    return airframeById(this.sortieEra === "pioneer" ? STARTER_FRAME_ID : this.save.data.equipped);
+  }
   private launch() {
     if (this.screen !== "meta" || !this.renderer) return;
     this.tab = "sortie";
@@ -328,12 +335,12 @@ export class GameApp {
     )!;
     button.disabled = true;
     button.innerHTML =
-      `<span><small>${ERAS[missionEraOf(airframeById(this.save.data.equipped))].mission}</small>准备起飞</span><span class="loading-spinner"></span>`;
+      `<span><small>${ERAS[this.sortieEra].mission}</small>准备起飞</span><span class="loading-spinner"></span>`;
     this.audio.play("upgrade");
   }
   private startBattle() {
     this.screen = "battle";
-    this.world = new World(airframeById(this.save.data.equipped));
+    this.world = new World(this.sortieFrame, undefined, { missionEra: this.sortieEra });
     if (this.renderer) {
       const renderer = this.renderer;
       this.world.isSpawnVisible = (x, y, z, radius) => renderer.isSpawnVisible(x, y, z, radius);
@@ -531,10 +538,21 @@ export class GameApp {
       content = `<div class="modal-heading"><span class="eyebrow">YOUR FIRST SORTIE</span><h2>让第一次飞行更从容。</h2></div><div class="help-step">${icon("plane")}<div><b>拖动中央摇杆</b><p>方向决定航向，拉得越远加速越快。松手巡航并恢复能量。</p></div></div><div class="help-step">${icon("target")}<div><b>把目标留在前方</b><p>机炮自动开火。导弹需要保持目标在扇形内，直到锁定完成。</p></div></div><div class="help-step">${icon("bomb")}<div><b>切换轰炸，松杆稳定</b><p>准心变绿后点击投弹，清除地面目标。投弹后需要等待装填。</p></div></div><div class="help-step">${icon("wrench")}<div><b>收集金币，改装座驾</b><p>升级次数可以累积。点击改装升级暂停战斗，从三个部件中选择一个。</p></div></div><p class="keyboard-help">电脑：WASD / 方向键驾驶 · B 轰炸模式 · 空格投弹 · U 升级 · P / Esc 暂停</p><button class="primary" data-action="close-modal">明白了 ${icon("arrow")}</button>`;
     if (kind === "pause")
       content = `<div class="pause-emblem">${icon("pause")}</div><div class="modal-heading"><span class="eyebrow">TAKE A BREATH</span><h2>航线已为你保留。</h2><p>战斗、弹道与风场已暂停。</p></div>${button("resume", `继续飞行 ${icon("play")}`, "primary")}${button("settings", `飞行设置 ${icon("gear")}`, "secondary")}${button("retreat", "结束本次飞行并结算", "text-button retreat-button")}`;
+    if (kind === "mission") {
+      const choices = missionEras.map((id, index) => {
+        const mission = ERAS[id];
+        const selected = id === this.sortieEra;
+        const aircraft = id === "pioneer" ? airframeById(STARTER_FRAME_ID) : airframeById(this.save.data.equipped);
+        return button("select-mission",
+          `<span class="mission-number">${String(index + 1).padStart(2, "0")}</span><span><strong>${mission.mission}</strong><small>${aircraft.name}</small></span>${icon(selected ? "check" : "chevron")}`,
+          "secondary mission-option", `data-mission="${id}" aria-pressed="${selected}"`);
+      }).join("");
+      content = `<div class="modal-heading"><h2>选择关卡</h2></div><div class="mission-options">${choices}</div>`;
+    }
     if (kind === "upgrade" && this.world)
       content = `<div class="modal-heading"><span class="eyebrow">FIELD MODIFICATION / LV.${this.world.level}</span><h2>为下一段航线改装<span>。</span></h2><p>选择一个部件 · 战斗已暂停 · 可用 ${this.world.upgradesAvailable} 次</p></div><div class="upgrade-choices">${this.world.choices.map((u) => `<button class="upgrade-card ${u.rarity}" data-upgrade="${u.id}">${planePreview(u.preview, this.world?.player.frame.geometryProfile === "fokkerDr1" ? u.id : undefined)}<div><span class="upgrade-rarity">${u.rarity === "common" ? "标准" : u.rarity === "rare" ? "稀有" : "史诗"} / ${u.tag}</span><h3>${u.name}</h3><p class="upgrade-gain">${u.benefit}</p><p class="upgrade-cost">${u.cost}</p><p class="upgrade-delta">${this.upgradeComparison(u)}</p><small>${u.description}</small></div>${icon("arrow")}</button>`).join("")}</div>`;
-    const label = { settings: "飞行设置", help: "飞行指南", pause: "暂停游戏", upgrade: "选择升级", showroomAircraft: "选择展厅机体" }[kind] ?? "页面";
-    const close = kind === "settings" || kind === "help"
+    const label = { settings: "飞行设置", help: "飞行指南", pause: "暂停游戏", upgrade: "选择升级", showroomAircraft: "选择展厅机体", mission: "选择关卡" }[kind] ?? "页面";
+    const close = kind === "settings" || kind === "help" || kind === "mission"
       ? button("close-modal", icon("close"), "icon-button modal-close", 'aria-label="关闭"')
       : "";
     this.overlays.innerHTML = dialog(label, close + content, kind === "upgrade" ? "upgrade-modal" : "");
@@ -641,6 +659,17 @@ export class GameApp {
       return;
     }
     switch (el.dataset.action) {
+      case "missions":
+        if (this.screen === "meta" && this.tab === "sortie") this.showModal("mission");
+        break;
+      case "select-mission": {
+        const selected = missionEras.find((id) => id === el.dataset.mission);
+        if (this.screen !== "meta" || this.modal !== "mission" || !selected) break;
+        this.sortieEra = selected;
+        this.showMeta();
+        this.ui.querySelector<HTMLElement>(".mission-select")?.focus();
+        break;
+      }
       case "launch":
         this.launch();
         break;
@@ -824,6 +853,7 @@ export class GameApp {
         const events = previewWorld?.consumeEvents();
         this.renderer?.render(previewWorld, dt, {
           display: true,
+          missionEra: this.tab === "sortie" ? this.sortieEra : undefined,
           showroom: !!previewWorld,
           highlight: this.highlight,
           launching: this.launchTime,
