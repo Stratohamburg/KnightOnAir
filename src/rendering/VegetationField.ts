@@ -57,13 +57,11 @@ function treeGeometry() {
   for (let vertex = 0; vertex < trunkColors.length; vertex += 3) bark.toArray(trunkColors, vertex);
   trunk.setAttribute("color", new THREE.BufferAttribute(trunkColors, 3));
 
-  // Multi-sphere fluffy storybook crown with radial outward soft normals.
-  // SphereGeometry has an exact north pole at y = +1, so the top puff lands cleanly at y = 2.685.
+  // 3 ultra-low-poly fluffy storybook puffs with radial outward soft normals (north pole at y = 2.685).
   const puffs = [
-    { x: 0, y: 1.985, z: 0, rx: .76, ry: .70, rz: .76, tint: new THREE.Color("#c8ea9b") },
-    { x: -.42, y: 1.56, z: .26, rx: .56, ry: .50, rz: .56, tint: new THREE.Color("#a9dc88") },
-    { x: .44, y: 1.60, z: .18, rx: .54, ry: .48, rz: .54, tint: new THREE.Color("#b8e492") },
-    { x: -.04, y: 1.54, z: -.40, rx: .56, ry: .50, rz: .56, tint: new THREE.Color("#9fd284") },
+    { x: 0, y: 1.985, z: 0, rx: .78, ry: .70, rz: .78, tint: new THREE.Color("#c8ea9b") },
+    { x: -.38, y: 1.54, z: .24, rx: .58, ry: .50, rz: .58, tint: new THREE.Color("#a8db88") },
+    { x: .36, y: 1.56, z: -.24, rx: .56, ry: .48, rz: .56, tint: new THREE.Color("#b6e290") },
   ];
   const crownCenter = new THREE.Vector3(0, 1.55, 0);
   const normalVec = new THREE.Vector3();
@@ -72,7 +70,7 @@ function treeGeometry() {
   const color = new THREE.Color();
   const components: THREE.BufferGeometry[] = [trunk];
   for (const puff of puffs) {
-    const sphere = new THREE.SphereGeometry(1, 6, 4);
+    const sphere = new THREE.SphereGeometry(1, 5, 3);
     const pos = sphere.attributes.position;
     const norm = sphere.attributes.normal;
     const colors = new Float32Array(pos.count * 3);

@@ -7,13 +7,13 @@ import {
 } from "./CloudscapeLayout";
 import { bakeCloudWall, cloudWall, cloudWallWeight, sampleCloudWall } from "./CloudWall";
 import {
-  billowFineRiseRate, billowRiseRate, cloudBillowOffset, cloudFlowGLSL, cloudMorph,
-  cloudSelfMorphSpeed, cloudVelocity, distantCoverageMorph, distantRoofMorph,
-  distantVerticalMorph, morphWallDensity, smoothCloudFlow,
+  billowRiseRate, cloudBillowOffset, cloudFlowGLSL, cloudMorph, cloudSelfMorphSpeed,
+  cloudVelocity, distantCoverageMorph, distantRoofMorph, distantVerticalMorph,
+  morphWallDensity, smoothCloudFlow,
 } from "./CloudFlow";
 
 const shadowSpan = 352;
-// Leave a view of the estuary while keeping the banks dense away from its opening.
+// Leave a wide sunny view of the estuary while keeping the flanking cloud walls towering and crisp.
 const estuaryOpening = { centerX: -8, inner: 16, outer: 36, centerZ: -13, length: 37, fade: 70, clearance: .94 };
 
 export interface CloudAtmospherePalette {
@@ -35,7 +35,7 @@ const quadVertex = `
 const cloudSampling = `
   precision highp sampler3D;
   uniform sampler2D columns;
-  uniform sampler3D detailNoise, billowNoise, wallVolume;
+  uniform sampler3D billowNoise, wallVolume;
   uniform vec2 drift;
   uniform float detailStrength;
   uniform vec3 playerPosition, playerVelocity;
@@ -46,82 +46,37 @@ const cloudSampling = `
 
   const vec3 wallMin = vec3(${cloudWall.min.map(value => value.toFixed(1)).join(", ")});
   const vec3 wallMax = vec3(${cloudWall.max.map(value => value.toFixed(1)).join(", ")});
+`;
 
-  // Returns vec4(density, heightFraction, macroSun, ridgeBoost) for seamless 3D billowing clouds.
-  vec4 sampleDistantBillow(vec3 advected, vec2 morph, vec3 warp, float detailLod) {
-    vec2 cell = fract(advected.xz / ${cloudMapSpan.toFixed(1)} + .5);
-    vec4 column = texture2D(columns, cell);
+const cloudFragment = `
+  ${cloudSampling}
+  uniform sampler2D worldDepth;
+  uniform mat4 inverseProjection, cameraWorld;
+  uniform int sampleCount;
+  uniform vec3 distanceColor, cloudLit, cloudShadow, cloudRim;
+  varying vec2 vUv;
+  out vec4 cloudColor;
 
-    // Layer 1: Low-altitude billowing cloud sea below flight level (y ~ 12.5..22.8).
-    float seaDensity = 0.;
-    float seaHeight = 0.;
-    if (advected.y < 24.5) {
-      vec3 seaUv = vec3(advected.x + warp.x * .85, (advected.y + warp.y * .55 - selfTime * ${(billowRiseRate * .7).toFixed(2)}) * 1.45, advected.z + warp.z * .85) * .018;
-      vec3 seaNoise = texture(billowNoise, seaUv).rgb;
-      float seaBase = ${cloudBase.toFixed(1)} + .5 + (seaNoise.r - .5) * 3.0;
-      float seaTop = 19.8 + (seaNoise.r - .40) * 6.4 + (seaNoise.g - .48) * 3.2 * detailLod + morph.x * .35;
-      float seaSpan = max(seaTop - seaBase, 2.5);
-      seaHeight = clamp((advected.y - seaBase) / seaSpan, 0., 1.);
-      float seaProfile = smoothstep(0., .24, seaHeight) * (1. - smoothstep(.56, 1., seaHeight));
-      float seaMask = smoothstep(.32, .70, seaNoise.r * .62 + seaNoise.g * .38 + column.b * .24 + morph.y * .06);
-      float fineErode = (1. - seaNoise.b) * .28 * detailLod;
-      seaDensity = clamp((seaMask * seaProfile - fineErode) * 1.05, 0., 1.);
-    }
-
-    // Layer 2: Mid/high 3D cumulus ridges & billowing towers across the entire world.
-    float bankDensity = 0.;
-    float bankHeight = 0.;
-    if (column.b >= .18) {
-      float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r) + morph.x * ${distantVerticalMorph};
-      float ceilingY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.g);
-      if (advected.y >= floorY - 4. && advected.y <= ceilingY + 14.) {
-        vec3 macroUv = vec3(
-          advected.x + warp.x,
-          (advected.y + warp.y - selfTime * ${billowRiseRate}) * 1.05,
-          advected.z + warp.z
-        ) * .022;
-        vec3 macro = texture(billowNoise, macroUv).rgb;
-        vec3 fineUv = vec3(
-          advected.x + warp.x * 1.35,
-          (advected.y + warp.y * 1.2 - selfTime * ${billowFineRiseRate}) * 1.15,
-          advected.z + warp.z * 1.35
-        ) * .054;
-        vec3 fine = texture(billowNoise, fineUv).rgb;
-
-        float erode = (macro.r - .50) * 9.5 + (fine.g - .45) * 4.4 * detailLod;
-        float roof = ceilingY + erode + morph.x * ${distantVerticalMorph} + morph.y * ${distantRoofMorph};
-        float span = max(roof - floorY, 4.);
-        bankHeight = clamp((advected.y - floorY) / span, 0., 1.);
-
-        // Rounded cumulus dome profile: fuller mid-belly, crisp cauliflower puffs, flat-ish bottom shelf.
-        float bottomProfile = smoothstep(-2.4, 5.0, advected.y - floorY);
-        float topDome = 1. - smoothstep(.52, 1.02, bankHeight + (1. - macro.r) * .28);
-        float domeCoverage = smoothstep(
-          .22, .62,
-          column.b + (macro.r - .48) * .32 + morph.y * ${distantCoverageMorph}
-        );
-        float billowCarve = mix(1., macro.r * .54 + macro.g * .46, .52 + .42 * detailLod);
-        float edgeErosion = (1. - fine.b) * (.25 + .26 * bankHeight) * detailLod;
-        bankDensity = clamp((domeCoverage * bottomProfile * topDome * billowCarve - edgeErosion) * 1.55, 0., 1.);
-      }
-    }
-
-    float density = max(bankDensity, seaDensity);
-    float heightFrac = bankDensity >= seaDensity ? bankHeight : seaHeight * .55;
-    float macroSun = mix(.55 + .45 * seaHeight, column.a, step(seaDensity, bankDensity + .02));
-    return vec4(density, heightFrac, macroSun, 0.);
+  // Deterministic per-pixel Interleaved Gradient Noise (static when paused, eliminates raymarch slicing).
+  float ign(vec2 pixel) {
+    return fract(52.9829189 * fract(dot(pixel, vec2(.06711056, .00583715))));
   }
 
-  vec4 sampleCloudField(vec3 at, float distance, bool applyPlayer) {
+  // Returns vec4(density, heightFrac, directSun, cavityRim).
+  // Strict 2D early-out guarantees 0 3D texture taps in sunny clear sky between cloud groups.
+  vec4 sampleCloudStep(vec3 at, float distance) {
     float interaction = 1.;
     float cavityRim = 0.;
-    if (applyPlayer) {
+
+    // Only pay player wake math when sample point is within local interaction radius.
+    vec3 playerDelta = at - playerPosition;
+    float playerDistSq = dot(playerDelta, playerDelta);
+    if (playerDistSq < 340.) {
       vec2 playerVelocityXZ = playerVelocity.xz;
       float playerSpeed = length(playerVelocityXZ);
       vec2 playerDirection = playerSpeed > .01
         ? playerVelocityXZ / playerSpeed
         : vec2(.0, 1.0);
-      vec3 playerDelta = at - playerPosition;
       float verticalInfluence = exp(-pow(playerDelta.y / max(playerRadius * 1.35, .001), 2.));
       vec2 playerOffset = playerDelta.xz;
       float bodyInfluence = exp(-dot(playerOffset, playerOffset) /
@@ -137,123 +92,139 @@ const cloudSampling = `
       vec2 disturbance = pushDirection * bodyInfluence * playerRadius * .76 -
         playerDirection * wakeInfluence * playerRadius * .56;
       at.xz += disturbance;
-      // Compressed billowing cloud rim around the displaced aircraft cavity.
       cavityRim = smoothstep(.05, .34, bodyInfluence) * (1. - smoothstep(.34, .82, bodyInfluence)) * verticalInfluence;
       interaction = clamp(1. - bodyInfluence * .98 - wakeInfluence * .44, .025, 1.);
     }
 
-    vec3 advected = at - vec3(drift.x, 0., drift.y);
-    float detailLod = detailStrength * (1. - smoothstep(130., 340., distance));
-    vec2 morph = cloudMorph(advected);
-    vec3 warp = billowWarp(billowNoise, advected) * (.55 + .45 * detailLod);
-
-    vec2 edge = min(advected.xz - wallMin.xz, wallMax.xz - advected.xz);
-    vec2 fade = smoothstep(vec2(0.), vec2(${cloudWall.edgeFade.map(value => value.toFixed(1)).join(", ")}), edge);
-    float wallLod = 1. - smoothstep(${cloudWall.detailDistance[0].toFixed(1)}, ${cloudWall.detailDistance[1].toFixed(1)}, distance);
-    float wallWeight = fade.x * fade.y * wallLod;
-
-    vec4 distant = wallWeight < .995 ? sampleDistantBillow(advected, morph, warp, detailLod) : vec4(0.);
-    vec4 result = distant;
-
-    if (wallWeight > 0.) {
-      vec3 wallPos = advected + vec3(warp.x * .65, -morph.x + warp.y * .5, warp.z * .65);
-      vec3 wallUv = (wallPos - wallMin) / (wallMax - wallMin);
-      vec2 voxel = texture(wallVolume, clamp(wallUv, 0., 1.)).rg;
-      vec3 billow = texture(billowNoise, vec3(
-        advected.x + warp.x * 1.1,
-        (advected.y + warp.y - selfTime * ${billowFineRiseRate}) * 1.1,
-        advected.z + warp.z * 1.1
-      ) * .048).rgb;
-      float baseDensity = morphWallDensity(voxel.r, morph.y);
-      float edgeBand = smoothstep(0., .55, baseDensity) * (1. - smoothstep(.55, 1., baseDensity));
-      float carved = clamp(baseDensity + (billow.r - .46) * .42 * edgeBand - (1. - billow.b) * .22 * edgeBand * detailLod, 0., 1.);
-      float wallHeight = clamp((advected.y - ${cloudBase.toFixed(1)}) / ${(cloudTop - cloudBase).toFixed(1)}, 0., 1.);
-      float bakedSun = exp(-voxel.g * ${cloudWall.maxOpticalDepth.toFixed(1)} * .82);
-      vec4 wallSample = vec4(carved, wallHeight, bakedSun, 0.);
-      result = mix(distant, wallSample, wallWeight);
-    }
-
-    // Apply estuary opening in world coordinates so the river mouth stays navigable and dramatic.
+    // World-space estuary opening keeps the river mouth sunny and open.
     float across = 1. - smoothstep(${estuaryOpening.inner}., ${estuaryOpening.outer}., abs(at.x - (${estuaryOpening.centerX}.)));
     float along = 1. - smoothstep(${estuaryOpening.length}., ${estuaryOpening.fade}., abs(at.z - (${estuaryOpening.centerZ}.)));
     float openingMask = 1. - ${estuaryOpening.clearance} * across * along;
+    if (openingMask <= .065) return vec4(0.);
 
-    float baseBeforeRim = result.r * openingMask;
-    float pushedDensity = clamp(baseBeforeRim * interaction + cavityRim * smoothstep(.04, .28, baseBeforeRim) * .28, 0., 1.);
-    return vec4(pushedDensity, result.g, result.b, cavityRim);
-  }
-`;
+    // Macro horizontal motion strictly follows WindField drift.
+    vec3 advected = at - vec3(drift.x, 0., drift.y);
 
-const cloudFragment = `
-  ${cloudSampling}
-  uniform sampler2D worldDepth;
-  uniform mat4 inverseProjection, cameraWorld;
-  uniform int sampleCount, sunSteps;
-  uniform vec3 distanceColor, cloudLit, cloudShadow, cloudRim, valleyFog;
-  varying vec2 vUv;
-  out vec4 cloudColor;
-
-  // Deterministic per-pixel Interleaved Gradient Noise (static when paused, eliminates raymarch slicing).
-  float ign(vec2 pixel) {
-    return fract(52.9829189 * fract(dot(pixel, vec2(.06711056, .00583715))));
-  }
-
-  float hgPhase(float cosTheta, float g) {
-    float g2 = g * g;
-    return (1. - g2) / (4. * 3.14159265 * pow(max(1. + g2 - 2. * g * cosTheta, .001), 1.5));
-  }
-
-  float marchSunLight(vec3 pos, float dist, float macroSun) {
-    float optical = 0.;
-    float stepDist = 2.4;
-    for (int s = 0; s < 3; s++) {
-      if (s >= sunSteps) break;
-      vec3 sunPos = pos + sunDirection * stepDist;
-      if (sunPos.y >= ${cloudTop.toFixed(1)}) break;
-      float d = sampleCloudField(sunPos, dist + stepDist, true).r;
-      optical += d * stepDist * .22;
-      stepDist *= 2.1;
+    // Check 1: local coastal wall bounding box.
+    vec2 edge = min(advected.xz - wallMin.xz, wallMax.xz - advected.xz);
+    float wallWeight = 0.;
+    if (edge.x > 0. && edge.y > 0. && distance < ${cloudWall.detailDistance[1].toFixed(1)}) {
+      vec2 fade = smoothstep(vec2(0.), vec2(${cloudWall.edgeFade.map(value => value.toFixed(1)).join(", ")}), edge);
+      float wallLod = 1. - smoothstep(${cloudWall.detailDistance[0].toFixed(1)}, ${cloudWall.detailDistance[1].toFixed(1)}, distance);
+      wallWeight = fade.x * fade.y * wallLod;
     }
-    // Combine local real-time self-shadowing with macro ridge occlusion for crisp 3D cauliflower depth.
-    float localBeer = exp(-optical * 1.35);
-    float localMulti = .48 * exp(-optical * .34);
-    float localEnergy = max(localBeer, localMulti);
-    return mix(macroSun, localEnergy, .82) * (.44 + .56 * macroSun);
+
+    // Check 2: 2D grouped cloud column map (cheap 2D tap).
+    vec2 cell = fract(advected.xz / ${cloudMapSpan.toFixed(1)} + .5);
+    vec4 column = wallWeight < .995 ? texture2D(columns, cell) : vec4(0.);
+
+    float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r);
+    float ceilingY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.g);
+    bool hasBank = wallWeight < .995 && column.b >= .22 && advected.y >= floorY - 3.5 && advected.y <= ceilingY + 11.5;
+
+    // Early-out: sunny clear sky between cloud groups -> 0 3D texture taps!
+    if (!hasBank && wallWeight <= 0.) return vec4(0.);
+
+    // Zero-texture analytic slow local shift & morph phase.
+    vec2 morph = analyticMorph(advected);
+    vec3 shift = localBillowShift(advected);
+    float detailLod = detailStrength * (1. - smoothstep(105., 210., distance));
+
+    // Single rising 3D billowing texture tap + single sun-offset directional derivative tap.
+    vec3 billowUv = vec3(
+      advected.x + shift.x,
+      (advected.y + shift.y - selfTime * ${billowRiseRate}) * 1.08,
+      advected.z + shift.z
+    ) * .031;
+    vec3 billow = texture(billowNoise, billowUv).rgb;
+    vec2 sunSample = texture(billowNoise, billowUv + sunDirection * .068).rg;
+    float lobeRelief = ((billow.r - sunSample.r) * 1.15 + (billow.g - sunSample.g) * .48 * detailLod);
+
+    float bankDensity = 0.;
+    float bankHeight = 0.;
+    float bankSun = 0.;
+    if (hasBank) {
+      float localFloor = floorY + morph.x * ${distantVerticalMorph};
+      float erode = (billow.r - .50) * 7.8 + (billow.g - .46) * 3.1 * detailLod;
+      float roof = ceilingY + erode + morph.x * ${distantVerticalMorph} + morph.y * ${distantRoofMorph};
+      float span = max(roof - localFloor, 3.5);
+      bankHeight = clamp((advected.y - localFloor) / span, 0., 1.);
+
+      // Plump, solid cumulus silhouette with crisp billowing cauliflower domes on top.
+      float bottomShelf = smoothstep(-1.8, 4.4, advected.y - localFloor);
+      float topDome = 1. - smoothstep(.58, 1.0, bankHeight + (1. - billow.r) * .22);
+      float coverage = smoothstep(.24, .56, column.b + (billow.r - .48) * .26 + morph.y * ${distantCoverageMorph});
+      float edgeErode = (1. - billow.b) * (.18 + .20 * bankHeight) * detailLod;
+      bankDensity = clamp((coverage * bottomShelf * topDome * mix(.85, 1.28, billow.r) - edgeErode) * 1.48, 0., 1.);
+
+      // Macro sunlight + real-time 3D directional derivative relief + multi-scatter lift.
+      float macroEnergy = max(column.a, .38 * sqrt(max(column.a, 0.)));
+      bankSun = clamp(macroEnergy * (.42 + .58 * smoothstep(.04, .92, bankHeight)) + lobeRelief * .82 + (billow.r - .46) * .28, 0., 1.35);
+    }
+
+    float density = bankDensity;
+    float heightFrac = bankHeight;
+    float directSun = bankSun;
+
+    if (wallWeight > 0.) {
+      vec3 wallPos = advected + vec3(shift.x * .55, -morph.x * .65 + shift.y * .45, shift.z * .55);
+      vec3 wallUv = clamp((wallPos - wallMin) / (wallMax - wallMin), 0., 1.);
+      vec2 voxel = texture(wallVolume, wallUv).rg;
+      float baseWall = morphWallDensity(voxel.r, morph.y);
+      // Carve solid billowing cauliflower puffs directly into the towering coastal cloud wall.
+      float edgeZone = smoothstep(0., .6, baseWall) * (1. - smoothstep(.65, 1., baseWall));
+      float wallDensity = clamp(
+        baseWall * 1.18 + (billow.r - .45) * .48 * edgeZone - (1. - billow.b) * .16 * edgeZone * detailLod,
+        0., 1.
+      );
+      float wallHeight = clamp((advected.y - ${cloudBase.toFixed(1)}) / ${(cloudTop - cloudBase).toFixed(1)}, 0., 1.);
+      float sunDepth = voxel.g * ${cloudWall.maxOpticalDepth.toFixed(1)};
+      // Multi-scattering keeps thick cumulus undersides luminous pastel sky-blue instead of muddy dark gray.
+      float wallBeer = exp(-sunDepth * 1.22);
+      float wallMulti = .52 * exp(-sunDepth * .28);
+      float wallSun = clamp(max(wallBeer, wallMulti) + lobeRelief * .76 + (billow.r - .46) * .22, 0., 1.35);
+
+      density = mix(density, wallDensity, wallWeight);
+      heightFrac = mix(heightFrac, wallHeight, wallWeight);
+      directSun = mix(directSun, wallSun, wallWeight);
+    }
+
+    float baseBeforeRim = density * openingMask;
+    float pushedDensity = clamp(baseBeforeRim * interaction + cavityRim * smoothstep(.04, .26, baseBeforeRim) * .32, 0., 1.);
+    return vec4(pushedDensity, heightFrac, directSun, cavityRim);
   }
 
-  void integrateCloud(vec3 eye, vec3 ray, float travel, float stepSize, float phase, float forwardGlow,
+  void integrateCloud(vec3 eye, vec3 ray, float travel, float stepSize, float forwardGlow,
       inout float transmittance, inout vec3 scatter) {
-    vec3 samplePos = eye + ray * travel;
-    vec4 cloud = sampleCloudField(samplePos, travel, true);
+    vec4 cloud = sampleCloudStep(eye + ray * travel, travel);
     float density = cloud.r;
-    if (density < .004) return;
+    if (density < .006) return;
 
     float heightFrac = cloud.g;
-    float macroSun = cloud.b;
+    float directSun = cloud.b;
     float cavityRim = cloud.a;
 
-    float lightEnergy = marchSunLight(samplePos, travel, macroSun);
-    // Powder effect gives fluffy cauliflower lobes clear dark-crease vs bright-ridge contrast.
-    float powder = 1. - .68 * exp(-density * 3.1);
-    float directSun = clamp(lightEnergy * mix(1., powder, .68) * phase, 0., 1.85);
+    // Powder effect gives fluffy top-down cumulus puffs strong crease depth and sunny pop.
+    float powder = 1. - .58 * exp(-density * 3.2);
+    float litFactor = smoothstep(.08, .92, directSun * mix(1., powder, .55));
 
-    // Sky-like luminous palette: rich pastel blue/lavender shadows, valley bounce at base, creamy sunlit crowns.
-    vec3 deepShadow = cloudShadow * .68;
-    vec3 bottomBounce = mix(deepShadow, valleyFog * .84, .24);
-    vec3 ambientColor = mix(bottomBounce, mix(cloudShadow * .9, cloudLit, .38), smoothstep(.04, .92, heightFrac));
-    vec3 directColor = cloudLit * (1.36 + .28 * smoothstep(.22, .95, heightFrac));
-    vec3 color = mix(ambientColor, directColor, smoothstep(.08, .92, directSun));
+    // Daylight Prairie sunny cumulus colors: bright cream-white sunlit crowns & clear sky-blue shadows.
+    vec3 deepShadow = cloudShadow * .76;
+    vec3 midShadow = mix(cloudShadow, cloudLit, .32);
+    vec3 shadowCol = mix(deepShadow, midShadow, smoothstep(.06, .92, heightFrac));
+    vec3 sunlitCol = cloudLit * (1.38 + .26 * smoothstep(.2, .95, heightFrac));
+    vec3 color = mix(shadowCol, sunlitCol, litFactor);
 
-    // Dual-lobe silver lining + pushed wingtip rim highlight.
-    float rim = forwardGlow * (1. - density * .65) * (.22 + .78 * lightEnergy);
-    color += cloudRim * (rim * .82 + cavityRim * .32 * (.4 + .6 * lightEnergy));
+    // Sunlit silver/gold rim + wingtip cavity glow.
+    float rim = forwardGlow * (1. - density * .6) * (.25 + .75 * litFactor);
+    color += cloudRim * (rim * .72 + cavityRim * .35 * (.45 + .55 * litFactor));
 
-    // Aerial perspective blends distant cloud banks softly into the glowing horizon while preserving near relief.
-    float aerial = (1. - exp(-max(0., travel - 35.) * .0026)) * .62;
-    vec3 horizonMix = mix(distanceColor, cloudRim, forwardGlow * .24);
-    color = mix(color, horizonMix, aerial);
+    // Only apply very gentle aerial blend near the far top edge of the top-down view.
+    float aerial = smoothstep(125., 225., travel) * .38;
+    color = mix(color, distanceColor, aerial);
 
-    float opacity = 1. - exp(-density * stepSize * .175);
+    // Higher extinction makes each cloud group feel thick, solid, and impactful rather than thin mist.
+    float opacity = 1. - exp(-density * stepSize * .21);
     scatter += transmittance * opacity * color;
     transmittance *= 1. - opacity;
   }
@@ -269,7 +240,8 @@ const cloudFragment = `
     float bottom = (${cloudBase.toFixed(1)} - eye.y) / vertical;
     float top = (${cloudTop.toFixed(1)} - eye.y) / vertical;
     float start = max(0., min(bottom, top));
-    float end = min(min(surface, 440.), max(bottom, top));
+    // Tighten integration strictly to the visible top-down frustum depth (0 budget spent off-screen).
+    float end = min(min(surface, 220.), max(bottom, top));
     if (end <= start) {
       cloudColor = vec4(0.);
       return;
@@ -284,50 +256,81 @@ const cloudFragment = `
     float wallEnd = min(min(end, ${cloudWall.detailDistance[1].toFixed(1)}), min(leave.x, min(leave.y, leave.z)));
 
     float stride = (end - start) / float(sampleCount);
-    float jitter = ign(gl_FragCoord.xy);
-    float travel = start + jitter * stride;
+    float travel = start + ign(gl_FragCoord.xy) * stride;
     float transmittance = 1.;
     vec3 scatter = vec3(0.);
-    float cosTheta = dot(ray, sunDirection);
-    float phase = clamp(.72 + .52 * (hgPhase(cosTheta, .68) * .65 + hgPhase(cosTheta, -.24) * .35) * 4. * 3.14159265, .75, 1.55);
-    float forwardGlow = pow(max(0., cosTheta), 4.);
+    float forwardGlow = pow(max(0., dot(ray, sunDirection)), 4.);
 
     for (int i = 0; i < 24; i++) {
-      if (i >= sampleCount || transmittance < .018 || travel >= end) break;
+      if (i >= sampleCount || transmittance < .02 || travel >= end) break;
       if (wallEnd > wallStart && travel < wallEnd && travel + stride > wallStart) {
-        integrateCloud(eye, ray, travel + stride * .25, stride * .5, phase, forwardGlow, transmittance, scatter);
-        if (transmittance >= .018) {
-          integrateCloud(eye, ray, travel + stride * .75, stride * .5, phase, forwardGlow, transmittance, scatter);
+        integrateCloud(eye, ray, travel + stride * .25, stride * .5, forwardGlow, transmittance, scatter);
+        if (transmittance >= .02) {
+          integrateCloud(eye, ray, travel + stride * .75, stride * .5, forwardGlow, transmittance, scatter);
         }
       } else {
-        integrateCloud(eye, ray, travel, stride, phase, forwardGlow, transmittance, scatter);
+        integrateCloud(eye, ray, travel, stride, forwardGlow, transmittance, scatter);
       }
       travel += stride;
     }
-    // Pack radiance into an RGBA8 target with headroom for luminous highlights.
+    // Pack radiance into an RGBA8 target with headroom for luminous sunny highlights.
     cloudColor = vec4(scatter * .5, 1. - transmittance);
   }
 `;
 
+// Fast macro cloud shadow pass: uses 6 vertical samples over 2D columns + local wall volume (zero 3D billow noise).
 const cloudShadowFragment = `
   ${cloudSampling}
   uniform vec2 cloudShadowCenter;
   varying vec2 vUv;
   out vec4 shadowColor;
 
+  float macroDensity(vec3 at) {
+    float across = 1. - smoothstep(${estuaryOpening.inner}., ${estuaryOpening.outer}., abs(at.x - (${estuaryOpening.centerX}.)));
+    float along = 1. - smoothstep(${estuaryOpening.length}., ${estuaryOpening.fade}., abs(at.z - (${estuaryOpening.centerZ}.)));
+    float openingMask = 1. - ${estuaryOpening.clearance} * across * along;
+    if (openingMask <= .065) return 0.;
+
+    vec3 advected = at - vec3(drift.x, 0., drift.y);
+    vec2 edge = min(advected.xz - wallMin.xz, wallMax.xz - advected.xz);
+    float wallWeight = 0.;
+    if (edge.x > 0. && edge.y > 0.) {
+      vec2 fade = smoothstep(vec2(0.), vec2(${cloudWall.edgeFade.map(value => value.toFixed(1)).join(", ")}), edge);
+      wallWeight = fade.x * fade.y;
+    }
+
+    float bank = 0.;
+    if (wallWeight < .995) {
+      vec2 cell = fract(advected.xz / ${cloudMapSpan.toFixed(1)} + .5);
+      vec4 column = texture2D(columns, cell);
+      if (column.b >= .22) {
+        float floorY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.r);
+        float ceilingY = mix(${cloudBase.toFixed(1)}, ${cloudTop.toFixed(1)}, column.g);
+        float verticalFade = smoothstep(-2., 5., advected.y - floorY) * (1. - smoothstep(-6., 2., advected.y - ceilingY));
+        bank = smoothstep(.24, .58, column.b) * verticalFade;
+      }
+    }
+
+    float density = bank;
+    if (wallWeight > 0.) {
+      vec3 wallUv = clamp((advected - wallMin) / (wallMax - wallMin), 0., 1.);
+      density = mix(density, texture(wallVolume, wallUv).r, wallWeight);
+    }
+    return density * openingMask;
+  }
+
   void main() {
-    // sampleCloudField applies the world-to-field drift exactly once.
     vec2 receiver = cloudShadowCenter + (vUv - .5) * ${shadowSpan}.;
     vec2 solarSlope = sunDirection.xz / sunDirection.y;
-    const float stride = ${(cloudTop - cloudBase) / 14};
+    const float stride = ${((cloudTop - cloudBase) / 6).toFixed(4)};
     vec2 depth = vec2(0.);
-    for (int i = 0; i < 14; i++) {
+    for (int i = 0; i < 6; i++) {
       float height = ${cloudBase}. + (float(i) + .5) * stride;
-      float density = sampleCloudField(vec3(receiver.x + solarSlope.x * height, height,
-        receiver.y + solarSlope.y * height), 0., false).r;
+      float density = macroDensity(vec3(receiver.x + solarSlope.x * height, height,
+        receiver.y + solarSlope.y * height));
       depth += density * vec2(1., smoothstep(15., 28., height));
     }
-    vec2 sunlight = exp(-depth * stride * .115 / sunDirection.y);
+    vec2 sunlight = exp(-depth * stride * .118 / sunDirection.y);
     shadowColor = vec4(sunlight, 0., 1.);
   }
 `;
@@ -397,7 +400,6 @@ export class Cloudscape {
   private readonly map: Uint8Array;
   private readonly columns: THREE.DataTexture;
   private readonly noise: Uint8Array;
-  private readonly detail: THREE.Data3DTexture;
   private readonly billowData: Uint8Array;
   private readonly billowTexture: THREE.Data3DTexture;
   private readonly wallData: Uint8Array;
@@ -440,11 +442,6 @@ export class Cloudscape {
     this.columns.needsUpdate = true;
 
     this.noise = bakeCloudNoise(seed);
-    this.detail = new THREE.Data3DTexture(this.noise, cloudNoiseSize, cloudNoiseSize, cloudNoiseSize);
-    this.detail.format = THREE.RGFormat;
-    this.detail.minFilter = this.detail.magFilter = THREE.LinearFilter;
-    this.detail.wrapR = this.detail.wrapS = this.detail.wrapT = THREE.RepeatWrapping;
-    this.detail.needsUpdate = true;
 
     this.billowData = bakeBillowNoise(seed);
     this.billowTexture = new THREE.Data3DTexture(this.billowData, cloudNoiseSize, cloudNoiseSize, cloudNoiseSize);
@@ -462,7 +459,7 @@ export class Cloudscape {
     this.shadowUniforms = {
       cloudShadowMap: { value: this.shadowMap.texture },
       cloudShadowCenter: { value: new THREE.Vector2() },
-      cloudShadowStrength: { value: .67 },
+      cloudShadowStrength: { value: .72 },
     };
     this.world = new THREE.WebGLRenderTarget(1, 1, {
       type: renderer.extensions.has("EXT_color_buffer_float") ? THREE.HalfFloatType : THREE.UnsignedByteType,
@@ -473,7 +470,6 @@ export class Cloudscape {
       uniforms: {
         columns: { value: this.columns },
         worldDepth: { value: this.world.depthTexture },
-        detailNoise: { value: this.detail },
         billowNoise: { value: this.billowTexture },
         wallVolume: { value: this.wallVolume },
         inverseProjection: { value: new THREE.Matrix4() },
@@ -487,13 +483,11 @@ export class Cloudscape {
         wakeStrength: { value: 1 },
         detailStrength: { value: 0 },
         sampleCount: { value: 0 },
-        sunSteps: { value: 2 },
         sunDirection: { value: new THREE.Vector3(...cloudSun).normalize() },
         distanceColor: { value: new THREE.Color("#dff5f0") },
-        cloudLit: { value: new THREE.Color("#fff9ed") },
-        cloudShadow: { value: new THREE.Color("#7ea8d8") },
-        cloudRim: { value: new THREE.Color("#ffe8b8") },
-        valleyFog: { value: new THREE.Color("#d9f3f2") },
+        cloudLit: { value: new THREE.Color("#fffbf0") },
+        cloudShadow: { value: new THREE.Color("#79ace3") },
+        cloudRim: { value: new THREE.Color("#ffe9b8") },
       },
       vertexShader: quadVertex,
       fragmentShader: cloudFragment,
@@ -537,7 +531,6 @@ export class Cloudscape {
     this.march.uniforms.cloudShadow.value.set(colors.cloudShadow);
     this.march.uniforms.cloudRim.value.set(colors.cloudRim);
     this.march.uniforms.distanceColor.value.set(colors.skyHorizon);
-    this.march.uniforms.valleyFog.value.set(colors.valleyFog);
   }
 
   get palette(): CloudAtmospherePalette {
@@ -546,7 +539,7 @@ export class Cloudscape {
       cloudShadow: `#${(this.march.uniforms.cloudShadow.value as THREE.Color).getHexString()}`,
       cloudRim: `#${(this.march.uniforms.cloudRim.value as THREE.Color).getHexString()}`,
       skyHorizon: `#${(this.march.uniforms.distanceColor.value as THREE.Color).getHexString()}`,
-      valleyFog: `#${(this.march.uniforms.valleyFog.value as THREE.Color).getHexString()}`,
+      valleyFog: `#${(this.march.uniforms.distanceColor.value as THREE.Color).getHexString()}`,
     };
   }
 
@@ -605,21 +598,12 @@ export class Cloudscape {
     const weight = cloudWallWeight(cloudX, cloudZ, distance);
     const { lift, pulse } = cloudMorph(this.noise, cloudX, y, cloudZ, this.selfTime, this.selfStrength);
     const billow = cloudBillowOffset(this.billowData, cloudX, y, cloudZ, this.selfTime, this.selfStrength);
-    const distantBank = weight < 1 ? estimateCloudDensity(
-      this.map, wrappedX + billow.dx, y - lift * distantVerticalMorph + billow.dy * .5, wrappedZ + billow.dz,
-      pulse * distantRoofMorph + (billow.tuft - .5) * 5.2, pulse * distantCoverageMorph + (billow.tuft - .5) * .16,
+    // Grouped sunny-prairie clouds only (no full-map low cloud sea).
+    const distant = weight < 1 ? estimateCloudDensity(
+      this.map, wrappedX + billow.dx, y - lift * distantVerticalMorph + billow.dy * .45, wrappedZ + billow.dz,
+      pulse * distantRoofMorph + (billow.tuft - .5) * 4.6, pulse * distantCoverageMorph + (billow.tuft - .5) * .12,
     ) : 0;
-    let sea = 0;
-    if (y < 23.5) {
-      const seaTop = 19.6 + (billow.tuft - .42) * 5.8 + lift * .35;
-      const seaH = (y - (cloudBase + .5)) / Math.max(seaTop - (cloudBase + .5), 2.5);
-      if (seaH > 0 && seaH < 1) {
-        const profile = THREE.MathUtils.smoothstep(seaH, 0, .28) * (1 - THREE.MathUtils.smoothstep(seaH, .52, 1));
-        sea = THREE.MathUtils.clamp(THREE.MathUtils.smoothstep(billow.tuft, .34, .74) * profile * .85, 0, 1);
-      }
-    }
-    const distant = Math.max(distantBank, sea);
-    const wall = weight > 0 ? sampleCloudWall(this.wallData, cloudX + billow.dx * .65, y - lift + billow.dy * .5, cloudZ + billow.dz * .65) : 0;
+    const wall = weight > 0 ? sampleCloudWall(this.wallData, cloudX + billow.dx * .55, y - lift * .65 + billow.dy * .45, cloudZ + billow.dz * .55) : 0;
     const density = THREE.MathUtils.lerp(distant, morphWallDensity(wall, pulse), weight);
     const opening = estuaryOpening;
     const across = 1 - THREE.MathUtils.smoothstep(Math.abs(x - opening.centerX), opening.inner, opening.outer);
@@ -653,7 +637,7 @@ export class Cloudscape {
 
   begin(renderer: THREE.WebGLRenderer, camera: THREE.Camera, quality: Quality, shadows = true) {
     const castShadows = this.enabled && shadows;
-    this.shadowUniforms.cloudShadowStrength.value = castShadows ? .74 : 0;
+    this.shadowUniforms.cloudShadowStrength.value = castShadows ? .72 : 0;
     if (castShadows) {
       const size = quality === "high" ? 192 : quality === "standard" ? 160 : 96;
       const texel = shadowSpan / size;
@@ -661,8 +645,8 @@ export class Cloudscape {
       const z = Math.round(camera.position.z / texel) * texel;
       const center = this.shadowUniforms.cloudShadowCenter.value;
       if (this.shadowMap.width !== size || center.x !== x || center.y !== z ||
-        this.selfTime - this.shadowMorphTime >= .24 ||
-        this.shadowDrift.distanceToSquared(this.drift) >= .16 ** 2) {
+        this.selfTime - this.shadowMorphTime >= .35 ||
+        this.shadowDrift.distanceToSquared(this.drift) >= .2 ** 2) {
         this.shadowMap.setSize(size, size);
         center.set(x, z);
         this.shadowMorphTime = this.selfTime;
@@ -686,7 +670,6 @@ export class Cloudscape {
     uniforms.inverseProjection.value.copy(camera.projectionMatrixInverse);
     uniforms.cameraWorld.value.copy(camera.matrixWorld);
     uniforms.sampleCount.value = budget.samples;
-    uniforms.sunSteps.value = quality === "high" ? 3 : quality === "standard" ? 2 : 1;
     uniforms.detailStrength.value = budget.detail;
     renderer.setRenderTarget(this.buffer);
     renderer.render(this.marchScene, this.camera);
@@ -704,7 +687,6 @@ export class Cloudscape {
 
   dispose() {
     this.columns.dispose();
-    this.detail.dispose();
     this.billowTexture.dispose();
     this.wallVolume.dispose();
     this.world.dispose();

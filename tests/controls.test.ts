@@ -383,24 +383,4 @@ describe("battle camera framing", () => {
     for (const height of [4, RULES.flightAltitude])
       expect(width(camera, height)).toBeLessThanOrEqual(0.7 * width(reference, height));
   });
-
-  it("opens up the cruise horizon vista while preserving high-angle bombing framing", () => {
-    const cruiseCam = new THREE.PerspectiveCamera(RULES.camera.fov, 360 / 640, RULES.camera.near, RULES.camera.far);
-    const bombCam = new THREE.PerspectiveCamera(RULES.camera.fov, 360 / 640, RULES.camera.near, RULES.camera.far);
-    frameBattleCamera(cruiseCam, 0, 0, 0);
-    frameBattleCamera(bombCam, 0, 0, 1);
-
-    // Cruise view extends far clip and widens FOV / lowers camera height to open distant cloud parallax
-    // while keeping pitch >= 52 deg so screen-relative diagonal controls stay accurate.
-    expect(RULES.camera.far).toBeGreaterThanOrEqual(420);
-    expect(RULES.camera.fov).toBeGreaterThanOrEqual(58);
-    expect(RULES.camera.bombing.pitch).toBeGreaterThan(RULES.camera.pitch + 15);
-    // Forward cloud sea and distant cumulus walls ahead of the player project cleanly into the upper half.
-    const distantCloudSea = new THREE.Vector3(0, 20, 75).project(cruiseCam);
-    expect(distantCloudSea.y).toBeGreaterThan(0.5);
-    expect(distantCloudSea.y).toBeLessThan(1);
-    expect(distantCloudSea.z).toBeLessThan(1);
-    // Bombing camera stays steeper and higher than cruise camera.
-    expect(bombCam.position.y).toBeGreaterThan(cruiseCam.position.y + 20);
-  });
 });

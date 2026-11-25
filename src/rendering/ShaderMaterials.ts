@@ -15,17 +15,10 @@ export const landscapeLight = `
   vec3 aerialPerspective(vec3 color, vec3 world) {
     vec3 toPoint = world - cameraPosition;
     float range = length(toPoint);
-    vec3 ray = toPoint / max(range, .0001);
-    // Lowland exponential valley mist wraps rivers and hollows in a soft milky veil.
-    float lowland = 1. - smoothstep(-2.5, 16., world.y);
-    float valleyMist = (1. - exp(-max(0., range - 36.) * .0095)) * lowland * .68;
-    // Distance haze dissolves terrain chunks cleanly before the 200-unit streaming horizon.
-    float farFog = smoothstep(78., 196., range);
-    float fog = clamp(max(farFog, valleyMist), 0., 1.);
-    float sunGlow = pow(max(0., dot(ray, landscapeSun)), 5.) * smoothstep(55., 180., range);
-    vec3 fogColor = mix(valleyFog, haze, smoothstep(.2, .85, farFog));
-    fogColor = mix(fogColor, sunTint, sunGlow * .34);
-    return mix(color, fogColor, fog);
+    // Keep the top-down playable view crystal clear and sunny; only soften far screen top edge.
+    float farFog = smoothstep(118., 245., range);
+    vec3 fogColor = mix(haze, sunTint, .12);
+    return mix(color, fogColor, farFog * .62);
   }
 `;
 export function aircraftMaterial(

@@ -21,9 +21,19 @@ const edgeAmplitude = .22;
 export const distantVerticalMorph = .45;
 export const distantRoofMorph = 3.8;
 export const distantCoverageMorph = .1;
-export const billowRiseRate = 1.25;
-export const billowWarpAmplitude = 2.6;
-export const billowFineRiseRate = 2.35;
+export const billowRiseRate = 1.15;
+export const billowLocalShiftAmplitude = 1.35;
+
+export function localBillowShift(x: number, y: number, z: number, time: number, strength: number) {
+  // Zero-texture analytic local oscillation: gives clouds continuous slow deformation
+  // and subtle bounded local shift in place without ever adding net horizontal drift.
+  const amp = billowLocalShiftAmplitude * strength;
+  const t = time * .72;
+  const dx = (Math.sin(z * .047 + t) * .62 + Math.cos(y * .061 - t * .73) * .38) * amp;
+  const dy = (Math.cos(x * .053 + z * .041 + t * .85) * .65 + Math.sin(y * .048 + t * .57) * .35) * amp * .8;
+  const dz = (Math.cos(x * .049 - t * .81) * .62 + Math.sin(y * .059 + t * .67) * .38) * amp;
+  return { dx, dy, dz };
+}
 
 export function cloudBillowOffset(
   billow: Uint8Array,
@@ -33,30 +43,15 @@ export function cloudBillowOffset(
   time: number,
   strength: number,
 ) {
-  // Strictly zero-mean local 3D domain warp + convective vertical rise driven by scene time.
-  // Never adds net horizontal drift; horizontal translation comes exclusively from WindField drift.
-  const rise = time * billowRiseRate;
-  const scale = .014 * cloudNoiseSize;
-  const sx = x * scale - .5;
-  const sy = (y - rise) * scale - .5;
-  const sz = z * scale - .5;
-  const wx = sampleBillowNoise(billow, sx, sy, sz, 3) - .5;
-  const wy = sampleBillowNoise(billow, sx + 11.3, sy + 7.1, sz - 5.7, 3) - .5;
-  const wz = sampleBillowNoise(billow, sx - 6.7, sy + 13.7, sz + 9.4, 3) - .5;
-  const amp = billowWarpAmplitude * strength;
+  const { dx, dy, dz } = localBillowShift(x, y, z, time, strength);
   const tuft = sampleBillowNoise(
     billow,
-    (x + wx * amp) * .026 * cloudNoiseSize - .5,
-    (y + wy * amp - time * billowFineRiseRate) * .029 * cloudNoiseSize - .5,
-    (z + wz * amp) * .026 * cloudNoiseSize - .5,
+    (x + dx) * .031 * cloudNoiseSize - .5,
+    (y + dy - time * billowRiseRate) * .034 * cloudNoiseSize - .5,
+    (z + dz) * .031 * cloudNoiseSize - .5,
     0,
   );
-  return {
-    dx: wx * amp,
-    dy: wy * amp,
-    dz: wz * amp,
-    tuft,
-  };
+  return { dx, dy, dz, tuft };
 }
 
 export function cloudMorph(noise: Uint8Array, x: number, y: number, z: number, time: number, strength: number) {
@@ -81,27 +76,27 @@ export function morphWallDensity(density: number, pulse: number) {
 export const cloudFlowGLSL = `
   uniform float selfTime, selfStrength;
 
-  // Fixed 3D noise assigns neighboring lobes different phases. Only the
-  // height and local density change here. Wind supplies the horizontal drift.
-  vec2 cloudMorph(vec3 at) {
-    vec2 noise = texture(detailNoise, at * vec3(${horizontalFrequency}, ${verticalFrequency}, ${horizontalFrequency})).rg;
-    float phase = selfTime * 1.05 + noise.r * 12.;
-    float lift = cos(phase) * (1.2 + noise.g);
-    float pulse = sin(phase) * .7 + sin(selfTime * .61 + noise.g * 15.) * .3;
+  // Zero-texture analytic local billowing shift: continuous slow deformation and subtle
+  // bounded local movement while keeping macro horizontal motion strictly wind-driven.
+  vec3 localBillowShift(vec3 at) {
+    float amp = ${billowLocalShiftAmplitude} * selfStrength;
+    float t = selfTime * .72;
+    float dx = (sin(at.z * .047 + t) * .62 + cos(at.y * .061 - t * .73) * .38) * amp;
+    float dy = (cos(at.x * .053 + at.z * .041 + t * .85) * .65 + sin(at.y * .048 + t * .57) * .35) * amp * .8;
+    float dz = (cos(at.x * .049 - t * .81) * .62 + sin(at.y * .059 + t * .67) * .38) * amp;
+    return vec3(dx, dy, dz);
+  }
+
+  // Analytic lobe phase pulse (zero extra 3D texture tap in empty sky).
+  vec2 analyticMorph(vec3 at) {
+    float phase = selfTime * .92 + sin(at.x * .038) * 2.1 + cos(at.z * .041) * 2.1 + sin(at.y * .055) * 1.4;
+    float lift = cos(phase) * 1.35;
+    float pulse = sin(phase) * .72 + sin(selfTime * .58 + (at.x - at.z) * .045) * .28;
     return vec2(lift, pulse) * selfStrength;
   }
 
   float morphWallDensity(float density, float pulse) {
     float edge = clamp(density * 10., 0., 1.) * (1. - density);
     return clamp(density + edge * pulse * ${edgeAmplitude}, 0., 1.);
-  }
-
-  // Zero-mean 3D convective warp driven strictly by scene time (no net horizontal drift).
-  vec3 billowWarp(sampler3D billowTex, vec3 at) {
-    vec3 base = vec3(at.x, at.y - selfTime * ${billowRiseRate}, at.z) * .014;
-    float wx = texture(billowTex, base).a - .5;
-    float wy = texture(billowTex, base + vec3(.353, .222, -.178)).a - .5;
-    float wz = texture(billowTex, base + vec3(-.209, .428, .294)).a - .5;
-    return vec3(wx, wy, wz) * (${billowWarpAmplitude} * selfStrength);
   }
 `;

@@ -2,32 +2,32 @@
 
 ## Why
 
-当前副本的云层虽然已具备连续密度场，但高精度三维体积云仅覆盖世界坐标中极小的固定区域，离开后退化为 2.5D 高度图云；同时云体缺乏垂直对流翻涌与实时多散射自阴影，且偏陡的巡航镜头俯角压扁了云海与地景的纵深层次。为了让副本呈现接近《光·遇》式的三维立体翻涌云海与开阔绘本地景体验，需要在移动端渲染预算内重构云场的三维动态翻涌、散射光照、巡航纵深构图及地景大气氛围。
+本游戏为 360×640 移动端固定俯视角（`52°`）空战，视线范围有限且看不到远处天空与地平线。第一版视觉标杆对标《光·遇》云野（Daylight Prairie）的晴天多云体验——核心在于**一组一组扎实饱满、拔地而起的立体翻涌云墙将不同晴朗陆地/河口区域分隔开**，区域间通透可见阳光草地与碧水。需要针对俯视角与移动端性能红线重构体积云与视野内地景表现，把全部渲染预算集中在视野内可见区域（视野内 100 分、视野外 0 分），实现高帧率、强立体翻涌感与高冲击力的云野体验。
 
 ## What Changes
 
-- 将连续体积云场升级为全地图无缝的三维翻涌云场，包含低空云海、中/高空立体积云脊与河道开口，移除高精度 3D 体积被固定在局部小盒子的视觉割裂感。
-- 为云场增加确定性的垂直对流抬升、多倍频菜花状表面翻涌（Billowing）和坐标扰动，使无风和有风状态下云团均呈现立体的鼓泡、翻卷与舒展，而非仅原地正弦呼吸或刚性平移。
-- 重构云层体积光照为实时方向光多散射、粉末效应、双瓣银边散射与时代色板联动，替换暗沉单次衰减与静态烘焙阴影，并引入每像素起点抖动与平滑深度感知上采样以消除低步数切片与锯齿。
-- 优化玩家穿云的体积交互与机身融合反馈，使空腔边缘呈现实时翻涌受光变化，同时保持 `overlayScene` 对玩家机体、弹道与瞄准信息的可读性保障。
-- 调整巡航相机构图（放缓俯角并延展远裁面与天空地平线可见比例）并保留轰炸高俯角切换反差，保持现有屏幕前方输入语义与玩家居中规则。
-- 增强副本的《光·遇》式地景氛围与时代色板联动：升级地表丝绒光影与风吹草浪色带、引入高度雾与太阳方向大气散射、升级树冠为柔和蓬松绘本受光，并在标准与高画质下将云层、天空、地表与水面统一接入时代大气色板。
+- 坚持“分组云墙分隔晴朗区域”的晴天多云格局，禁止全图铺底低空云海或近中景阴天雾，保持云组之间陆地、河道与水面 100% 晴朗通透。
+- 为俯视角强化云顶与云壁斜坡的 3D 菜花雕塑体积感与扎实饱满边缘，并以《光·遇》云野晴天色板（奶油暖白受光顶 + 清澈浅天蓝/淡薰衣草蓝褶皱阴影 + 清晰冷蓝地面云影）拉出高对比立体冲击力。
+- 明确云层动态规则：**整体宏观移动严格依赖模拟风场 `WindField`**（不脱离风场自行随机移动）；在此基础上，云体随场景时钟进行确定性的**持续缓慢三维原地翻涌形变**（向上鼓泡、边缘翻卷融合，并允许有界零均值的轻微局部偏移），暂停时全部冻结；玩家穿云在当前风漂移后的同一密度场内形成低密度空腔、边缘受光隆起与柔和尾流。
+- 实施俯视角移动端极限性能优化：光线步进严格先做 2D 覆盖/包围盒早退（晴空 0 次 3D 纹理采样），命中云体后单步控制在 2–3 次 3D 采样内（1 次上升翻涌雕刻 + 1 次太阳方向导数自阴影，禁止嵌套完整太阳循环与多点空域域扭曲），地面云影走轻量宏观积分，并引入确定性 IGN 像素抖动与平滑深度感知上采样消除切片锯齿。
+- 保持固定俯视巡航镜头（`pitch: 52°`, `fov: 48°`, `distance: 66`）的云墙贴脸冲击感与屏幕操控精度，不为屏幕外不可见的天空地平线牺牲视野内观感与帧率。
+- 精简并优化视野内地景：去近景雾纱、突出晴天云野明媚丝绒草地与金色风吹麦浪、清晰天空反射水面，以及低面数柔和球簇绘本树冠（控制全场景三角面回归低开销基线）。
 
 ## Capabilities
 
 ### New Capabilities
 
-<!-- 无新增独立能力，全部通过扩展既有能力规格表达。 -->
+<!-- 无新增独立能力，全部通过修订既有能力规格表达。 -->
 
 ### Modified Capabilities
 
-- `volumetric-cloud-rendering`: 将三维体积翻涌、全地图双层云海结构、实时多散射与自阴影、无切片采样以及时代大气色板同步纳入体积云渲染需求。
-- `battle/camera-and-view-feedback`: 扩展巡航镜头构图要求，使巡航视角展现开阔的云海、天空地平线与远景纵深，同时保持轰炸高俯角切换、玩家居中与屏幕方向一致。
-- `rendering/terrain-rendering`: 扩展地表与水面的高度雾、太阳方向大气散射、丝绒化风吹草浪与时代色板联动表现。
-- `wind-driven-vegetation`: 升级树木树冠的柔和蓬松体积受光表现，同时保持既有风场摆动、贴地与画质分档规则。
+- `volumetric-cloud-rendering`: 定义俯视角晴天多云的分组巨型云墙结构、三维原地翻涌与有界轻微局部偏移、风场整体移动约束、单步太阳导数自阴影与空域零 3D 采样性能约束、无切片采样及玩家穿云光雾融合。
+- `rendering/terrain-rendering`: 定义俯视角视野内晴天通透地表表现（禁止近中景阴天低谷雾）、明媚丝绒草浪、清透冷蓝云影与闪光水面。
+- `wind-driven-vegetation`: 升级树木树冠为低面数柔和蓬松绘本球簇与连续受光过渡，同时保持既有风场摆动、贴地与低三角面预算。
 
 ## Impact
 
-- 渲染与配置代码：`src/rendering/Cloudscape.ts`、`src/rendering/CloudscapeLayout.ts`、`src/rendering/CloudFlow.ts`、`src/rendering/CloudWall.ts`、`src/rendering/ShaderMaterials.ts`、`src/rendering/VegetationField.ts`、`src/rendering/BattleCamera.ts`、`src/rendering/Renderer.ts`、`src/data/config.ts`、`src/data/eras.ts`。
-- 诊断与验收：`src/rendering/EnvironmentAcceptance.ts` 及现有单元测试 `tests/cloudscape.test.ts`、`tests/controls.test.ts`、`tests/vegetation.test.ts`。
-- 不修改 `src/simulation` 的固定步进飞行、地形高度采样、路线与命中判定规则，不引入外部纹理或模型文件，保持标准档 360×640 视口低于 150 次绘制和 150,000 个三角形预算。
+- 规则文档：`docs/IMPLEMENTATION_0_4_TERRAIN_CLOUD.md`、`docs/systems/06-procedural-3d.md`、`docs/README.md`（已落地俯视角云野视觉原则与性能红线）。
+- 渲染与配置代码：`src/rendering/Cloudscape.ts`、`src/rendering/CloudscapeLayout.ts`、`src/rendering/CloudFlow.ts`、`src/rendering/ShaderMaterials.ts`、`src/rendering/VegetationField.ts`、`src/rendering/Renderer.ts`、`src/content/3d/AircraftFactory.ts`、`src/data/config.ts`、`src/data/eras.ts`。
+- 测试与验收：`tests/cloudscape.test.ts`、`tests/controls.test.ts`、`tests/vegetation.test.ts` 及 `src/rendering/EnvironmentAcceptance.ts`。
+- 不修改 `src/simulation` 的固定步进飞行、地形高度采样、路线与命中判定规则，不引入外部贴图或模型。

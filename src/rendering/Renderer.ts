@@ -107,7 +107,7 @@ export class Renderer {
     this.scene.add(this.showroomBackdrop.group);
     this.showroomBackdrop.setVisible(false);
     this.skyDome = new THREE.Mesh(
-      new THREE.SphereGeometry(440, 24, 16),
+      new THREE.SphereGeometry(420, 24, 16),
       skyDomeMaterial(),
     );
     this.skyDome.renderOrder = -1000;
@@ -115,7 +115,7 @@ export class Renderer {
     this.scene.add(this.skyDome);
     this.overlayScene.add(new THREE.HemisphereLight("#fff6e5", "#526b61", 2.2));
     this.overlayScene.add(new THREE.DirectionalLight("#fff1ca", 2.4));
-    this.scene.fog = new THREE.Fog("#dff5f0", 78, 196);
+    this.scene.fog = new THREE.Fog("#dff5f0", 115, 260);
     this.overlayScene.fog = this.scene.fog;
     this.renderer.autoClear = false;
     this.renderer.info.autoReset = false;
