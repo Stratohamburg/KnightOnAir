@@ -67,7 +67,13 @@ function cascade(seed: number, cloudShadows: THREE.ShaderMaterial["uniforms"]) {
     positions.setXYZ(i, worldX, surfaceHeight(worldX, z, seed) + .23, z);
   }
   const material = new THREE.ShaderMaterial({
-    uniforms: { time: { value: 0 }, haze: { value: new THREE.Color("#a9e4ed") }, ...cloudShadows },
+    uniforms: {
+      time: { value: 0 },
+      haze: { value: new THREE.Color("#dff5f0") },
+      valleyFog: { value: new THREE.Color("#d9f3f2") },
+      sunTint: { value: new THREE.Color("#fff3cc") },
+      ...cloudShadows,
+    },
     vertexShader: `
       varying vec2 vUv;
       varying vec3 vWorld;
@@ -161,8 +167,10 @@ export class TerrainLandmarks {
     this.water.material.uniforms.time.value = time;
   }
 
-  setHaze(color: string) {
+  setHaze(color: string, valleyFog = color, sunTint = "#fff3cc") {
     this.water.material.uniforms.haze.value.set(color);
+    this.water.material.uniforms.valleyFog.value.set(valleyFog);
+    this.water.material.uniforms.sunTint.value.set(sunTint);
   }
 
   setShadows(visible: boolean) {

@@ -29,6 +29,8 @@ export type AirframeMotionConfig = {
   energyRecover: number;
   windResponse?: number;
   bankLimit?: number;
+  liftCenterY?: number;
+  liftCenterZ?: number;
 };
 export type MotionConfig = AirframeMotionConfig | { model: "ground" | "water"; mass: number; length: number; radius: number; maxSpeed: number; acceleration: number; turnRate: number; routeKinds: ("road" | "rail" | "water")[] };
 export interface MountRecipe { id: string; partId: string; weaponId: string; count: number; arc: number; baseAngle: number; targetLayers: Layer[]; offset?: Point3; barrelSpacing?: number; overrides?: Partial<Record<string, number>>; centerline?: CenterlineMount; }
@@ -189,7 +191,7 @@ const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
 
 export const COMBATANT_CONFIGS: Record<string, CombatantConfig> = Object.fromEntries(AIRFRAMES.map((frame) => [frame.id, {
   id: frame.id, name: frame.name, era: eraOf(frame), layer: "air" as Layer, tags: [frame.role],
-  frame: { model: "air" as const, mass: frame.mass, length: frame.length, wingspan: frame.wingspan, wingArea: frame.wingArea, maxSpeed: frame.maxSpeed, cruiseSpeed: frame.cruiseSpeed, acceleration: frame.acceleration, turnRate: frame.turnRate, energyMax: frame.energyMax, energyDrain: frame.energyDrain, energyRecover: frame.energyRecover },
+  frame: { model: "air" as const, mass: frame.mass, length: frame.length, wingspan: frame.wingspan, wingArea: frame.wingArea, maxSpeed: frame.maxSpeed, cruiseSpeed: frame.cruiseSpeed, acceleration: frame.acceleration, turnRate: frame.turnRate, energyMax: frame.energyMax, energyDrain: frame.energyDrain, energyRecover: frame.energyRecover, liftCenterY: frame.liftCenterY, liftCenterZ: frame.liftCenterZ },
   parts: partsFor(frame), mounts: mountsFor(frame), topology: defaultTopology(frame), capabilities: { bombing: Boolean(frame.bomb), lock: frame.missile, boost: true, routeKinds: [] }, visual: { modelKey: frame.id, eraSkin: eraOf(frame), color: frame.color, accent: frame.accent, scale: 1 }, combat: { collisionRadius: frame.footprint, weaponDamage: 0, fireInterval: 2 },
 }]));
 
@@ -202,7 +204,7 @@ for (const [id, enemy] of Object.entries(ENEMIES)) {
     layer: enemy.layer,
     tags: [enemy.name],
     frame: air
-      ? { model: "air", mass: enemy.radius * 900, length: enemy.radius * 2.4, wingspan: enemy.radius * 2.8, wingArea: enemy.radius * 4, maxSpeed: enemy.speed, cruiseSpeed: enemy.speed, acceleration: Math.max(3.5, enemy.speed * .85), turnRate: enemy.turnRate, energyMax: 0, energyDrain: 0, energyRecover: 0 }
+      ? { model: "air", mass: enemy.radius * 900, length: enemy.radius * 2.4, wingspan: enemy.radius * 2.8, wingArea: enemy.radius * 4, maxSpeed: enemy.speed, cruiseSpeed: enemy.speed, acceleration: Math.max(3.5, enemy.speed * .85), turnRate: enemy.turnRate, energyMax: 0, energyDrain: 0, energyRecover: 0, liftCenterY: id === "elite" ? 0 : .1, liftCenterZ: id === "elite" ? 0 : enemy.radius * .12 }
       : { model: enemy.layer as "ground" | "water", mass: enemy.radius * 700, length: enemy.radius * 2, radius: enemy.radius, maxSpeed: enemy.speed, acceleration: 0, turnRate: enemy.turnRate, routeKinds: [enemy.layer === "water" ? "water" : id === "armored_train" ? "rail" : "road"] },
     parts: air ? [
       { id: "center_body", role: "body", slot: "center", side: 0, health: enemy.health * .55, damageTransfer: 1, detachable: false, x: 0, z: 0, radius: enemy.radius * .75 },

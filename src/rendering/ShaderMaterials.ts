@@ -10,13 +10,22 @@ float noise(vec2 p) { vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f); return mix(m
 float fbm(vec2 p) { return noise(p)*.55+noise(p*2.03)*.28+noise(p*4.01)*.17; }
 `;
 export const landscapeLight = `
-  uniform vec3 haze;
+  uniform vec3 haze, valleyFog, sunTint;
   const vec3 landscapeSun = normalize(vec3(${cloudSun.join(", ")}));
   vec3 aerialPerspective(vec3 color, vec3 world) {
-    float range = distance(cameraPosition, world);
-    float lowland = 1. - smoothstep(-1., 19., world.y);
-    float fog = smoothstep(70., 220., range) * mix(.73, 1., lowland);
-    return mix(color, haze, fog);
+    vec3 toPoint = world - cameraPosition;
+    float range = length(toPoint);
+    vec3 ray = toPoint / max(range, .0001);
+    // Lowland exponential valley mist wraps rivers and hollows in a soft milky veil.
+    float lowland = 1. - smoothstep(-2.5, 16., world.y);
+    float valleyMist = (1. - exp(-max(0., range - 36.) * .0095)) * lowland * .68;
+    // Distance haze dissolves terrain chunks cleanly before the 200-unit streaming horizon.
+    float farFog = smoothstep(78., 196., range);
+    float fog = clamp(max(farFog, valleyMist), 0., 1.);
+    float sunGlow = pow(max(0., dot(ray, landscapeSun)), 5.) * smoothstep(55., 180., range);
+    vec3 fogColor = mix(valleyFog, haze, smoothstep(.2, .85, farFog));
+    fogColor = mix(fogColor, sunTint, sunGlow * .34);
+    return mix(color, fogColor, fog);
   }
 `;
 export function aircraftMaterial(
@@ -31,18 +40,24 @@ export function aircraftMaterial(
       time: { value: 0 },
       highlight: { value: 0 },
       accent: { value: accent ? 1 : 0 },
+      cloudVeil: { value: 0 },
+      cloudTint: { value: new THREE.Color("#f3f9fc") },
     },
     vertexShader: `varying vec3 vNormal; varying vec3 vView; varying vec3 vLocal;
       void main(){vLocal=position; vec4 mv=modelViewMatrix*vec4(position,1.); vNormal=normalize(normalMatrix*normal); vView=-mv.xyz; gl_Position=projectionMatrix*mv;}`,
     fragmentShader: `${noise}
-      uniform vec3 baseColor; uniform float damage,heat,time,highlight,accent;
+      uniform vec3 baseColor, cloudTint; uniform float damage,heat,time,highlight,accent,cloudVeil;
       varying vec3 vNormal,vView,vLocal;
       void main(){vec3 n=normalize(vNormal); float light=max(0.,dot(n,normalize(vec3(-.6,1.,.8))));
         float grain=fbm(vLocal.xz*12.); float burn=smoothstep(.45,.72,grain+damage*.5)*damage;
-        vec3 col=baseColor*(.52+light*.55)*(1.-burn*.8);
+        vec3 col=baseColor*(.54+light*.55)*(1.-burn*.8);
         float rim=pow(1.-max(0.,dot(n,normalize(vView))),3.);
         col+=vec3(.68,.86,.78)*rim*.24; col+=vec3(1.,.23,.08)*heat*(.6+sin(time*22.)*.15);
         col=mix(col,vec3(.76,1.,.85),highlight*(.35+.2*sin(time*5.)));
+        // Soft luminous cloud wrap when flying through clouds (bounded so player silhouette stays crisp).
+        float veil = clamp(cloudVeil, 0., .32);
+        col = mix(col, cloudTint * (1.04 + .16 * light), veil * (.55 + .45 * rim));
+        col += cloudTint * rim * veil * .48;
         col+=accent*.035; gl_FragColor=vec4(col,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -56,9 +71,12 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
       detailTexture: { value: detailTexture },
       grass: { value: new THREE.Color("#68ad76") },
       road: { value: new THREE.Color("#94c779") },
-      sand: { value: new THREE.Color("#d8c78d") },
+      sand: { value: new THREE.Color("#e4d49d") },
       stone: { value: new THREE.Color("#839e8e") },
-      haze: { value: new THREE.Color("#a9e4ed") },
+      haze: { value: new THREE.Color("#dff5f0") },
+      valleyFog: { value: new THREE.Color("#d9f3f2") },
+      sunTint: { value: new THREE.Color("#fff3cc") },
+      cloudShadowColor: { value: new THREE.Color("#7ea8d8") },
       waveDetail: { value: 0 },
       waveStrength: { value: 0 },
     },
@@ -75,48 +93,67 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
     fragmentShader: `${noise} ${vegetationWindGLSL} ${cloudShadowGLSL} ${aircraftShadowGLSL} ${landscapeLight}
       varying vec3 vWorld, vNormal;
       varying float vRoad;
-      uniform vec3 grass, road, sand, stone;
+      uniform vec3 grass, road, sand, stone, cloudShadowColor;
       uniform sampler2D detailTexture;
       uniform float waveDetail, waveStrength;
       void main(){
         vec3 normalWorld = normalize(vNormal);
+        vec3 viewDir = normalize(cameraPosition - vWorld);
         vec2 at = vWorld.xz;
-        float broad = fbm(at * .036);
-        vec2 grainUv = at * .064;
+        float broad = fbm(at * .028);
+        vec2 grainUv = at * .052;
         vec3 grain = texture2D(detailTexture, grainUv).rgb;
         vec2 rotated = vec2(dot(at, vec2(.81, .59)), dot(at, vec2(-.59, .81)));
-        vec3 relief = texture2D(detailTexture, rotated * .023 + .37).rgb;
-        float detail = mix(grain.r, relief.r, .43);
+        vec3 relief = texture2D(detailTexture, rotated * .021 + .37).rgb;
+        float detail = mix(grain.r, relief.r, .52);
         float bankHeight = vWorld.y - (${TERRAIN.waterLevel});
-        float shore = 1. - smoothstep(.15, 2.35, bankHeight + (detail - .5) * .54);
+        float shore = 1. - smoothstep(.15, 2.35, bankHeight + (detail - .5) * .48);
         float track = smoothstep(.24, .88, vRoad) * (1. - shore);
         float slope = 1. - normalWorld.y;
-        float rock = smoothstep(.075, .29, slope + (broad - .5) * .09);
-        vec3 meadow = grass * mix(vec3(.66, .85, .79), vec3(1.42, 1.25, .83), broad);
-        meadow *= mix(vec3(.71, .82, .78), vec3(1.34, 1.23, .88), smoothstep(.25, .82, detail));
+        float rock = smoothstep(.085, .31, slope + (broad - .5) * .08);
+
+        // Clean painterly meadow gradient: warm sunlit chartreuse slopes to cool jade hollows.
+        vec3 meadowCool = grass * vec3(.72, .91, .92);
+        vec3 meadowWarm = grass * vec3(1.32, 1.24, .84);
+        vec3 meadow = mix(meadowCool, meadowWarm, smoothstep(.22, .78, broad));
+        meadow *= mix(.91, 1.09, smoothstep(.24, .82, detail));
+
         float grassWeight = (1. - rock) * (1. - track) * (1. - shore);
         if (grassWeight > .05) {
           vec2 localWind = sampleWind(at);
           float gustSpeed = .9 + length(localWind) * .9 + windGust * .22;
-          float phase = dot(at, windDirection) * .32 + broad * 3. - sceneTime * gustSpeed;
-          float wave = sin(phase) * .78;
+          float phase = dot(at, windDirection) * .28 + broad * 3.4 - sceneTime * gustSpeed;
+          float wave = sin(phase) * .76;
           if (waveDetail > 0.)
-            wave += sin(phase * 1.7 + broad * 4.) * .22 * waveDetail;
-          meadow *= 1. + wave * waveStrength;
+            wave += sin(phase * 1.72 + broad * 4.2) * .24 * waveDetail;
+          // Two-tone grass wave: golden sunlit crests and cool teal-green troughs.
+          vec3 crestTint = vec3(1.18, 1.16, .88);
+          vec3 troughTint = vec3(.82, .94, .97);
+          meadow *= mix(troughTint, crestTint, clamp(.5 + wave * (.5 + waveStrength * 1.8), 0., 1.));
+          meadow *= 1. + wave * waveStrength * .65;
+          // Soft velvet rim sheen across wind-swept meadows.
+          float velvet = pow(1. - clamp(dot(normalWorld, viewDir), 0., 1.), 2.4);
+          meadow += sunTint * velvet * .11 * (.5 + .5 * wave);
         }
-        float strata = texture2D(detailTexture, vec2(rotated.x * .061, vWorld.y * .14 + relief.g * .13)).g;
-        vec3 col = mix(meadow, stone * (.66 + .52 * strata + .16 * grain.g), rock);
-        col = mix(col, mix(road, sand, .49) * (.82 + .36 * grain.b), track * .76);
+
+        float strata = texture2D(detailTexture, vec2(rotated.x * .055, vWorld.y * .13 + relief.g * .12)).g;
+        vec3 col = mix(meadow, stone * (.72 + .42 * strata + .12 * grain.g), rock);
+        col = mix(col, mix(road, sand, .52) * (.88 + .24 * grain.b), track * .74);
         float drySand = smoothstep(.15, 1.35, bankHeight);
-        vec3 beach = sand * (.70 + .26 * drySand + .25 * grain.b + .13 * relief.b);
+        vec3 beach = sand * (.78 + .22 * drySand + .16 * grain.b + .1 * relief.b);
         col = mix(col, beach, shore);
-        float diffuse = smoothstep(-.1, .93, dot(normalWorld, landscapeSun));
-        float valleyShade = 1. - smoothstep(0., 6., vWorld.y);
-        vec3 lighting = mix(vec3(.68, .81, .88), vec3(1.25, 1.16, .96), diffuse);
+
+        float diffuse = smoothstep(-.12, .92, dot(normalWorld, landscapeSun));
+        float valleyShade = 1. - smoothstep(0., 6.5, vWorld.y);
+        vec3 coolShadow = mix(vec3(.68, .82, .92), cloudShadowColor, .35);
+        vec3 warmLight = mix(vec3(1.18, 1.13, .98), sunTint * 1.15, .42);
+        vec3 lighting = mix(coolShadow, warmLight, diffuse);
+
         float surfaceLight = cloudLightAt(vWorld);
         float planeLight = aircraftSunlightAt(vWorld);
-        vec3 shade = mix(vec3(.67, .82, .89), vec3(1.), surfaceLight);
-        col *= lighting * (1. - .12 * valleyShade) * shade * surfaceLight * mix(1., planeLight, surfaceLight);
+        // Distinct cool-blue/lavender cloud shadows over sunny golden-green hills.
+        vec3 cloudShadeTint = mix(mix(vec3(.62, .76, .92), cloudShadowColor, .45), vec3(1.), surfaceLight);
+        col *= lighting * (1. - .09 * valleyShade) * cloudShadeTint * mix(.72, 1., surfaceLight) * mix(1., planeLight, surfaceLight);
         gl_FragColor=vec4(aerialPerspective(col, vWorld),1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -127,9 +164,12 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
 export function skyDomeMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
-      zenith: { value: new THREE.Color("#72b8d2") },
-      horizon: { value: new THREE.Color("#d9f0e5") },
-      sun: { value: new THREE.Color("#fff0c7") },
+      zenith: { value: new THREE.Color("#4d9ed6") },
+      horizon: { value: new THREE.Color("#dff5f0") },
+      sun: { value: new THREE.Color("#fff3cc") },
+      haze: { value: new THREE.Color("#dff5f0") },
+      valleyFog: { value: new THREE.Color("#d9f3f2") },
+      sunTint: { value: new THREE.Color("#fff3cc") },
     },
     vertexShader: `varying vec3 vDirection;
       void main(){
@@ -142,10 +182,16 @@ export function skyDomeMaterial() {
       varying vec3 vDirection; uniform vec3 zenith,horizon,sun;
       void main(){
         vec3 direction=normalize(vDirection);
-        float height=smoothstep(-.06,.68,direction.y);
-        vec3 col=mix(horizon,zenith,height);
-        float sunGlow=pow(max(0.,dot(direction,landscapeSun)),18.);
-        col+=sun*sunGlow*.18;
+        float height=smoothstep(-.08,.62,direction.y);
+        vec3 midSky=mix(horizon,zenith,.44);
+        vec3 col=mix(horizon,midSky,smoothstep(-.05,.24,direction.y));
+        col=mix(col,zenith,smoothstep(.18,.78,direction.y));
+        // Soft horizon glow band and dreamy sun halo.
+        float horizonGlow=exp(-abs(direction.y)*7.5);
+        col=mix(col,mix(horizon,sun,.32),horizonGlow*.38);
+        float sunDot=max(0.,dot(direction,landscapeSun));
+        float sunHalo=pow(sunDot,10.)*.28+pow(sunDot,96.)*.65;
+        col+=sun*sunHalo;
         gl_FragColor=vec4(col,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -162,9 +208,13 @@ export function waterMaterial(wind = vegetationWindUniforms()) {
       ...wind,
       time: { value: 0 },
       tint: { value: new THREE.Color("#399db4") },
-      haze: { value: new THREE.Color("#a9e4ed") },
-      shallows: { value: new THREE.Color("#8ddabd") },
-      foamColor: { value: new THREE.Color("#e7f7dc") },
+      haze: { value: new THREE.Color("#dff5f0") },
+      valleyFog: { value: new THREE.Color("#d9f3f2") },
+      sunTint: { value: new THREE.Color("#fff3cc") },
+      skyZenith: { value: new THREE.Color("#4d9ed6") },
+      skyHorizon: { value: new THREE.Color("#dff5f0") },
+      shallows: { value: new THREE.Color("#93e4ca") },
+      foamColor: { value: new THREE.Color("#eefbe8") },
     },
     vertexShader: `varying vec3 vWorld; varying float vDepth;
       void main(){
@@ -178,7 +228,7 @@ export function waterMaterial(wind = vegetationWindUniforms()) {
       varying vec3 vWorld;
       varying float vDepth;
       uniform float time;
-      uniform vec3 tint, shallows, foamColor;
+      uniform vec3 tint, shallows, foamColor, skyZenith, skyHorizon;
       void main(){
         if (vDepth <= 0.) discard;
         vec2 at = vWorld.xz;
@@ -186,20 +236,26 @@ export function waterMaterial(wind = vegetationWindUniforms()) {
         float flow = .035 + length(localWind) * .045 + windGust * .018;
         vec2 windOffset = windDirection * time * flow;
         float wave = noise(at * vec2(.23, .58) + windOffset + localWind * .07);
+        float waveFine = noise(at * vec2(.78, .64) - windOffset * 1.45);
         float ripple = sin(dot(at, windDirection) * .27 + at.y * 1.65 + wave * 2. - time * (.72 + length(localWind) * .5));
-        float shallow = 1. - smoothstep(.05, 2.5, vDepth);
-        vec3 col = mix(tint * (.80 + .28 * wave), shallows, shallow * .92);
+        float shallow = 1. - smoothstep(.05, 2.6, vDepth);
+        vec3 col = mix(tint * (.82 + .26 * wave), shallows, shallow * .9);
         vec3 view = normalize(cameraPosition - vWorld);
-        vec3 normalWorld = normalize(vec3((wave - .5) * .17, 1., ripple * .105));
-        float fresnel = pow(1. - clamp(dot(view, normalWorld), 0., 1.), 4.);
-        col = mix(col, haze, fresnel * .64);
-        float sunlight = pow(max(0., dot(reflect(-landscapeSun, normalWorld), view)), 20.);
-        col += foamColor * sunlight * .28;
-        float edge = 1. - smoothstep(.05, .34, vDepth + ripple * .11);
+        vec3 normalWorld = normalize(vec3((wave - .5) * .16 + (waveFine - .5) * .07, 1., ripple * .1));
+        float fresnel = pow(1. - clamp(dot(view, normalWorld), 0., 1.), 3.4);
+        vec3 reflDir = reflect(-view, normalWorld);
+        vec3 skyRefl = mix(skyHorizon, skyZenith, smoothstep(.0, .65, max(0., reflDir.y)));
+        col = mix(col, skyRefl, clamp(fresnel * .76 + .08, 0., .84));
+        // Soft broad sun sheen + crisp sparkling highlights.
+        float specDot = max(0., dot(reflect(-landscapeSun, normalWorld), view));
+        float broadSun = pow(specDot, 18.) * .32;
+        float sparkle = pow(specDot, 96.) * smoothstep(.52, .86, waveFine) * .85;
+        col += mix(foamColor, sunTint, .55) * (broadSun + sparkle);
+        float edge = 1. - smoothstep(.05, .36, vDepth + ripple * .11);
         float streak = (1. - smoothstep(.04, .18, abs(vDepth - .52 + ripple * .13))) * smoothstep(.56, .82, wave);
-        col = mix(col, foamColor, max(edge * .72, streak * .32));
+        col = mix(col, foamColor, max(edge * .74, streak * .34));
         float surfaceLight = cloudLightAt(vWorld);
-        col *= surfaceLight * mix(1., aircraftSunlightAt(vWorld), surfaceLight * .88);
+        col *= mix(.76, 1., surfaceLight) * mix(1., aircraftSunlightAt(vWorld), surfaceLight * .88);
         gl_FragColor=vec4(aerialPerspective(col, vWorld),1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>}`,

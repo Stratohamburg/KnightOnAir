@@ -66,9 +66,13 @@ export class ProceduralAircraft {
   private readonly acquired = new Map<string, THREE.BufferGeometry>();
   private readonly finish = new Map<string, THREE.ShaderMaterial>();
   readonly group = new THREE.Group();
+  private modelRoot?: THREE.Group;
+  private readonly liftPivot = new THREE.Vector3();
+  private readonly inverseRotation = new THREE.Quaternion();
   private materials = new Map<string, THREE.ShaderMaterial>();
+  private partFinishes = new Map<string, THREE.ShaderMaterial>();
   private parts = new Map<string, THREE.Group>();
-  private propellers: { mesh: THREE.Mesh; part: Part }[] = [];
+  private propellers: { mesh: THREE.Mesh; part: Part; direction?: number }[] = [];
   private flames: { mesh: THREE.Mesh; part: Part }[] = [];
   private turretHeads = new Map<string, THREE.Group>();
   private flameMaterial = effectMaterial();
@@ -112,11 +116,20 @@ export class ProceduralAircraft {
     if (existing) return { root: existing, material: this.materials.get(part.id)! };
     const root = new THREE.Group();
     root.name = part.id;
-    this.group.add(root);
+    this.ensureModelRoot().add(root);
     this.parts.set(part.id, root);
     const material = this.paint(color).clone();
     this.materials.set(part.id, material);
     return { root, material };
+  }
+
+  private ensureModelRoot() {
+    if (!this.modelRoot) {
+      this.modelRoot = new THREE.Group();
+      this.modelRoot.name = "aircraft-model";
+      this.group.add(this.modelRoot);
+    }
+    return this.modelRoot;
   }
 
   rebuild() {
@@ -136,10 +149,21 @@ export class ProceduralAircraft {
         frame,
         handledParts: new Set(),
         partRoot: (part) => this.partRoot(part, frame.color),
+        partPaint: (part, color) => {
+          const key = part.id + "/" + color;
+          const cached = this.partFinishes.get(key);
+          if (cached) return cached;
+          const finish = this.paint(color).clone();
+          const owner = this.partRoot(part, frame.color).material;
+          for (const uniform of ["time", "damage", "heat", "highlight", "cloudTint", "cloudVeil"])
+            finish.uniforms[uniform] = owner.uniforms[uniform];
+          this.partFinishes.set(key, finish);
+          return finish;
+        },
         geometry: (key, create) => this.geometry(key, create),
         paint: (color, accent) => this.paint(color, accent),
         mesh: (geometry, material, parent, x, y, z) => this.mesh(geometry, material, parent, x, y, z),
-        registerPropeller: (mesh, part) => this.propellers.push({ mesh, part }),
+        registerPropeller: (mesh, part, direction) => this.propellers.push({ mesh, part, direction }),
       });
       const missing = actor.parts.filter(({ id }) => !this.parts.has(id));
       if (missing.length) {
@@ -220,11 +244,23 @@ export class ProceduralAircraft {
     }
   }
 
+  setCloudAtmosphere(veil: number, tint: THREE.ColorRepresentation) {
+    const clamped = THREE.MathUtils.clamp(veil, 0, .32);
+    for (const mat of this.materials.values()) {
+      if (mat.uniforms.cloudVeil) mat.uniforms.cloudVeil.value = clamped;
+      if (mat.uniforms.cloudTint) mat.uniforms.cloudTint.value.set(tint);
+    }
+    for (const mat of this.finish.values()) {
+      if (mat.uniforms.cloudVeil) mat.uniforms.cloudVeil.value = clamped;
+      if (mat.uniforms.cloudTint) mat.uniforms.cloudTint.value.set(tint);
+    }
+  }
+
   update(time: number, dt: number, highlight = "", display = false) {
     const p = this.actor;
     if ("revision" in p && p.revision !== this.revision) this.rebuild();
-    for (const { mesh, part } of this.propellers)
-      if (part.health > 0) mesh.rotation.z += dt * (display ? 19 : 14 + p.speed * 3);
+    for (const { mesh, part, direction = 1 } of this.propellers)
+      if (part.health > 0) mesh.rotation.z += direction * dt * (display ? 19 : 14 + p.speed * 3);
     for (const part of p.parts) {
       const root = this.parts.get(part.id);
       if (!root) continue;
@@ -257,7 +293,28 @@ export class ProceduralAircraft {
       if (weapon) head.rotation.y = weapon.heading - p.heading;
     }
     this.group.rotation.set(0, p.heading, p.bank);
+    this.syncLiftPivot();
 
+  }
+  /** Reapply the pivot after a presentation-only pitch or orbit rotation. */
+  syncLiftPivot() {
+    if (!this.modelRoot) return;
+    const frame = "frame" in this.actor
+      ? this.actor.frame
+      : this.actor.configId
+        ? combatantById(this.actor.configId)?.frame
+        : undefined;
+    this.liftPivot.set(
+      0,
+      frame && "liftCenterY" in frame ? frame.liftCenterY ?? 0 : 0,
+      frame && "liftCenterZ" in frame ? frame.liftCenterZ ?? 0 : 0,
+    );
+    this.inverseRotation.copy(this.group.quaternion).invert();
+    // Keep the actor datum at the simulation position while rotating the
+    // visual assembly around its configured three-dimensional lift resultant.
+    this.modelRoot.position.copy(this.liftPivot)
+      .applyQuaternion(this.inverseRotation)
+      .sub(this.liftPivot);
   }
   private disposeContents() {
     this.parts.clear();
@@ -268,8 +325,11 @@ export class ProceduralAircraft {
     this.acquired.clear();
     this.finish.clear();
     this.group.clear();
+    this.modelRoot = undefined;
     for (const mat of this.materials.values()) mat.dispose();
     this.materials.clear();
+    for (const finish of this.partFinishes.values()) finish.dispose();
+    this.partFinishes.clear();
   }
   dispose() {
     this.group.removeFromParent();

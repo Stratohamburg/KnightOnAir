@@ -1,3 +1,4 @@
+import { addMeshOverlays } from "../content/3d/aircraftMeshOverlay";
 import { Renderer } from "../rendering/Renderer";
 import { aircraftReferencePreview, aircraftReviewPlate, resolveAircraftModel } from "../content/3d/aircraftModels";
 import type { ReferenceAircraft } from "../content/3d/AircraftFactory";
@@ -117,6 +118,12 @@ export class ReferenceApp {
 
   private bindEvents() {
     const { signal } = this.listeners;
+    this.outline.addEventListener("change", event => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || !input.matches(".mesh-toggle:checked") || this.outline.querySelector(".trace-mesh")) return;
+      const { registration } = this.preview;
+      if (registration && this.reference.study) addMeshOverlays(this.outline, this.reference.study, registration.create());
+    }, { signal });
     this.narrow.addEventListener("change", () => this.placeCatalog(), { signal });
     this.records.addEventListener("error", event => {
       if (!(event.target instanceof HTMLImageElement)) return;

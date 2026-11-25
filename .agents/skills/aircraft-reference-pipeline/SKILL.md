@@ -37,6 +37,14 @@ Record the controlling view, protected landmarks and chosen representation for t
 
 ## Build and review the H5 plate
 
+Trace the outer covering of each fabric, wood or metal panel. For uncovered
+bays, draw the exposed longerons, posts and braces and leave the space between
+them open. Follow visible bracing and control wires to their actual fittings,
+including mast heads and points outside the covered outline. Check the plate
+with its source hidden so the assembly and wire routes remain legible. When a
+wing can warp or flex, identify the depicted load and control state before
+using an apparent difference in tip height as the neutral shape.
+
 Trace every defining contour in order in its controlling view. Mark intermediate corners, shoulders, extrema, inflections and transitions into or out of curves. Check straightness against the exposed edge along the entire proposed segment. Carry these ordered landmarks into the H5 plate and the model. Use the [edge sampling procedure](references/module-edge-record.md) when deciding which intermediate vertices a low-poly outline needs.
 
 Build the plate legend from the [three-view part inventory](references/aircraft-profile-template.md#three-view-part-inventory). Establish the architecture and configuration from sources first. Expand only the matching branches, separately for each installation on a mixed aircraft. Within each active branch, search for both required and optional items in the variant drawings, technical records and identified historical photographs.

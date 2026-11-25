@@ -87,6 +87,7 @@ export class World {
   private eliteAt = 90;
   private deathTimer = 0;
   private nextSpawnAttempt = 0;
+  private boundaryTurn?: Intent["continuousTurn"];
   private readonly replayControllers = new Map<number, { profile: NpcProfile; controller: NetworkController }>();
   private pendingSpawns: { kind: string; bearing: number; expires: number }[] = [];
   isSpawnVisible?: (x: number, y: number, z: number, radius: number) => boolean;
@@ -440,7 +441,7 @@ export class World {
       this.validBombAim
     );
   }
-  private get validBombAim() {
+  get validBombAim() {
     const p = this.player;
     const dx = this.aim.x - p.x, dz = this.aim.z - p.z;
     const front = dx * Math.sin(p.heading) + dz * Math.cos(p.heading);
@@ -454,7 +455,7 @@ export class World {
   get averageSpeed() {
     return this.elapsed ? this.speedIntegral / this.elapsed : 0;
   }
-  frame(dt: number, input: Intent = NO_INPUT) {
+  frame(dt: number, input: Intent | ((stepTime: number) => Intent) = NO_INPUT) {
     if (this.clock.timeScale === 0) {
       this.clock.accumulator = 0;
       return;
@@ -462,7 +463,8 @@ export class World {
     this.clock.accumulator += Math.min(RULES.maxFrame, Math.max(0, dt));
     let steps = 0;
     while (this.clock.accumulator >= RULES.step && steps++ < RULES.maxSteps) {
-      this.step(RULES.step, input);
+      const snapshot = typeof input === "function" ? input(this.elapsed + RULES.step) : input;
+      this.step(RULES.step, snapshot);
       this.clock.accumulator -= RULES.step;
       if (this.clock.timeScale === 0) {
         this.clock.accumulator = 0;
@@ -524,8 +526,12 @@ export class World {
     const nextDamage = evaluateDamage(p.parts);
     p.damage = nextDamage;
     p.damageRevision++;
-    const edge = Math.hypot(p.x, p.z);
-    const targetHeading = edge > RULES.boundary
+    const returningFromBoundary = Math.hypot(p.x, p.z) > RULES.boundary;
+    const inputTurn = input.active ? input.continuousTurn : undefined;
+    // A lock interrupted by auto-return stays cleared until the input changes.
+    if (returningFromBoundary) this.boundaryTurn = inputTurn;
+    else if (inputTurn !== this.boundaryTurn) this.boundaryTurn = undefined;
+    const targetHeading = returningFromBoundary
       ? Math.atan2(-p.x, -p.z)
       : input.active
         ? Math.atan2(input.x, input.z)
@@ -544,6 +550,7 @@ export class World {
       p,
       playerIntent({
         heading: targetHeading,
+        continuousTurn: inputTurn === this.boundaryTurn ? undefined : inputTurn,
         throttle,
         boost: request,
         fire: true,
@@ -977,38 +984,6 @@ export class World {
   private isWeaponTarget(factionId: string, actor: CombatEntity, layers: WeaponConfig["targetLayers"]) {
     return actor.factionId !== factionId && actor.health > 0 && (layers ?? ["air"]).includes(actor.layer);
   }
-  private targetFor(w: RuntimeWeapon) {
-    const p = this.player,
-      c = w.config;
-    let best: Enemy | undefined,
-      score = -Infinity;
-    for (const e of this.enemies) {
-      if (!this.isWeaponTarget(p.factionId, e, c.targetLayers)) continue;
-      const d = distance(e, p);
-      if (d > c.range) continue;
-      const predict = Math.min(0.7, (d / c.speed) * 0.35);
-      const a = Math.atan2(
-        e.x + e.vx * predict - p.x,
-        e.z + e.vz * predict - p.z,
-      );
-      const error = Math.abs(angleDelta(a, p.heading + w.baseAngle));
-      const arc =
-        c.category === "turret"
-          ? c.turretArc
-          : c.arc + (c.lockTime ? p.stats.lockArc : 0);
-      if (error > arc * RAD * 0.5) continue;
-      const s =
-        5 * (1 - error / Math.PI) +
-        (1 - d / c.range) +
-        (e.kind === "elite" ? 0.5 : 0) +
-        (e.id === w.targetId ? 0.3 : 0);
-      if (s > score) {
-        best = e;
-        score = s;
-      }
-    }
-    return best;
-  }
   private updateWeapons(dt: number) {
     const p = this.player;
     for (const w of p.weapons) {
@@ -1017,70 +992,24 @@ export class World {
       w.cooldown = Math.max(0, w.cooldown - dt);
       if (!part || !this.weaponMountActive(p, w)) {
         w.lockProgress = 0;
+        w.targetId = 0;
         continue;
       }
-      const target = this.targetFor(w);
-      if (!target) {
-        if (w.lockProgress > 0 && w.targetId && !w.lockLost)
-          this.telemetry.record(this.elapsed, "lock_lost", {
-            target: w.targetId,
-          });
-        w.lockLost = true;
-        w.lockProgress = Math.max(0, w.lockProgress - c.lossRate * dt);
-        if (w.lockProgress === 0) w.targetId = 0;
-        if (c.category !== "turret") w.heading = p.heading + w.baseAngle;
-        continue;
-      }
-      if (w.targetId && w.targetId !== target.id) w.lockProgress = 0;
-      const isNew = w.targetId !== target.id || w.lockLost;
-      w.targetId = target.id;
+      // Player weapons follow the aircraft's physical pose. Target selection
+      // is not synthesized here. Every shot stays on the configured mount
+      // line, and guided projectiles receive no target from the player loop.
+      w.targetId = 0;
       w.lockLost = false;
-      if (c.lockTime > 0 && w.cooldown <= 0) {
-        if (isNew)
-          this.telemetry.record(this.elapsed, "lock_start", {
-            target: target.id,
-          });
-        const damageFactor = part
-          ? 1 + (1 - part.health / part.maxHealth) * 0.4
-          : 1;
-        w.lockProgress = Math.min(
-          1,
-          w.lockProgress +
-            dt / (Math.max(0.35, c.lockTime + p.stats.lockTime) * damageFactor),
-        );
-        if (w.lockProgress < 1) continue;
-      }
-      const prediction = Math.min(0.5, (distance(p, target) / c.speed) * 0.65);
-      const heading = Math.atan2(
-        target.x + target.vx * prediction - p.x,
-        target.z + target.vz * prediction - p.z,
-      );
-      if (c.category === "turret") {
-        const factor = part ? 0.4 + (0.6 * part.health) / part.maxHealth : 1;
-        w.heading += clamp(
-          angleDelta(heading, w.heading),
-          -c.turnRate * RAD * dt * factor,
-          c.turnRate * RAD * dt * factor,
-        );
-        if (Math.abs(angleDelta(heading, w.heading)) > c.arc * RAD * 0.5)
-          continue;
-      } else w.heading = heading;
+      w.lockProgress = 0;
+      w.heading = p.heading + w.baseAngle;
       if (w.cooldown > 0) continue;
       for (let i = 0; i < c.count; i++) {
         const muzzle = this.weaponMuzzle(p, w, i);
         if (!muzzle) continue;
-        // Each real mount converges on the predicted target instead of firing parallel offset rays.
-        const aimHeading =
-          c.category === "turret"
-            ? w.heading
-            : Math.atan2(
-                target.x + target.vx * prediction - muzzle.x,
-                target.z + target.vz * prediction - muzzle.z,
-              );
         this.fireFromMount(p, w, muzzle,
-          aimHeading + (i - (c.count - 1) / 2) * c.spread * RAD,
+          w.heading + (i - (c.count - 1) / 2) * c.spread * RAD,
           { ...c, damage: c.damage * p.stats.damage },
-          target.id,
+          0,
         );
       }
       w.cooldown =
@@ -1088,10 +1017,6 @@ export class World {
         (c.fireRate *
           p.stats.fireRate *
           (part && part.health < part.maxHealth * 0.4 ? 0.65 : 1));
-      if (c.lockTime) {
-        this.lockPulse = 0.3;
-        this.telemetry.record(this.elapsed, "lock_fire", { target: target.id });
-      }
       w.lockProgress = 0;
     }
   }
@@ -1788,7 +1713,7 @@ export class World {
       enabled: Number(this.phase === "bombing"),
     });
     this.message(
-      this.isBombing ? "轰炸模式 · 松杆稳定准心" : "空战模式 · 保持目标在前方",
+      this.isBombing ? "轰炸模式 · 松杆稳定准心" : "空战模式 · 把目标带入火线",
       3,
     );
   }

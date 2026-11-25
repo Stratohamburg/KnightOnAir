@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Euler, Vector3 } from "three";
 import { engineOutlet, localToWorld, muzzleAnchor } from "../src/content/3d/anchors";
 import { AIRFRAMES } from "../src/data/aircrafts";
+import { RULES } from "../src/data/config";
 import { ENEMIES } from "../src/data/enemies";
 import { combatantById, npcProfileById } from "../src/data/combatants";
 import { npcIntent } from "../src/simulation/Controllers";
@@ -13,6 +14,7 @@ import {
   FLIGHT_GRAVITY,
 } from "../src/simulation/FlightDynamics";
 import { World } from "../src/simulation/World";
+import type { ContinuousTurn, Intent } from "../src/simulation/types";
 
 function aircraft(index = 0) {
   const w = new World(AIRFRAMES[index], 42, { director: false });
@@ -35,7 +37,124 @@ function circling(w: World, seconds: number, side = 1) {
   return peakBank / RAD;
 }
 
+function headingInput(heading: number, continuousTurn?: ContinuousTurn): Intent {
+  return { x: Math.sin(heading), z: Math.cos(heading), active: true, magnitude: .7, continuousTurn };
+}
+
+describe("continuous player turns", () => {
+  it.each([-1, 1] as const)("uses heading sign %s on both sides of the shortest-path branch", (sign) => {
+    const w = aircraft();
+    for (const degrees of [170, 178, 184, 190]) {
+      w.frame(RULES.step, headingInput(sign * degrees * RAD, sign));
+      expect(w.player.turnVelocity * sign).toBeGreaterThan(0);
+      expect(angleDelta(w.player.heading, w.player.prevHeading!) * sign).toBeGreaterThan(0);
+      expect(w.player.bank * sign).toBeLessThan(0);
+    }
+
+    const absolute = aircraft();
+    absolute.frame(RULES.step, headingInput(sign * 184 * RAD));
+    expect(absolute.player.turnVelocity * sign).toBeLessThan(0);
+  });
+
+  it("uses the shortest path outside the branch guard and settles on the target", () => {
+    const w = aircraft();
+    const target = -12 * RAD;
+    const input = headingInput(target, 1);
+    w.frame(RULES.step, input);
+    expect(w.player.turnVelocity).toBeLessThan(0);
+    for (let i = 0; i < 180; i++) w.frame(RULES.step, input);
+    expect(Math.abs(angleDelta(target, w.player.heading))).toBeLessThan(.001);
+    expect(Math.abs(w.player.bank)).toBeLessThan(.001);
+    expect(Math.abs(w.player.turnVelocity)).toBeLessThan(.001);
+  });
+
+  it.each([-1, 1] as const)("reduces damaged turn authority without reversing heading sign %s", (sign) => {
+    const healthy = aircraft();
+    const damaged = aircraft();
+    const side = sign === -1 ? "leftWing" : "rightWing";
+    const wing = damaged.player.parts.find((part) => part.slot === side)!;
+    wing.health = 0;
+    const input = headingInput(sign * 185 * RAD, sign);
+    for (let i = 0; i < 20; i++) {
+      healthy.frame(RULES.step, input);
+      damaged.frame(RULES.step, input);
+      expect(damaged.player.turnVelocity * sign).toBeGreaterThan(0);
+      expect(angleDelta(damaged.player.heading, damaged.player.prevHeading!) * sign).toBeGreaterThan(0);
+    }
+    expect(Math.abs(damaged.player.turnVelocity)).toBeLessThan(Math.abs(healthy.player.turnVelocity));
+  });
+
+  it("clears the interrupted turn lock at the boundary and retains release-to-cruise", () => {
+    const w = aircraft();
+    const p = w.player;
+    p.z = RULES.boundary + 2;
+    p.x = -10;
+    const inherited = headingInput(Math.PI + .05, -1);
+    w.frame(RULES.step, inherited);
+    expect(p.turnVelocity).toBeGreaterThan(0);
+
+    p.z = p.x = 0;
+    w.frame(RULES.step, headingInput(Math.PI - .05, -1));
+    expect(p.turnVelocity).toBeGreaterThan(0);
+
+    p.speed = p.stats.maxSpeed;
+    for (let i = 0; i < 480; i++) w.frame(RULES.step);
+    expect(p.speed).toBeCloseTo(p.frame.cruiseSpeed, 3);
+    expect(Math.abs(p.bank)).toBeLessThan(.001);
+    expect(Math.abs(p.turnVelocity)).toBeLessThan(.001);
+
+    w.frame(RULES.step, headingInput(p.heading + Math.PI - .05, -1));
+    expect(p.turnVelocity).toBeLessThan(0);
+  });
+
+  it.each([-1, 1] as const)("replays heading sign %s through a boundary crossing", (sign) => {
+    const live = aircraft();
+    const playback = aircraft();
+    live.player.weapons = [];
+    playback.player.weapons = [];
+    playback.player.x = -25;
+    const controller = new controllers.NetworkController();
+    const replay = playback.spawnReplayOpponent(live.player.frame, controller, 0, 0);
+    replay.weapons = [];
+    replay.heading = live.player.heading;
+    expect(controller.push({
+      time: RULES.step,
+      intent: { ...controllers.playerIntent({ heading: 0, throttle: 0 }), continuousTurn: 0 as ContinuousTurn },
+    })).toBe(false);
+
+    const headings = [170, 176, 182, 188, 194].map((degrees) => sign * degrees * RAD);
+    for (let i = headings.length - 1; i >= 0; i--) {
+      const intent = controllers.playerIntent({ heading: headings[i], throttle: .7, continuousTurn: sign });
+      expect(controller.push({ time: (i + 1) * RULES.step, intent })).toBe(true);
+      intent.continuousTurn = undefined;
+    }
+    expect(controller.push({
+      time: (headings.length + 1) * RULES.step,
+      intent: { targetHeading: 0, throttle: 0, boost: 0, fire: false, bomb: false, brake: false },
+    })).toBe(true);
+
+    for (const heading of headings) {
+      live.frame(RULES.step, headingInput(heading, sign));
+      playback.frame(RULES.step);
+      expect(controller.sample(playback.elapsed).continuousTurn).toBe(sign);
+      expect(replay.turnVelocity * sign).toBeGreaterThan(0);
+      for (const key of ["x", "z", "speed", "heading", "bank", "turnVelocity"] as const)
+        expect(replay[key]).toBeCloseTo(live.player[key], 9);
+    }
+    playback.frame(RULES.step);
+    expect(controller.sample(playback.elapsed).continuousTurn).toBeUndefined();
+  });
+});
+
 describe("aerodynamic banking and enemy handling", () => {
+  it("starts turning as soon as roll begins", () => {
+    const w = aircraft();
+    const before = w.player.heading;
+    w.frame(1 / 60, { x: 1, z: 0, active: true, magnitude: 1 });
+    expect(Math.abs(w.player.bank)).toBeGreaterThan(0);
+    expect(Math.abs(angleDelta(w.player.heading, before))).toBeGreaterThan(0);
+  });
+
   it("advances equivalent player, NPC and replay inputs through the same flight state", () => {
     const w = aircraft();
     const p = w.player;

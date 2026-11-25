@@ -6,6 +6,9 @@ export type Phase =
   "battle" | "bombing" | "upgrade" | "paused" | "dying" | "result";
 export type Slot =
   "center" | "nose" | "tail" | "leftWing" | "rightWing" | "top" | "bottom";
+/** Sign of the world heading change. Screen-clockwise is -1. */
+export type ContinuousTurn = -1 | 1;
+
 export interface Intent {
   x: number;
   z: number;
@@ -13,6 +16,7 @@ export interface Intent {
   active: boolean;
   boost?: number;
   travel?: number;
+  continuousTurn?: ContinuousTurn;
 }
 export const NO_INPUT: Intent = { x: 0, z: 1, magnitude: 0, active: false };
 export interface Part {
@@ -239,6 +243,7 @@ export interface AirMotionState {
 }
 export interface ControllerIntent {
   targetHeading?: number;
+  continuousTurn?: ContinuousTurn;
   targetPoint?: { x: number; z: number };
   throttle: number;
   boost: number;

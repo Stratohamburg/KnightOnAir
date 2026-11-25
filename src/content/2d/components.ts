@@ -1,7 +1,28 @@
 import { clamp } from "../../services/Random";
 
+export type ButtonSize = "xs" | "sm" | "md" | "lg";
+export type ButtonVariant = "primary" | "secondary" | "ghost";
+
 export function button(action: string, content: string, css = "", attributes = "") {
   return `<button type="button" data-action="${action}" class="${css}" ${attributes}>${content}</button>`;
+}
+
+export function actionButton(
+  action: string,
+  content: string,
+  options: {
+    size?: ButtonSize;
+    variant?: ButtonVariant;
+    block?: boolean;
+    extraClass?: string;
+    attributes?: string;
+  } = {},
+) {
+  const { size = "sm", variant = "secondary", block = false, extraClass = "", attributes = "" } = options;
+  const classes = ["btn", `btn-${size}`, `btn-${variant}`, block ? "btn-block" : "", extraClass]
+    .filter(Boolean)
+    .join(" ");
+  return button(action, content, classes, attributes);
 }
 
 export function dialog(label: string, content: string, extraClass = "") {
@@ -21,8 +42,11 @@ export class NodePool<T> {
   private readonly free: T[] = [];
   private created = 0;
 
-  constructor(private readonly capacity: number, private readonly create: () => T,
-    private readonly setVisible: (node: T, visible: boolean) => void) {}
+  constructor(
+    private readonly capacity: number,
+    private readonly create: () => T,
+    private readonly setVisible: (node: T, visible: boolean) => void,
+  ) {}
 
   update<U extends { id: number }>(values: readonly U[], render: (node: T, value: U) => void) {
     const current = values.slice(0, this.capacity);
@@ -48,5 +72,7 @@ export class NodePool<T> {
     }
   }
 
-  get diagnostics() { return { capacity: this.capacity, active: this.active.size, created: this.created }; }
+  get diagnostics() {
+    return { capacity: this.capacity, active: this.active.size, created: this.created };
+  }
 }

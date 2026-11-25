@@ -51,20 +51,46 @@ export function placeVegetation(cellX: number, cellZ: number, seed: number, tree
 }
 
 function treeGeometry() {
-  const components = [
-    new THREE.CylinderGeometry(.09, .14, 1.44, 5, 2).translate(0, .72, 0),
-    new THREE.ConeGeometry(.68, 1.55, 6, 2).translate(0, 1.53, 0),
-    new THREE.ConeGeometry(.48, 1.23, 6, 2).translate(0, 2.07, 0),
+  const trunk = new THREE.CylinderGeometry(.085, .145, 1.35, 6, 2).translate(0, .675, 0);
+  const bark = new THREE.Color("#8b6748");
+  const trunkColors = new Float32Array(trunk.attributes.position.count * 3);
+  for (let vertex = 0; vertex < trunkColors.length; vertex += 3) bark.toArray(trunkColors, vertex);
+  trunk.setAttribute("color", new THREE.BufferAttribute(trunkColors, 3));
+
+  // Multi-sphere fluffy storybook crown with radial outward soft normals.
+  // SphereGeometry has an exact north pole at y = +1, so the top puff lands cleanly at y = 2.685.
+  const puffs = [
+    { x: 0, y: 1.985, z: 0, rx: .76, ry: .70, rz: .76, tint: new THREE.Color("#c8ea9b") },
+    { x: -.42, y: 1.56, z: .26, rx: .56, ry: .50, rz: .56, tint: new THREE.Color("#a9dc88") },
+    { x: .44, y: 1.60, z: .18, rx: .54, ry: .48, rz: .54, tint: new THREE.Color("#b8e492") },
+    { x: -.04, y: 1.54, z: -.40, rx: .56, ry: .50, rz: .56, tint: new THREE.Color("#9fd284") },
   ];
-  const bark = new THREE.Color("#8c6543");
-  const canopy = new THREE.Color("#b4da92");
-  components.forEach((geometry, index) => {
-    const colors = new Float32Array(geometry.attributes.position.count * 3);
-    for (let vertex = 0; vertex < colors.length; vertex += 3) {
-      (index === 0 ? bark : canopy).toArray(colors, vertex);
+  const crownCenter = new THREE.Vector3(0, 1.55, 0);
+  const normalVec = new THREE.Vector3();
+  const shadeLow = new THREE.Color("#7cb986");
+  const shadeHigh = new THREE.Color("#e8f7b8");
+  const color = new THREE.Color();
+  const components: THREE.BufferGeometry[] = [trunk];
+  for (const puff of puffs) {
+    const sphere = new THREE.SphereGeometry(1, 6, 4);
+    const pos = sphere.attributes.position;
+    const norm = sphere.attributes.normal;
+    const colors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+      const vx = pos.getX(i) * puff.rx + puff.x;
+      const vy = pos.getY(i) * puff.ry + puff.y;
+      const vz = pos.getZ(i) * puff.rz + puff.z;
+      pos.setXYZ(i, vx, vy, vz);
+      // Outward spherical normal from the shared crown center gives soft painted shading.
+      normalVec.set(vx - crownCenter.x, (vy - crownCenter.y) * 1.15, vz - crownCenter.z).normalize();
+      norm.setXYZ(i, normalVec.x, normalVec.y, normalVec.z);
+      const t = THREE.MathUtils.clamp((vy - 1.05) / 1.635, 0, 1);
+      color.copy(puff.tint).lerp(shadeLow, (1 - t) * .32).lerp(shadeHigh, t * .28);
+      color.toArray(colors, i * 3);
     }
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  });
+    sphere.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    components.push(sphere);
+  }
   const geometry = mergeGeometries(components);
   components.forEach((component) => component.dispose());
   return geometry;
@@ -101,8 +127,8 @@ function vegetationBatch(tree: boolean, wind: VegetationWindUniforms, frequency:
   motion.setUsage(THREE.DynamicDrawUsage);
   geometry.setAttribute("plantMotion", motion);
   const material = new THREE.MeshStandardMaterial({
-    color: tree ? "#bbc5a5" : "#d1d5a8",
-    flatShading: true,
+    color: tree ? "#cad7b4" : "#d1d5a8",
+    flatShading: !tree,
     roughness: 1,
     vertexColors: true,
     side: tree ? THREE.FrontSide : THREE.DoubleSide,

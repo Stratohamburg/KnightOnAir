@@ -1,0 +1,197 @@
+/* Aircraft showroom: 2/3 clear 3D stage with compact single-row toolbar + 1/3 scrollable refit tray */
+.showroom-page {
+  position: absolute;
+  inset: 0 0 calc(var(--nav-height) + env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-rows: minmax(0, 1.85fr) minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.showroom-stage {
+  position: relative;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.showroom-stage-header {
+  position: absolute;
+  top: calc(48px + env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.showroom-stage-caption {
+  display: grid;
+  gap: 2px;
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  background: rgba(15, 22, 20, 0.62);
+  border: 1px solid var(--line-subtle);
+}
+
+.showroom-stage-caption strong {
+  font-size: var(--text-lg);
+  color: var(--ink);
+  line-height: 1.2;
+}
+
+.showroom-stage-caption small {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.showroom-stage-stats {
+  padding: 5px 8px;
+  border-radius: var(--radius-xs);
+  background: rgba(15, 22, 20, 0.62);
+  border: 1px solid var(--line-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--amber);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Single-row compact instrument toolbar anchored at bottom of 3D stage */
+.showroom-stage-actions {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+  border: 1px solid var(--line-mid);
+  backdrop-filter: blur(8px);
+}
+
+.showroom-stage-actions .btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 6px;
+}
+
+.showroom-stage-actions .btn::after {
+  inset: -4px -2px;
+}
+
+.showroom-controls {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--panel-strong);
+  border-top: 1px solid var(--line-mid);
+}
+
+.showroom-active {
+  min-width: 0;
+}
+
+.showroom-active-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.showroom-active ol {
+  display: flex;
+  gap: 5px;
+  max-width: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.showroom-active ol::-webkit-scrollbar {
+  display: none;
+}
+
+.showroom-active li {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
+  background: var(--amber-soft);
+  border: 1px solid var(--amber-line);
+  color: var(--amber-bright);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.showroom-active li span {
+  font-family: var(--font-mono);
+  color: var(--ink-muted);
+}
+
+.showroom-active .empty-build {
+  background: var(--panel-inset);
+  border-color: var(--line-subtle);
+  color: var(--ink-muted);
+}
+
+.showroom-card-list {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+.showroom-upgrade-card {
+  width: 100%;
+  min-height: 74px;
+}
+
+.showroom-aircraft-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 54dvh;
+  overflow-y: auto;
+  margin-top: 12px;
+}
+
+.showroom-aircraft {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--panel-inset);
+  color: var(--ink);
+}
+
+.showroom-aircraft strong {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.showroom-aircraft small {
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+}
+
+.showroom-aircraft.selected {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+  color: var(--amber-bright);
+}

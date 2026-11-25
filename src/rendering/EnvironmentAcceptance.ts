@@ -57,6 +57,7 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       triangles: result.triangles,
       resolution: result.resolution,
       bombing: world.isBombing,
+      cloud: result.cloud,
     });
     return result;
   }

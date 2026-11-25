@@ -1,0 +1,660 @@
+/* Out-of-battle top bar, compact bottom nav, sortie, equipment & placeholder views */
+.meta-top {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 2;
+}
+
+.pilot-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+  border: 1px solid var(--line-subtle);
+  backdrop-filter: blur(8px);
+}
+
+.pilot-pill .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--amber);
+}
+
+.pilot-pill span {
+  font-size: var(--text-sm);
+  color: var(--ink-muted);
+}
+
+.pilot-pill b {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.meta-spacer {
+  flex: 1;
+}
+
+.currency {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-bg);
+  border: 1px solid var(--line-subtle);
+  backdrop-filter: blur(8px);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.currency .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--amber);
+}
+
+/* Compact 52px instrument bottom nav */
+.bottom-nav {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+  height: calc(var(--nav-height) + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line-mid);
+  background: var(--panel-strong);
+  backdrop-filter: blur(10px);
+  z-index: 3;
+}
+
+.nav-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.05em;
+  border-radius: var(--radius-xs);
+  transition: color 0.14s ease;
+}
+
+.nav-item .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.nav-item.placeholder-slot {
+  color: var(--ink-dim);
+  opacity: 0.72;
+}
+
+.nav-item.selected {
+  color: var(--amber);
+  opacity: 1;
+}
+
+.nav-item.selected::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  width: 24px;
+  height: 2px;
+  background: var(--amber);
+}
+
+/* Launch transition fades */
+.launching .meta-top,
+.launching .bottom-nav {
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+
+.launching .home-card {
+  pointer-events: none;
+}
+
+.launching .scene-vignette {
+  opacity: 0.35;
+}
+
+/* Sortie deck card */
+.home-card,
+.equipment-card {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: calc(var(--nav-height) + 10px + env(safe-area-inset-bottom));
+  padding: 12px;
+}
+
+.card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.card-title-group {
+  min-width: 0;
+}
+
+.card-heading h2 {
+  font-size: var(--text-xl);
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.frame-description {
+  margin-top: 6px;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+/* Compact 4-column instrument readouts */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-subtle);
+}
+
+.stat-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+.stat span {
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.stat strong {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.stat strong small {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--ink-dim);
+  margin-left: 1px;
+}
+
+.stat-track {
+  height: 2px;
+  width: 100%;
+  margin-top: 5px;
+  background: rgba(235, 230, 213, 0.12);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.stat-track i {
+  display: block;
+  height: 100%;
+  background: var(--signal);
+}
+
+.spec-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.spec-row b {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--ink);
+  margin-left: 2px;
+}
+
+.weapon-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.weapon-tags span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--panel-inset);
+  border: 1px solid var(--line-subtle);
+  font-size: var(--text-xs);
+  color: var(--ink);
+}
+
+.weapon-tags .icon {
+  width: 11px;
+  height: 11px;
+  color: var(--amber);
+}
+
+/* Mission selector strip */
+.mission-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.mission-number {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--amber);
+  min-width: 26px;
+}
+
+.mission-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.mission-meta strong {
+  display: block;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.mission-meta small {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.mission-select .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Primary sortie action row */
+.sortie-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.sortie-actions .launch-button {
+  flex: 1;
+  justify-content: space-between;
+}
+
+.home-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.home-footer b {
+  font-family: var(--font-mono);
+  color: var(--ink);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+/* Equipment / Hangar page */
+.equipment-badge {
+  position: absolute;
+  top: calc(50px + env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.equipment-badge span {
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--panel-bg);
+  border: 1px solid var(--line-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.equipment-badge strong {
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.era-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.era-tabs button {
+  height: var(--btn-xs);
+  padding: 0 4px;
+  border: 1px solid var(--line-subtle);
+  border-radius: var(--radius-xs);
+  background: var(--panel-inset);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  position: relative;
+}
+
+.era-tabs button::after {
+  content: "";
+  position: absolute;
+  inset: -4px -2px;
+}
+
+.era-tabs button[aria-pressed="true"] {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.roster-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.roster-strip-row .icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-xs);
+}
+
+.roster-strip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 1px 0;
+}
+
+.roster-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.roster-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--btn-xs);
+  padding: 0 9px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--line-subtle);
+  background: var(--panel-inset);
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.roster-chip .icon {
+  width: 12px;
+  height: 12px;
+}
+
+.roster-chip.equipped {
+  color: var(--signal);
+  border-color: var(--signal-line);
+}
+
+.roster-chip.locked {
+  color: var(--ink-dim);
+}
+
+.roster-chip.active {
+  background: var(--amber-soft);
+  border-color: var(--amber);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.roster-chip.active .icon {
+  color: var(--amber);
+}
+
+.equipment-card .card-heading {
+  margin-top: 10px;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--signal-line);
+  background: var(--signal-soft);
+  color: var(--signal);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.status-chip .icon {
+  width: 11px;
+  height: 11px;
+}
+
+.status-chip.locked {
+  border-color: var(--line-mid);
+  background: var(--panel-inset);
+  color: var(--ink-muted);
+}
+
+.part-selector {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.part-selector button {
+  position: relative;
+  height: var(--btn-xs);
+  padding: 0 2px;
+  border-radius: var(--radius-xs);
+  background: var(--panel-inset);
+  border: 1px solid var(--line-subtle);
+  font-size: var(--text-xs);
+  color: var(--ink-muted);
+}
+
+.part-selector button::after {
+  content: "";
+  position: absolute;
+  inset: -5px -1px;
+}
+
+.part-selector button.selected {
+  color: var(--amber);
+  border-color: var(--amber);
+  background: var(--amber-soft);
+  font-weight: 600;
+}
+
+.part-hint {
+  margin: 7px 0 9px;
+  min-height: 18px;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--ink-muted);
+}
+
+.equip-button:disabled {
+  opacity: 0.6;
+  background: var(--panel-inset);
+  color: var(--ink-muted);
+  border-color: var(--line-subtle);
+}
+
+/* Placeholder page */
+.placeholder-page {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-56%);
+  text-align: center;
+  padding: 22px 18px;
+}
+
+.placeholder-symbol {
+  display: grid;
+  place-items: center;
+  margin: 12px auto;
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--amber-line);
+  border-radius: 50%;
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.placeholder-symbol .icon {
+  width: 22px;
+  height: 22px;
+}
+
+.placeholder-page h1 {
+  font-size: var(--text-xl);
+}
+
+.placeholder-page p {
+  font-size: var(--text-base);
+  color: var(--ink-muted);
+  line-height: 1.65;
+  margin: 8px 0 18px;
+}
+
+@media (max-height: 690px) {
+  .home-card,
+  .equipment-card {
+    padding: 8px 10px;
+    bottom: calc(var(--nav-height) + 6px + env(safe-area-inset-bottom));
+  }
+
+  .home-card .frame-description,
+  .equipment-card .frame-description {
+    display: none;
+  }
+
+  .equipment-card .card-heading {
+    margin-top: 6px;
+  }
+
+  .equipment-card .card-heading h2 {
+    font-size: var(--text-lg);
+  }
+
+  .roster-strip-row {
+    margin-top: 6px;
+  }
+
+  .stat-grid {
+    margin-top: 6px;
+    padding-top: 5px;
+    gap: 6px;
+  }
+
+  .stat strong {
+    font-size: var(--text-md);
+  }
+
+  .spec-row {
+    margin-top: 5px;
+    padding: 4px 0;
+  }
+
+  .weapon-tags {
+    margin-top: 5px;
+  }
+
+  .equipment-card .part-selector {
+    margin-top: 6px;
+  }
+
+  .mission-strip {
+    margin-top: 6px;
+    padding: 5px 0;
+  }
+
+  .sortie-actions {
+    margin-top: 7px;
+  }
+
+  .part-hint {
+    margin: 4px 0 6px;
+    min-height: 15px;
+  }
+
+  .equipment-card .equip-button {
+    height: var(--btn-sm);
+  }
+}

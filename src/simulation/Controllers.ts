@@ -1,6 +1,6 @@
 import type { AirAttackProfile, MotionConfig, NpcProfile } from "../data/combatants";
 import { angleDelta, clamp, RAD } from "../services/Random";
-import type { ControllerIntent, Enemy } from "./types";
+import type { ContinuousTurn, ControllerIntent, Enemy } from "./types";
 
 export interface ControllerSnapshot {
   x: number;
@@ -13,6 +13,7 @@ export interface ControllerSnapshot {
 
 export interface PlayerControllerInput {
   heading: number;
+  continuousTurn?: ContinuousTurn;
   throttle: number;
   boost?: number;
   fire?: boolean;
@@ -22,6 +23,7 @@ export interface PlayerControllerInput {
 export function playerIntent(input: PlayerControllerInput): ControllerIntent {
   return {
     targetHeading: input.heading,
+    continuousTurn: input.continuousTurn,
     throttle: Math.max(0, Math.min(1, input.throttle)),
     boost: Math.max(0, Math.min(1, input.boost ?? 0)),
     fire: Boolean(input.fire),
@@ -210,6 +212,8 @@ export interface TimedControllerIntent {
   intent: ControllerIntent;
 }
 
+const SAMPLE_TIME_TOLERANCE = 1e-9;
+
 export class NetworkController {
   private readonly buffer: TimedControllerIntent[] = [];
   private cursor = 0;
@@ -218,8 +222,10 @@ export class NetworkController {
 
   push(sample: TimedControllerIntent) {
     const { time, intent } = sample;
-    if (!Number.isFinite(time) || time <= this.lastSample ||
+    const turn = intent.continuousTurn;
+    if (!Number.isFinite(time) || time <= this.lastSample + SAMPLE_TIME_TOLERANCE ||
         !Number.isFinite(intent.throttle) || !Number.isFinite(intent.boost) ||
+        (turn !== undefined && turn !== -1 && turn !== 1) ||
         (intent.targetHeading !== undefined && !Number.isFinite(intent.targetHeading))) return false;
     const snapshot = {
       ...intent,
@@ -235,7 +241,7 @@ export class NetworkController {
 
   sample(time: number): ControllerIntent {
     if (time >= this.lastSample) {
-      while (this.cursor < this.buffer.length && this.buffer[this.cursor].time <= time + 1e-9)
+      while (this.cursor < this.buffer.length && this.buffer[this.cursor].time <= time + SAMPLE_TIME_TOLERANCE)
         this.current = this.buffer[this.cursor++].intent;
       this.lastSample = time;
       if (this.cursor >= 64) {

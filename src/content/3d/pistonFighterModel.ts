@@ -14,7 +14,7 @@ export function fighterFrame(sheet: FighterSheet): AircraftVisualFrame {
   const a = sheet.assembly;
   return { id: a.frameId, geometryProfile: a.profile, era: "ww2", shape: "plane",
     name: sheet.title, role: "单发螺旋桨战斗机", color: a.color, accent: a.trim,
-    wingspan: 460 * fighterUnit, length: a.length * fighterUnit };
+    wingspan: 460 * fighterUnit, length: a.length * fighterUnit, liftCenterY: .1, liftCenterZ: .45 };
 }
 
 function frontEdges(rows: WingReading[], x: number) {

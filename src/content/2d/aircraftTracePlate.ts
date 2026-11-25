@@ -6,13 +6,13 @@ export function aircraftTracePlate(study: AircraftTraceStudy) {
   const parts = [...new Set(study.panels.flatMap(panel => panel.traces.map(([part]) => part)))];
   const panels = study.panels.map(panel => {
     const source = panel.detail ?? study;
-    const paths = panel.traces.map(([part, d]) => {
+    const paths = panel.traces.map(([part, d, kind]) => {
       const color = colors[parts.indexOf(part) % colors.length];
-      return `<path d="${d}" stroke="${color}" fill="${d.includes("Z") ? color : "none"}"
-        fill-opacity=".24" stroke-width="1.8" vector-effect="non-scaling-stroke"><title>${part}</title></path>`;
+      return `<path d="${d}" class="aircraft-trace trace-${kind}" style="--trace-color:${color}"
+        vector-effect="non-scaling-stroke"><title>${part}</title></path>`;
     }).join("");
-    const legend = panel.traces.map(([part]) =>
-      `<span style="--trace-color:${colors[parts.indexOf(part) % colors.length]}">${part}</span>`
+    const legend = panel.traces.map(([part, , kind]) =>
+      `<span class="trace-${kind}" style="--trace-color:${colors[parts.indexOf(part) % colors.length]}">${part}</span>`
     ).join("");
     let datum = "";
     if (panel.datum) {
@@ -31,10 +31,11 @@ export function aircraftTracePlate(study: AircraftTraceStudy) {
       ${panel.detail ? `<a href="${source.source}" target="_blank" rel="noreferrer">${source.credit} ↗</a>` : ""}</figure>`;
   }).join("");
   return `<section class="reference-feature-plate aircraft-trace-plate">
-    <div class="reference-section-head"><h2>结构描线初稿</h2><label><input type="checkbox" checked> 叠加原稿</label></div>
+    <div class="reference-section-head"><h2>结构描线初稿</h2><label><input type="checkbox" class="source-toggle" checked> 叠加原稿</label>
+      ${study.modelNote && study.panels.some(panel => panel.projection) ? '<label><input type="checkbox" class="mesh-toggle"> 叠加模型投影</label>' : ""}</div>
     <div class="trace-panels">${panels}</div>
     <a href="${study.source}" target="_blank" rel="noreferrer">${study.credit} ↗</a>
     <div><h3>量测与构型记录</h3><ul>${study.readings.map(row => `<li>${row}</li>`).join("")}</ul></div>
-    <p class="reference-feature-blocked-note"><strong>生成待核对</strong> · ${study.pending}</p>
+    <p class="reference-feature-blocked-note"><strong>${study.modelNote ? "3D 校验模型 · 取形与近似" : "生成待核对"}</strong> · ${study.modelNote ?? study.pending}</p>
   </section>`;
 }

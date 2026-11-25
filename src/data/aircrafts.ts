@@ -1,4 +1,4 @@
-import { baseLength, sheetSpan, unit } from "./fokkerDr1Sheet";
+import { baseLength, sheetLength, sheetSpan, unit, wings } from "./fokkerDr1Sheet";
 import { hoLength, hoSpan } from "./ho229V2Sheet";
 
 export type EraId = "pioneer" | "ww1" | "ww2" | "jet";
@@ -33,6 +33,9 @@ export interface Airframe {
   engines: number;
   mass: number; // Base mass in kg, including the standard loadout.
   wingArea: number; // Reference lifting area in m².
+  /** Local longitudinal and vertical position of the nominal lift resultant. */
+  liftCenterY: number;
+  liftCenterZ: number;
   gun?: string;
   missile: boolean;
   turret: boolean;
@@ -63,6 +66,8 @@ export const AIRFRAMES: Airframe[] = [
     engines: 1,
     mass: 1800,
     wingArea: 17,
+    liftCenterY: .12,
+    liftCenterZ: .35,
     gun: "nose_cannon_pair",
     missile: true,
     turret: false,
@@ -92,6 +97,8 @@ export const AIRFRAMES: Airframe[] = [
     engines: 2,
     mass: 4500,
     wingArea: 30,
+    liftCenterY: .14,
+    liftCenterZ: .45,
     gun: "wing_machinegun_pair",
     missile: false,
     turret: false,
@@ -121,6 +128,8 @@ export const AIRFRAMES: Airframe[] = [
     engines: 4,
     mass: 14500,
     wingArea: 72,
+    liftCenterY: .10,
+    liftCenterZ: .65,
     gun: "heavy_machinegun_quad",
     missile: false,
     turret: true,
@@ -150,6 +159,8 @@ export const AIRFRAMES: Airframe[] = [
     engines: 1,
     mass: 950,
     wingArea: 11,
+    liftCenterY: .10,
+    liftCenterZ: .30,
     gun: "light_cannon",
     missile: true,
     turret: false,
@@ -162,6 +173,49 @@ export const STARTER_FRAME_ID = "heron_09";
 export const eraOf = (frame: Airframe): EraId => frame.era ?? "jet";
 
 type EraFrame = Airframe & { era: EraId; wingCount: number; shape: AirframeShape };
+// Values are local model-space metres. Multi-wing aircraft use the
+// area-weighted wing-stack height, while bodies with no meaningful wing stack
+// keep the datum at the fuselage centre. The Dr.I value follows its reviewed
+// lower, middle and upper wing heights and chords.
+const dr1LiftCenterY = wings.reduce((sum, wing) =>
+  sum + wing.span * (wing.trailing - wing.leading) * wing.height, 0) /
+  wings.reduce((sum, wing) => sum + wing.span * (wing.trailing - wing.leading), 0) * unit;
+const dr1LiftCenterZ = wings.reduce((sum, wing) => {
+  const chord = wing.trailing - wing.leading;
+  const aerodynamicCenter = wing.leading + chord * .25;
+  return sum + wing.span * chord * (sheetLength / 2 - aerodynamicCenter);
+}, 0) /
+  wings.reduce((sum, wing) => sum + wing.span * (wing.trailing - wing.leading), 0) * unit;
+const liftCenterYById: Readonly<Record<string, number>> = {
+  sparrow_05: .22,
+  dragonfly_06: .12,
+  moth_07: 0,
+  kestrel_08: .22,
+  heron_09: dr1LiftCenterY,
+  condor_10: .20,
+  pelican_11: .18,
+  leviathan_12: 0,
+  falcon_13: .12,
+  raptor_14: .14,
+  albatross_15: .12,
+  stingray_16: .08,
+  behemoth_17: .10,
+};
+const liftCenterZById: Readonly<Record<string, number>> = {
+  sparrow_05: .40,
+  dragonfly_06: .35,
+  moth_07: 0,
+  kestrel_08: .55,
+  heron_09: dr1LiftCenterZ,
+  condor_10: .80,
+  pelican_11: .65,
+  leviathan_12: 0,
+  falcon_13: .60,
+  raptor_14: .70,
+  albatross_15: .65,
+  stingray_16: .20,
+  behemoth_17: 1,
+};
 function eraFrame(
   id: string, role: string, era: EraId, shape: AirframeShape, color: string,
   geometry: Pick<EraFrame, "mass" | "wingArea" | "wingspan" | "length" | "wingCount" | "engines">,
@@ -173,6 +227,8 @@ function eraFrame(
     id, name: id.toUpperCase().replace("_", "–"), role, era, shape, color,
     accent: era === "pioneer" ? "#ffd185" : era === "ww1" ? "#f4ac65" : "#f4d987",
     description: role, footprint: Math.max(.58, geometry.length * .14),
+    liftCenterY: liftCenterYById[id] ?? (shape === "airship" ? 0 : geometry.wingCount > 1 ? .2 : .1),
+    liftCenterZ: liftCenterZById[id] ?? (shape === "airship" ? 0 : geometry.length * .08),
     energyDrain: flight.energyMax * .17, energyRecover: Math.max(8, 20 - geometry.engines * 2),
     missile: false, turret: false,
     unlockText: loadout.unlockScore ? "单局积分达到 " + loadout.unlockScore.toLocaleString("zh-CN") : "初始机体",

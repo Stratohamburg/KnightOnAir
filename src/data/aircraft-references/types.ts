@@ -16,12 +16,15 @@ export interface AircraftTraceStudy {
   panels: Array<{
     label: string;
     crop: [number, number, number, number];
+    projection?: { view: "top" | "side" | "front"; origin: [number, number]; scale: number; angle?: number };
     datum?: { axis: "x" | "y"; at: number; points: Array<[number, number]> };
-    traces: Array<[part: string, path: string]>;
+    traces: Array<[part: string, path: string, kind: "skin" | "body" | "strut" | "wire" | "opening"]>;
     detail?: { image: string; size: [number, number]; source: string; credit: string };
   }>;
   readings: string[];
   pending: string;
+  /** Reviewer-authorized approximation for the inspection mesh. */
+  modelNote?: string;
 }
 
 export interface ReferencePhoto {

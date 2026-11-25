@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { AIRFRAMES, STARTER_FRAME_ID } from "../src/data/aircrafts";
+import { aircraftReferenceByFrameId } from "../src/data/aircraftReferences";
+import { aircraftReferencePreview, aircraftReviewPlate, resolveAircraftModel } from "../src/content/3d/aircraftModels";
+import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
+import { ContentCatalog } from "../src/content/3d/ContentCatalog";
+import { Box3 } from "three";
 import {
   COMBATANT_CONFIGS,
   CONFIG_DIAGNOSTICS,
@@ -11,6 +16,35 @@ import { SaveStore } from "../src/services/Save";
 import { World } from "../src/simulation/World";
 
 describe("configuration v3", () => {
+  it.each([
+    "wright-flyer-1903", "bleriot-xi", "etrich-taube", "voisin-iii", "farman-mf11",
+    "santos-14bis", "santos-demoiselle", "deperdussin-monocoque", "caudron-g3", "ilya-muromets",
+  ])("resolves the dedicated frame, plate and outstanding geometry for %s", id => {
+    const reference = aircraftReferenceByFrameId(id)!;
+    const frame = AIRFRAMES.find(candidate => candidate.id === reference.frameId)!;
+    expect(aircraftReferenceByFrameId(frame.id)).toBe(reference);
+    expect(COMBATANT_CONFIGS[frame.id].visual.modelKey).toBe(frame.id);
+    expect(aircraftReviewPlate(frame.id)?.()).toContain(reference.study!.credit);
+    const preview = aircraftReferencePreview(frame.id)!;
+    const catalog = new ContentCatalog();
+    const aircraft = new ProceduralAircraft(preview.create(), catalog);
+    expect(aircraft.contentError).toBeUndefined();
+    expect(aircraft.group.getObjectByName("rigging")).toBeDefined();
+    const propellers = aircraft.group.getObjectsByProperty("name", "propeller");
+    expect(propellers.length).toBe(id === "wright-flyer-1903" ? 2 : frame.engines);
+    const bounds = new Box3().setFromObject(aircraft.group);
+    expect(bounds.max.x - bounds.min.x).toBeCloseTo(frame.wingspan, 1);
+    expect(aircraftReviewPlate(frame.id)?.()).toContain(reference.study!.modelNote);
+    const creations = catalog.stats.creations;
+    const second = new ProceduralAircraft(preview.create(), catalog);
+    expect(catalog.stats.creations).toBe(creations);
+    aircraft.dispose();
+    expect(catalog.stats.geometries).toBeGreaterThan(0);
+    second.dispose();
+    expect(catalog.stats).toMatchObject({ geometries: 0, materials: 0 });
+    expect(resolveAircraftModel(frame)).toEqual({ error: reference.study!.pending });
+  });
+
   it("loads every combatant and NPC profile without diagnostics", () => {
     expect(CONFIG_DIAGNOSTICS).toEqual([]);
     expect(AIRFRAMES).toHaveLength(27);

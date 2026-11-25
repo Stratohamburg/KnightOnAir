@@ -1,14 +1,17 @@
 import { RULES } from "../data/config";
-import { clamp, damp } from "../services/Random";
-import type { Intent } from "../simulation/types";
+import { angleDelta, clamp, damp, RAD } from "../services/Random";
+import type { ContinuousTurn, Intent } from "../simulation/types";
 export class VirtualStick {
   private pointer: number | null = null;
   private rawX = 0;
   private rawZ = 0;
   private smoothX = 0;
   private smoothZ = 0;
+  private pointerAngle?: number;
+  private angularTravel = 0;
+  private continuousTurn?: ContinuousTurn;
   private keys = new Set<string>();
-  enabled = false;
+  private acceptingInput = false;
   private surface?: HTMLElement;
   private knob?: HTMLElement;
   private base?: HTMLElement;
@@ -17,8 +20,16 @@ export class VirtualStick {
   private boostLocked = false;
   private bombing = false;
   private abort?: AbortController;
+  get enabled() {
+    return this.acceptingInput;
+  }
+  set enabled(enabled: boolean) {
+    this.acceptingInput = enabled;
+    if (!enabled) this.reset();
+  }
   attach(surface: HTMLElement) {
     this.abort?.abort();
+    this.resetPointer();
     this.abort = new AbortController();
     this.surface = surface;
     this.knob = surface.querySelector<HTMLElement>(".stick-knob")!;
@@ -48,7 +59,13 @@ export class VirtualStick {
     surface.addEventListener(
       "pointermove",
       (e) => {
-        if (e.pointerId === this.pointer) this.move(e);
+        if (e.pointerId !== this.pointer) return;
+        const samples = e.getCoalescedEvents?.();
+        if (samples?.length) {
+          for (const sample of samples) this.move(sample);
+        } else {
+          this.move(e);
+        }
       },
       { signal },
     );
@@ -66,7 +83,7 @@ export class VirtualStick {
     });
   }
   key(code: string, down: boolean) {
-    if (down) this.keys.add(code);
+    if (down && this.enabled) this.keys.add(code);
     else this.keys.delete(code);
   }
   setFlightState(energyAvailable: boolean, bombing: boolean, boostLocked = false) {
@@ -74,8 +91,6 @@ export class VirtualStick {
     this.boostLocked = boostLocked;
     if (this.bombing === bombing) return;
     this.bombing = bombing;
-    this.smoothX = 0;
-    this.smoothZ = 0;
     this.resetPointer();
     if (this.surface) {
       this.surface.dataset.bombing = String(bombing);
@@ -95,7 +110,39 @@ export class VirtualStick {
     const len = Math.max(1, Math.hypot(x, z) / outer);
     this.rawX = x / len;
     this.rawZ = z / len;
+    this.trackAngle();
     this.knob!.style.transform = `translate(${this.rawX * radius}px, ${-this.rawZ * radius}px)`;
+  }
+  private trackAngle() {
+    const { deadZone, maxSweepStepDegrees, turnLockDegrees, turnReverseDegrees } = RULES.joystick;
+    if (Math.hypot(this.rawX, this.rawZ) <= deadZone) {
+      this.resetGesture();
+      return;
+    }
+
+    const angle = Math.atan2(-this.rawX, this.rawZ);
+    const previous = this.pointerAngle;
+    this.pointerAngle = angle;
+    if (previous === undefined) return;
+
+    const delta = angleDelta(angle, previous);
+    if (Math.abs(delta) > maxSweepStepDegrees * RAD) {
+      this.resetGesture();
+      this.pointerAngle = angle;
+      return;
+    }
+
+    if (this.continuousTurn === undefined) {
+      const continuesSweep = delta * this.angularTravel > 0;
+      this.angularTravel += delta;
+      if (!continuesSweep || Math.abs(this.angularTravel) < turnLockDegrees * RAD) return;
+      this.continuousTurn = this.angularTravel < 0 ? -1 : 1;
+    } else {
+      this.angularTravel = Math.max(0, this.angularTravel - delta * this.continuousTurn);
+      if (this.angularTravel < turnReverseDegrees * RAD) return;
+      this.continuousTurn = this.continuousTurn === 1 ? -1 : 1;
+    }
+    this.angularTravel = 0;
   }
   read(dt: number): Intent {
     if (!this.enabled) return { x: 0, z: 1, active: false, magnitude: 0 };
@@ -112,8 +159,9 @@ export class VirtualStick {
     const rawLength = Math.hypot(x, z);
     const length = Math.hypot(this.smoothX, this.smoothZ);
     const isKeyboard = Boolean(kx || kz);
-    const travel = isKeyboard ? 1 : clamp((length - 0.12) / 0.88);
-    const active = rawLength > 0.12;
+    const { deadZone } = RULES.joystick;
+    const travel = isKeyboard ? 1 : clamp((length - deadZone) / (1 - deadZone));
+    const active = rawLength > deadZone;
     const magnitude = active ? travel : 0;
     const shift = this.keys.has("ShiftLeft") || this.keys.has("ShiftRight");
     const boost = !active || this.bombing ? 0 : isKeyboard
@@ -128,6 +176,7 @@ export class VirtualStick {
       magnitude,
       boost,
       travel,
+      continuousTurn: active && !isKeyboard ? this.continuousTurn : undefined,
     };
   }
   private feedback(magnitude: number, boost: number, x: number, z: number) {
@@ -165,12 +214,21 @@ export class VirtualStick {
     this.knob.style.transform =
       x || z ? `translate(${x * radius}px, ${-z * radius}px)` : "";
   }
+  private resetGesture() {
+    this.pointerAngle = undefined;
+    this.angularTravel = 0;
+    this.continuousTurn = undefined;
+  }
   private resetPointer() {
-    if (this.pointer !== null && this.surface?.hasPointerCapture(this.pointer))
-      this.surface.releasePointerCapture(this.pointer);
+    const pointer = this.pointer;
     this.pointer = null;
+    if (pointer !== null && this.surface?.hasPointerCapture(pointer))
+      this.surface.releasePointerCapture(pointer);
     this.rawX = 0;
     this.rawZ = 0;
+    this.smoothX = 0;
+    this.smoothZ = 0;
+    this.resetGesture();
     this.feedback(0, 0, 0, 0);
     this.surface?.classList.remove("active");
     if (this.knob) this.knob.style.transform = "";
@@ -178,8 +236,6 @@ export class VirtualStick {
   reset() {
     this.resetPointer();
     this.keys.clear();
-    this.smoothX = 0;
-    this.smoothZ = 0;
     this.energyAvailable = true;
     this.boostLocked = false;
     this.feedback(0, 0, 0, 0);

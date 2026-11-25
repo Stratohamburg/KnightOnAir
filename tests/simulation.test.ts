@@ -3,7 +3,6 @@ import { AIRFRAMES, STARTER_FRAME_ID } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { UPGRADES, upgradeById } from "../src/data/upgrades";
 import { WEAPONS } from "../src/data/weapons";
-import { NetworkController, playerIntent } from "../src/simulation/Controllers";
 import { World, requiredXp } from "../src/simulation/World";
 import { NO_INPUT, type Intent } from "../src/simulation/types";
 import { SaveStore } from "../src/services/Save";
@@ -100,33 +99,17 @@ describe("flight and clock", () => {
 });
 
 describe("weapons, damage and bombing", () => {
-  it("acquires a target, decays a lost lock at 50% per second and fires a homing missile", () => {
+  it("keeps player weapons on their configured mount direction without auto-targeting", () => {
     const w = fresh();
-    w.enemies = [];
-    w.player.weapons = w.player.weapons.filter((v) => v.config.lockTime > 0);
-    const target = w.spawnEnemy("bomber", 0, 17)!;
+    w.enemies = [w.spawnEnemy("bomber", 0, 17)!];
+    const p = w.player;
     advance(w, 0.5);
-    const acquired = w.mainLock!.lockProgress;
-    expect(acquired).toBeGreaterThan(0.35);
-    target.x = 100;
-    target.z = w.player.z + 15;
-    advance(w, 0.2);
-    expect(w.mainLock!.lockProgress).toBeCloseTo(acquired - 0.1, 2);
-    expect(
-      w.telemetry.events.filter((e) => e.type === "lock_lost"),
-    ).toHaveLength(1);
-    const controller = new NetworkController();
-    controller.push({ time: 0, intent: playerIntent({ heading: 0, throttle: 0 }) });
-    const newTarget = w.spawnReplayOpponent(AIRFRAMES[0], controller, w.player.x, w.player.z + 18);
-    newTarget.heading = 0;
-    advance(w, 0.1);
-    expect(w.mainLock?.targetId).toBe(newTarget.id);
-    advance(w, 1.3);
-    expect(
-      w.telemetry.events.some(
-        (e) => e.type === "lock_fire" && e.data.target === newTarget.id,
-      ),
-    ).toBe(true);
+    expect(p.weapons.every((weapon) => weapon.targetId === 0)).toBe(true);
+    expect(p.weapons.every((weapon) => weapon.lockProgress === 0)).toBe(true);
+    const shots = w.projectiles.items.filter((projectile) => projectile.active && projectile.team === "player");
+    expect(shots.length).toBeGreaterThan(0);
+    expect(shots.every((projectile) => projectile.targetId === 0)).toBe(true);
+    expect(w.telemetry.events.some((event) => event.type === "lock_start")).toBe(false);
   });
   it("uses swept projectile collision to prevent fast bullets passing through enemies", () => {
     const w = fresh();

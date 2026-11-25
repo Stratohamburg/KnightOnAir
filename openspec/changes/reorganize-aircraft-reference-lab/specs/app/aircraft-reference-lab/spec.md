@@ -48,6 +48,24 @@
 - **WHEN** 用户打开已有参考档案但缺少原始线稿、变体图板、审核或其他必需生成资料的原型
 - **THEN** 2D 区域说明具体欠缺项，仍展示该原型已有的图板与下方资料，3D 页签等待生成条件满足后启用
 
+#### Scenario: Compare a pioneer airframe with its source drawing
+
+- **WHEN** 用户通过机型目录、历史档案 ID 或独立机体 ID 打开已注册的早期机型
+- **THEN** 三个入口定位到同一变体。用户可叠加或隐藏本地参考原稿，检查各视图、图纸测点和构型取舍。资料仅含局部或透视时，图板标明实际覆盖范围
+- **AND** 校验台和机体工厂按该机型的待核对项控制三维生成
+
+#### Scenario: Inspect a variant with reviewer-authorized approximations
+
+- **WHEN** 用户允许按现有图照近似缺项，且所选变体已注册专属校验装配器
+- **THEN** 图板列出该机采用的近似，3D 页签显示可旋转的装配模型和正、侧、俯固定视图
+- **AND** 已配准的正交图可以叠加当前网格投影。照片和透视图保留原始投影。校验模型的授权独立于可出击配置的几何验收
+
+#### Scenario: Read the structure with the original drawing hidden
+
+- **WHEN** 用户关闭有蒙皮、外露桁架和张线机型的原稿叠加
+- **THEN** 图板显示蒙皮外缘、开放构架的杆件和可见钢索的走向与连接点，索围成的区域保持通透
+- **AND** 中立翼形采用史料支持的姿态，原图的左右读数、飞行或展示照片及其适用范围可供对照
+
 #### Scenario: Change aircraft after opening the model
 
 - **WHEN** 用户打开一个原型的 3D 模型后选择另一个原型

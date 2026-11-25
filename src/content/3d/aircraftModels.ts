@@ -1,6 +1,7 @@
 import { bayOutline, clipOutline, elevatorHalf, finOutline, hull, hullAt, hullBays, mirroredOutline, rib, rudderPivot, stabilizerHalf, stationZ, unit, wingPanels, wings, wingSegments, type Point, type Wing } from "../../data/fokkerDr1Sheet";
 import * as THREE from "three";
-import type { Airframe } from "../../data/aircrafts";
+import { pioneerReviewModel } from "./pioneerReviewModels";
+import { AIRFRAMES, type Airframe } from "../../data/aircrafts";
 import type { Part, Player, Enemy } from "../../simulation/types";
 import { aircraftGeometryProfile } from "./airframeShape";
 import { AIRCRAFT_REFERENCES, aircraftReferenceByFrameId } from "../../data/aircraftReferences";
@@ -19,8 +20,8 @@ import type { ReferenceAircraft } from "./AircraftFactory";
 import { muzzleAnchor, partAnchor } from "./anchors";
 
 export type AircraftVisualFrame = Omit<Pick<Airframe,
-  "id" | "name" | "role" | "color" | "accent" | "length" | "wingspan" | "shape" | "era" | "missionEra" | "geometryProfile"
->, "geometryProfile"> & { geometryProfile?: Airframe["geometryProfile"] | "meteorF3" | FighterSheet["assembly"]["profile"] };
+  "id" | "name" | "role" | "color" | "accent" | "length" | "wingspan" | "shape" | "era" | "missionEra" | "geometryProfile" | "liftCenterY" | "liftCenterZ"
+>, "geometryProfile"> & { geometryProfile?: Airframe["geometryProfile"] | "meteorF3" | "pioneerReview" | FighterSheet["assembly"]["profile"] };
 
 export interface AircraftModelContext {
   actor: Player | Enemy | ReferenceAircraft;
@@ -30,7 +31,8 @@ export interface AircraftModelContext {
   geometry<T extends THREE.BufferGeometry>(key: string, create: () => T): T;
   paint(color: string, accent?: boolean): THREE.ShaderMaterial;
   mesh(geometry: THREE.BufferGeometry, material: THREE.Material, parent: THREE.Object3D, x?: number, y?: number, z?: number): THREE.Mesh;
-  registerPropeller(mesh: THREE.Mesh, part: Part): void;
+  registerPropeller(mesh: THREE.Mesh, part: Part, direction?: number): void;
+  partPaint(part: Part, color: string): THREE.ShaderMaterial;
 }
 
 export type AircraftModelBuilder = (context: AircraftModelContext) => void;
@@ -419,7 +421,9 @@ const aircraftModels = new Map<string, AircraftModelRegistration>([
 
 for (const { frameId, study } of AIRCRAFT_REFERENCES) {
   if (frameId && study && !aircraftModels.has(frameId)) {
-    aircraftModels.set(frameId, { reviewPlate: () => aircraftTracePlate(study) });
+    const frame = AIRFRAMES.find(candidate => candidate.id === frameId);
+    const review = frame && study.modelNote ? pioneerReviewModel(frame) : undefined;
+    aircraftModels.set(frameId, { reviewPlate: () => aircraftTracePlate(study), ...review });
   }
 }
 
@@ -430,6 +434,9 @@ export function resolveAircraftModel(frame: AircraftVisualFrame) {
   const registration = aircraftModels.get(frame.id);
   if (!registration) return { error: "缺少该机型的专属 H5 图板与装配器" };
   const reference = aircraftReferenceByFrameId(frame.id);
+  if (frame.geometryProfile === "pioneerReview" && reference?.study?.modelNote &&
+      registration.model?.profileId === frame.geometryProfile && registration.preview?.frame.id === frame.id)
+    return { model: registration.model };
   if (reference?.study?.pending) return { error: reference.study.pending };
   const pipeline = reference?.pipeline;
   if (!pipeline?.evidenceMatrix?.length) return { error: "缺少该机型的几何证据记录" };

@@ -30,7 +30,7 @@ export const meteorZ = (station: number) => (150.5 - station) * meteorUnit;
 export const meteorF3Frame = {
   id: meteorF3Id, geometryProfile: "meteorF3", era: "ww2", shape: "plane",
   name: "Gloster Meteor F.3", role: "双发喷气机", color: "#9ca8aa", accent: "#bec6c5",
-  length: meteorLength, wingspan: meteorSpan,
+  length: meteorLength, wingspan: meteorSpan, liftCenterY: .08, liftCenterZ: .35,
 } as const;
 
 const bodyPlan = outline("plan", "机身外轮廓可见段").points;

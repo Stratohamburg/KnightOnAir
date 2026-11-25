@@ -108,6 +108,129 @@ export function bakeCloudMap(seed: number) {
 
 export const cloudNoiseSize = 32;
 
+function buildWorleyPoints(period: number, seed: number) {
+  const points = new Float32Array(period * period * period * 3);
+  for (let z = 0; z < period; z++) {
+    for (let y = 0; y < period; y++) {
+      for (let x = 0; x < period; x++) {
+        const index = ((z * period + y) * period + x) * 3;
+        points[index] = .16 + .68 * hash(x, y, z, seed);
+        points[index + 1] = .16 + .68 * hash(x, y, z, seed + 1);
+        points[index + 2] = .16 + .68 * hash(x, y, z, seed + 2);
+      }
+    }
+  }
+  return points;
+}
+
+function samplePeriodicWorley(points: Float32Array, period: number, px: number, py: number, pz: number) {
+  const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+  let minDist = 2.5;
+  for (let dz = -1; dz <= 1; dz++) {
+    const cz = iz + dz;
+    const wz = (cz % period + period) % period;
+    for (let dy = -1; dy <= 1; dy++) {
+      const cy = iy + dy;
+      const wy = (cy % period + period) % period;
+      for (let dx = -1; dx <= 1; dx++) {
+        const cx = ix + dx;
+        const wx = (cx % period + period) % period;
+        const idx = ((wz * period + wy) * period + wx) * 3;
+        const fx = cx + points[idx] - px;
+        const fy = cy + points[idx + 1] - py;
+        const fz = cz + points[idx + 2] - pz;
+        const d = fx * fx + fy * fy + fz * fz;
+        if (d < minDist) minDist = d;
+      }
+    }
+  }
+  return clamp(1 - Math.sqrt(minDist) * .9);
+}
+
+function buildValueGrid(period: number, seed: number) {
+  const values = new Float32Array(period * period * period);
+  for (let z = 0; z < period; z++) {
+    for (let y = 0; y < period; y++) {
+      for (let x = 0; x < period; x++) {
+        values[(z * period + y) * period + x] = hash(x, y, z, seed);
+      }
+    }
+  }
+  return values;
+}
+
+function samplePeriodicValue(grid: Float32Array, period: number, px: number, py: number, pz: number) {
+  const ix = Math.floor(px), iy = Math.floor(py), iz = Math.floor(pz);
+  const fx = px - ix, fy = py - iy, fz = pz - iz;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const sz = fz * fz * (3 - 2 * fz);
+  const ax = (ix % period + period) % period, bx = (ax + 1) % period;
+  const ay = (iy % period + period) % period, by = (ay + 1) % period;
+  const az = (iz % period + period) % period, bz = (az + 1) % period;
+  const at = (x: number, y: number, z: number) => grid[(z * period + y) * period + x];
+  const z0 = lerp(lerp(at(ax, ay, az), at(bx, ay, az), sx), lerp(at(ax, by, az), at(bx, by, az), sx), sy);
+  const z1 = lerp(lerp(at(ax, ay, bz), at(bx, ay, bz), sx), lerp(at(ax, by, bz), at(bx, by, bz), sx), sy);
+  return lerp(z0, z1, sz);
+}
+
+// Deterministic 32^3 RGBA tileable 3D volume noise for Sky-like billowing clouds:
+// R: macro Perlin-Worley cauliflower domes, G: mid Worley puffs,
+// B: fine Worley edge erosion, A: smooth low-frequency curl/domain-warp field.
+export function bakeBillowNoise(seed: number) {
+  const size = cloudNoiseSize;
+  const data = new Uint8Array(size ** 3 * 4);
+  const w4 = buildWorleyPoints(4, seed + 17);
+  const w6 = buildWorleyPoints(6, seed + 37);
+  const w10 = buildWorleyPoints(10, seed + 73);
+  const v4 = buildValueGrid(4, seed + 101);
+  const v8 = buildValueGrid(8, seed + 131);
+  const warp3 = buildValueGrid(3, seed + 163);
+  const warp6 = buildValueGrid(6, seed + 197);
+  for (let z = 0; z < size; z++) {
+    const uz = z / size;
+    for (let y = 0; y < size; y++) {
+      const uy = y / size;
+      for (let x = 0; x < size; x++) {
+        const ux = x / size;
+        const worleyMacro = samplePeriodicWorley(w4, 4, ux * 4, uy * 4, uz * 4);
+        const worleyMid = samplePeriodicWorley(w6, 6, ux * 6, uy * 6, uz * 6);
+        const worleyFine = samplePeriodicWorley(w10, 10, ux * 10, uy * 10, uz * 10);
+        const perlinLike = samplePeriodicValue(v4, 4, ux * 4, uy * 4, uz * 4) * .68 +
+          samplePeriodicValue(v8, 8, ux * 8, uy * 8, uz * 8) * .32;
+        const macroDome = clamp(lerp(perlinLike, worleyMacro, .62) * .76 + worleyMid * .24);
+        const midTuft = clamp(worleyMid * .72 + worleyFine * .28);
+        const warpField = clamp(
+          samplePeriodicValue(warp3, 3, ux * 3, uy * 3, uz * 3) * .68 +
+          samplePeriodicValue(warp6, 6, ux * 6, uy * 6, uz * 6) * .32,
+        );
+        const index = ((z * size + y) * size + x) * 4;
+        data[index] = Math.round(macroDome * 255);
+        data[index + 1] = Math.round(midTuft * 255);
+        data[index + 2] = Math.round(worleyFine * 255);
+        data[index + 3] = Math.round(warpField * 255);
+      }
+    }
+  }
+  return data;
+}
+
+export function sampleBillowNoise(data: Uint8Array, x: number, y: number, z: number, channel: 0 | 1 | 2 | 3) {
+  const size = cloudNoiseSize;
+  const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z);
+  const ax = (ix % size + size) % size, bx = (ax + 1) % size;
+  const ay = (iy % size + size) % size, by = (ay + 1) % size;
+  const az = (iz % size + size) % size, bz = (az + 1) % size;
+  const slice = (sliceY: number) => {
+    const rowA = (az * size + sliceY) * size;
+    const rowB = (bz * size + sliceY) * size;
+    const a = lerp(data[(rowA + ax) * 4 + channel], data[(rowA + bx) * 4 + channel], x - ix);
+    const b = lerp(data[(rowB + ax) * 4 + channel], data[(rowB + bx) * 4 + channel], x - ix);
+    return lerp(a, b, z - iz);
+  };
+  return lerp(slice(ay), slice(by), y - iy) / 255;
+}
+
 export function bakeCloudNoise(seed: number) {
   const size = cloudNoiseSize;
   const data = new Uint8Array(size ** 3 * 2);

@@ -1,5 +1,7 @@
 # KnightOnAir repository guidance
 
+Read [README.md](README.md) and [docs/README.md](docs/README.md) for product overview, target platform, and design index before planning or modifying features.
+
 Player controls, NPC flight and replay inputs advance through the fixed-step simulation in `src/simulation`. Keep Three.js objects and DOM nodes at the presentation boundary. Implement changes using the current runtime content definitions and the affected OpenSpec scenarios. [Runtime content library spec](openspec/specs/rendering/runtime-content-library/spec.md) · [Runtime content library skill](.agents/skills/runtime-content-library/SKILL.md)
 
 - Look up aircraft, parts, mounts and weapons by their configured IDs. Use `ContentCatalog` leases for shared geometry, materials and textures. Release each instance's leases when it leaves the scene. [Combatants](src/data/combatants.ts) · [Weapons](src/data/weapons.ts) · [3D catalog](src/content/3d/ContentCatalog.ts)

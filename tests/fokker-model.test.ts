@@ -1,4 +1,4 @@
-import { Box3, Mesh, Vector3 } from "three";
+import { Box3, Euler, Mesh, Vector3 } from "three";
 import { expect, it } from "vitest";
 import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
 import { muzzleAnchor } from "../src/content/3d/anchors";
@@ -39,6 +39,34 @@ it("starts a fresh pilot in Dawn Meadow and installs a first-level refit through
     expect(bounds.getCenter(new Vector3()).x).toBeCloseTo(muzzle.x);
     expect(bounds.getCenter(new Vector3()).y).toBeCloseTo(muzzle.y);
     expect(bounds.max.z).toBeCloseTo(muzzle.z);
+  } finally {
+    model.dispose();
+    world.dispose();
+  }
+});
+
+it("rotates the Dr.I around its measured three-dimensional lift center", () => {
+  const world = new World(airframeById("heron_09"), 1, { director: false });
+  const model = new ProceduralAircraft(world.player);
+  try {
+    const bank = .6;
+    const heading = .7;
+    world.player.bank = bank;
+    world.player.heading = heading;
+    model.update(0, 0);
+    model.group.rotation.x = .2;
+    model.syncLiftPivot();
+    model.group.updateMatrixWorld(true);
+    const hull = model.group.getObjectByName("dr1-hull")!;
+    const position = hull.getWorldPosition(new Vector3());
+    const liftCenter = new Vector3(0, world.player.frame.liftCenterY, world.player.frame.liftCenterZ);
+    const rotatedLiftCenter = liftCenter.clone().applyEuler(new Euler(.2, heading, bank));
+    const liftCenterY = world.player.frame.liftCenterY;
+    expect(liftCenterY).toBeGreaterThan(.5);
+    expect(world.player.frame.liftCenterZ).toBeGreaterThan(1.5);
+    expect(position.x).toBeCloseTo(liftCenter.x - rotatedLiftCenter.x, 5);
+    expect(position.y).toBeCloseTo(liftCenter.y - rotatedLiftCenter.y, 5);
+    expect(position.z).toBeCloseTo(liftCenter.z - rotatedLiftCenter.z, 5);
   } finally {
     model.dispose();
     world.dispose();

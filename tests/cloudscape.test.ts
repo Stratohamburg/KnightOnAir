@@ -1,11 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Vector3, type WebGLRenderer } from "three";
 import { QUALITIES } from "../src/data/config";
-import { cloudMorph, cloudSelfMorphSpeed, cloudVelocity, morphWallDensity } from "../src/rendering/CloudFlow";
+import { ERAS } from "../src/data/eras";
+import { cloudBillowOffset, cloudMorph, cloudSelfMorphSpeed, cloudVelocity, morphWallDensity } from "../src/rendering/CloudFlow";
 import { Cloudscape } from "../src/rendering/Cloudscape";
 import { bakeCloudWall, cloudWallWeight, sampleCloudWall } from "../src/rendering/CloudWall";
 import {
-  bakeCloudMap, bakeCloudNoise, cloudBase, cloudMapSize, cloudNoiseSize, cloudTop,
+  bakeBillowNoise, bakeCloudMap, bakeCloudNoise, cloudBase, cloudMapSize, cloudNoiseSize, cloudTop,
   estimateCloudDensity, sampleCloudColumn,
 } from "../src/rendering/CloudscapeLayout";
 
@@ -127,5 +128,55 @@ describe("coastal cloudscape", () => {
     expect(Math.min(...changes)).toBeLessThan(-.025);
     expect(sample(36, -30, 0).lift).not.toBeCloseTo(sample(52, -30, 0).lift);
     expect(morphWallDensity(0, sample(36, -30, 3 * calm).pulse)).toBe(0);
+  });
+
+  it("bakes deterministic 3D billowing noise, keeps calm billowing local, and wraps world-wide cloud volume", () => {
+    const billowA = bakeBillowNoise(491);
+    const billowB = bakeBillowNoise(491);
+    expect(billowA.length).toBe(cloudNoiseSize ** 3 * 4);
+    expect(billowA).toEqual(billowB);
+    expect(billowA).not.toEqual(bakeBillowNoise(492));
+
+    // Calm billowing evolves deterministically in 3D without producing net horizontal drift.
+    const t0 = cloudBillowOffset(billowA, 180, 28, -220, 0, .72);
+    const t1 = cloudBillowOffset(billowA, 180, 28, -220, 4, .72);
+    expect(t0).toEqual(cloudBillowOffset(billowB, 180, 28, -220, 0, .72));
+    expect(Math.abs(t1.tuft - t0.tuft) + Math.abs(t1.dy - t0.dy)).toBeGreaterThan(.05);
+
+    const renderer = { extensions: { has: () => false } } as unknown as WebGLRenderer;
+    const clouds = new Cloudscape(renderer, 491);
+    const camera = new Vector3(220, 38, 220);
+    try {
+      // Seamless world-wide density exists far outside the local coastal wall box and across wrap edges.
+      let maxFarDensity = 0;
+      for (let x = 180; x <= 260; x += 10) {
+        for (let z = 180; z <= 260; z += 10) {
+          maxFarDensity = Math.max(maxFarDensity, clouds.sampleDensityAt(x, 18, z), clouds.sampleDensityAt(x, 34, z));
+        }
+      }
+      expect(maxFarDensity).toBeGreaterThan(.2);
+
+      // Calm air evolves local billowing without changing horizontal drift; pause freezes both.
+      clouds.update(2, 0, 0, 0, camera, 220, 24, 220, 0, 0, true);
+      expect(clouds.flow.drift).toEqual([0, 0]);
+      expect(clouds.flow.selfTime).toBeGreaterThan(0);
+      const frozenTime = clouds.flow.selfTime;
+      const frozenSample = clouds.sampleDensityAt(30, 34, 0);
+      clouds.update(0, 1, 1, 1, camera, 220, 24, 220, 0, 0, true);
+      expect(clouds.flow.selfTime).toBe(frozenTime);
+      expect(clouds.sampleDensityAt(30, 34, 0)).toBe(frozenSample);
+
+      // Era palette updates cloud atmosphere colors cleanly.
+      clouds.setPalette(ERAS.ww2.colors);
+      expect(clouds.palette).toEqual({
+        cloudLit: ERAS.ww2.colors.cloudLit,
+        cloudShadow: ERAS.ww2.colors.cloudShadow,
+        cloudRim: ERAS.ww2.colors.cloudRim,
+        skyHorizon: ERAS.ww2.colors.skyHorizon,
+        valleyFog: ERAS.ww2.colors.valleyFog,
+      });
+    } finally {
+      clouds.dispose();
+    }
   });
 });

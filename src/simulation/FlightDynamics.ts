@@ -19,6 +19,8 @@ export interface AirActorConfig {
   energyRecover: number;
   windResponse?: number;
   bankLimit?: number;
+  liftCenterY?: number;
+  liftCenterZ?: number;
 }
 
 export interface AirActorState extends AirMotionState {
@@ -97,11 +99,23 @@ export function integrateAirActor(
   wind: { sample(x: number, z: number): { x: number; z: number } },
   speedFactor = 1,
 ) {
+  const startingBank = actor.bank;
   const target = intent.targetHeading ?? actor.heading;
-  const error = angleDelta(target, actor.heading);
+  const shortestError = angleDelta(target, actor.heading);
+  const distanceToTarget = Math.abs(shortestError);
+  const { turnBranchGuardDegrees, turnSettleDegrees } = RULES.joystick;
+  const branchTurn = distanceToTarget >= Math.PI - turnBranchGuardDegrees * RAD &&
+    distanceToTarget > turnSettleDegrees * RAD
+    ? intent.continuousTurn
+    : undefined;
+  const error = branchTurn !== undefined && shortestError * branchTurn < 0
+    ? shortestError + branchTurn * 2 * Math.PI
+    : shortestError;
   const baseTurnLimit = config.turnRate * RAD;
   const authority = error < 0 ? damage.turnAuthorityLeft : damage.turnAuthorityRight;
   const turnLimit = baseTurnLimit * authority;
+  const minTurn = branchTurn === 1 ? 0 : -turnLimit;
+  const maxTurn = branchTurn === -1 ? 0 : turnLimit;
   const desiredTurn = clamp(error * 4.5 - actor.turnVelocity * 0.45, -turnLimit, turnLimit);
   const wingFactor = (damage.liftLeft + damage.liftRight) * 0.5;
   const wingLoading = config.mass / Math.max(1, config.wingArea);
@@ -130,12 +144,18 @@ export function integrateAirActor(
   const bank = actor.bank + actor.rollVelocity * dt;
   actor.bank = clamp(bank, -bankLimit, bankLimit);
   if (bank !== actor.bank) actor.rollVelocity = 0;
+  // Coordinated yaw responds throughout the roll. Using the step midpoint
+  // keeps a newly established bank effective immediately without waiting for
+  // the aircraft to reach its final bank angle.
+  const bankForTurn = (startingBank + actor.bank) * 0.5;
   actor.turnVelocity = clamp(
-    (-FLIGHT_GRAVITY * Math.tan(actor.bank)) / Math.max(1, actor.speed),
-    -turnLimit,
-    turnLimit,
+    (-FLIGHT_GRAVITY * Math.tan(bankForTurn)) / Math.max(1, actor.speed),
+    minTurn,
+    maxTurn,
   );
-  actor.heading = angleDelta(actor.heading + actor.turnVelocity * dt + damage.yawDrift * dt, 0);
+  const yaw = actor.turnVelocity + damage.yawDrift;
+  const appliedYaw = branchTurn === undefined ? yaw : clamp(yaw, minTurn, maxTurn);
+  actor.heading = angleDelta(actor.heading + appliedYaw * dt, 0);
   updateBoost(actor, intent, config, dt);
   const throttle = intent.brake ? 0 : clamp(intent.throttle);
   const cruise = config.cruiseSpeed * speedFactor;
@@ -151,8 +171,8 @@ export function integrateAirActor(
   }
   actor.turnVelocity = clamp(
     (-FLIGHT_GRAVITY * Math.tan(actor.bank)) / Math.max(1, actor.speed),
-    -turnLimit,
-    turnLimit,
+    minTurn,
+    maxTurn,
   );
   actor.vx = Math.sin(actor.heading) * actor.speed;
   actor.vz = Math.cos(actor.heading) * actor.speed;

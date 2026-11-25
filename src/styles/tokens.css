@@ -1,0 +1,67 @@
+:root {
+  --font-sans: system-ui, -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+
+  /* Cockpit Slate & Vintage Brass Instrument Palette */
+  --bg-void: #0b1110;
+  --bg-shell: #101917;
+  --panel-bg: rgba(15, 22, 20, 0.8);
+  --panel-strong: rgba(16, 24, 22, 0.92);
+  --panel-solid: #141d1b;
+  --panel-elevated: #1b2724;
+  --panel-inset: rgba(9, 14, 13, 0.58);
+
+  --line-subtle: rgba(235, 230, 213, 0.14);
+  --line-mid: rgba(235, 230, 213, 0.24);
+  --line-strong: rgba(235, 230, 213, 0.4);
+
+  --ink: #ebe6d5;
+  --ink-muted: #9aa79c;
+  --ink-dim: #738076;
+
+  --amber: #e6b65c;
+  --amber-bright: #f2ca78;
+  --amber-ink: #1a150b;
+  --amber-soft: rgba(230, 182, 92, 0.16);
+  --amber-line: rgba(230, 182, 92, 0.48);
+
+  --signal: #8fd19e;
+  --signal-ink: #102418;
+  --signal-soft: rgba(143, 209, 158, 0.16);
+  --signal-line: rgba(143, 209, 158, 0.48);
+
+  --alert: #e46c50;
+  --alert-soft: rgba(228, 108, 80, 0.18);
+  --alert-line: rgba(228, 108, 80, 0.54);
+
+  --rare: #8dc4c9;
+  --epic: #cba8d6;
+
+  /* Typography scale (minimum readable 10px) */
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-base: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+
+  /* Geometry */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --nav-height: 52px;
+
+  /* Button visual heights */
+  --btn-xs: 28px;
+  --btn-sm: 34px;
+  --btn-md: 40px;
+  --btn-lg: 44px;
+
+  font-family: var(--font-sans);
+  color: var(--ink);
+  background: var(--bg-void);
+  font-synthesis: none;
+  font-weight: 400;
+  color-scheme: dark;
+}

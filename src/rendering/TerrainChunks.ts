@@ -43,9 +43,13 @@ export class TerrainChunks {
     this.water.uniforms.tint.value.set(color);
   }
 
-  setHaze(color: string) {
+  setHaze(color: string, valleyFog = color, sunTint = "#fff3cc", skyZenith = "#4d9ed6", skyHorizon = color) {
     this.water.uniforms.haze.value.set(color);
-    this.landmarks.setHaze(color);
+    this.water.uniforms.valleyFog.value.set(valleyFog);
+    this.water.uniforms.sunTint.value.set(sunTint);
+    this.water.uniforms.skyZenith.value.set(skyZenith);
+    this.water.uniforms.skyHorizon.value.set(skyHorizon);
+    this.landmarks.setHaze(color, valleyFog, sunTint);
   }
 
   setShadows(visible: boolean) {

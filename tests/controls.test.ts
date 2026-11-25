@@ -8,7 +8,7 @@ import { frameBattleCamera } from "../src/rendering/BattleCamera";
 import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
 import { ContentCatalog } from "../src/content/3d/ContentCatalog";
 import { upgradeById } from "../src/data/upgrades";
-import { RAD } from "../src/services/Random";
+import { angleDelta, RAD } from "../src/services/Random";
 import { World } from "../src/simulation/World";
 import { NetworkController } from "../src/simulation/Controllers";
 
@@ -72,6 +72,115 @@ function touchStick(x: number, y: number) {
   surface.pointer("pointerdown", x, y);
   return { surface, stick };
 }
+
+function moveStick(surface: StickSurface, ...angles: number[]) {
+  for (const angle of angles) {
+    surface.pointer("pointermove", Math.sin(angle * RAD), -Math.cos(angle * RAD));
+  }
+}
+
+describe("continuous joystick gestures", () => {
+  it.each([-1, 1] as const)("holds heading sign %s across the angular boundary", (sign) => {
+    const { surface, stick } = touchStick(0, -1);
+    moveStick(surface, -sign * 20);
+    expect(stick.read(1 / 60).continuousTurn).toBeUndefined();
+    moveStick(surface, ...[40, 70, 100, 130, 160, 176].map((angle) => -sign * angle));
+    expect(stick.read(1 / 60).continuousTurn).toBe(sign);
+    moveStick(surface, -sign * 184, -sign * 178, -sign * 182, -sign * 176);
+    expect(stick.read(1 / 60).continuousTurn).toBe(sign);
+    moveStick(surface, -sign * 170, -sign * 164);
+    expect(stick.read(1 / 60).continuousTurn).toBe(-sign);
+  });
+
+  it("uses the absolute target for a direct reposition and after a dead-zone crossing", () => {
+    const { surface, stick } = touchStick(0, -1);
+    moveStick(surface, 35);
+    expect(stick.read(1).continuousTurn).toBeUndefined();
+    moveStick(surface, 55);
+    expect(stick.read(1).continuousTurn).toBe(-1);
+    moveStick(surface, -125);
+    const relocated = stick.read(1);
+    expect(relocated.continuousTurn).toBeUndefined();
+    expect(Math.atan2(relocated.x, relocated.z)).toBeCloseTo(125 * RAD);
+    moveStick(surface, -105, -85);
+    expect(stick.read(1).continuousTurn).toBe(-1);
+    surface.pointer("pointermove");
+    expect(stick.read(1 / 60)).toMatchObject({ active: false, magnitude: 0 });
+    moveStick(surface, 35);
+    expect(stick.read(1 / 60).continuousTurn).toBeUndefined();
+  });
+
+  it.each(["pointerup", "pointercancel", "lostpointercapture", "mode", "reset", "disabled"])(
+    "starts a fresh gesture after %s",
+    (event) => {
+      const { surface, stick } = touchStick(0, -1);
+      moveStick(surface, 20, 40);
+      expect(stick.read(1 / 60).continuousTurn).toBe(-1);
+      if (event === "mode") stick.setFlightState(true, true);
+      else if (event === "reset") stick.reset();
+      else if (event === "disabled") stick.enabled = false;
+      else surface.pointer(event);
+      expect(stick.read(1 / 60)).toMatchObject({ active: false, magnitude: 0 });
+      expect(stick.read(1 / 60).continuousTurn).toBeUndefined();
+      expect(surface.hasPointerCapture(1)).toBe(false);
+      stick.enabled = true;
+      surface.pointer("pointerdown", 1, 0);
+      moveStick(surface, 110);
+      expect(stick.read(1 / 60).continuousTurn).toBeUndefined();
+    },
+  );
+
+  it("omits gesture preference when keyboard directions take priority", () => {
+    const { surface, stick } = touchStick(0, -1);
+    moveStick(surface, 20, 40);
+    expect(stick.read(1 / 60).continuousTurn).toBe(-1);
+    stick.key("ArrowLeft", true);
+    expect(stick.read(1)).toMatchObject({ active: true, magnitude: 1, continuousTurn: undefined });
+    expect(stick.read(1).x).toBeCloseTo(1);
+  });
+
+  it.each([-1, 1] as const)("reproduces heading sign %s at 30, 60, and 120 FPS", (sign) => {
+    const start = -sign * 145 * RAD;
+    const { surface, stick } = touchStick(Math.sin(start), -Math.cos(start));
+    const snapshots = Array.from({ length: 120 }, (_, step) => {
+      if (step < 8) moveStick(surface, -sign * (145 + step * 8));
+      if (step === 66) surface.pointer("pointerup");
+      return stick.read(RULES.step);
+    });
+
+    function run(fps: number) {
+      const world = new World(AIRFRAMES[0], 42, { director: false });
+      world.player.weapons = [];
+      const state = () => {
+        const { x, z, vx, vz, heading, bank, speed, turnVelocity } = world.player;
+        return { x, z, vx, vz, heading, bank, speed, turnVelocity };
+      };
+      const states = [state()];
+      let sampled = 0;
+      for (let frame = 0; frame < 2 * fps; frame++) {
+        world.frame(1 / fps, (time) => {
+          if (sampled > 0) states.push(state());
+          expect(time).toBeCloseTo((sampled + 1) * RULES.step, 9);
+          return snapshots[sampled++];
+        });
+      }
+      expect(sampled).toBe(snapshots.length);
+      states.push(state());
+      world.dispose();
+      return states;
+    }
+
+    const at60 = run(60);
+    const firstOpposite = snapshots.findIndex((snapshot, step) => {
+      const error = angleDelta(Math.atan2(snapshot.x, snapshot.z), at60[step].heading);
+      return snapshot.continuousTurn === sign && Math.abs(error) > 150 * RAD && error * sign < 0;
+    });
+    expect(firstOpposite).toBeGreaterThan(0);
+    expect(at60[firstOpposite + 1].turnVelocity * sign).toBeGreaterThan(0);
+    expect(run(30)).toEqual(at60);
+    expect(run(120)).toEqual(at60);
+  });
+});
 
 function expectFlightDirection(stick: VirtualStick, x: number, y: number) {
   const world = new World(AIRFRAMES[0], 42, { director: false });
@@ -273,5 +382,25 @@ describe("battle camera framing", () => {
     );
     for (const height of [4, RULES.flightAltitude])
       expect(width(camera, height)).toBeLessThanOrEqual(0.7 * width(reference, height));
+  });
+
+  it("opens up the cruise horizon vista while preserving high-angle bombing framing", () => {
+    const cruiseCam = new THREE.PerspectiveCamera(RULES.camera.fov, 360 / 640, RULES.camera.near, RULES.camera.far);
+    const bombCam = new THREE.PerspectiveCamera(RULES.camera.fov, 360 / 640, RULES.camera.near, RULES.camera.far);
+    frameBattleCamera(cruiseCam, 0, 0, 0);
+    frameBattleCamera(bombCam, 0, 0, 1);
+
+    // Cruise view extends far clip and widens FOV / lowers camera height to open distant cloud parallax
+    // while keeping pitch >= 52 deg so screen-relative diagonal controls stay accurate.
+    expect(RULES.camera.far).toBeGreaterThanOrEqual(420);
+    expect(RULES.camera.fov).toBeGreaterThanOrEqual(58);
+    expect(RULES.camera.bombing.pitch).toBeGreaterThan(RULES.camera.pitch + 15);
+    // Forward cloud sea and distant cumulus walls ahead of the player project cleanly into the upper half.
+    const distantCloudSea = new THREE.Vector3(0, 20, 75).project(cruiseCam);
+    expect(distantCloudSea.y).toBeGreaterThan(0.5);
+    expect(distantCloudSea.y).toBeLessThan(1);
+    expect(distantCloudSea.z).toBeLessThan(1);
+    // Bombing camera stays steeper and higher than cruise camera.
+    expect(bombCam.position.y).toBeGreaterThan(cruiseCam.position.y + 20);
   });
 });

@@ -107,7 +107,7 @@ export class Renderer {
     this.scene.add(this.showroomBackdrop.group);
     this.showroomBackdrop.setVisible(false);
     this.skyDome = new THREE.Mesh(
-      new THREE.SphereGeometry(420, 24, 16),
+      new THREE.SphereGeometry(440, 24, 16),
       skyDomeMaterial(),
     );
     this.skyDome.renderOrder = -1000;
@@ -115,7 +115,7 @@ export class Renderer {
     this.scene.add(this.skyDome);
     this.overlayScene.add(new THREE.HemisphereLight("#fff6e5", "#526b61", 2.2));
     this.overlayScene.add(new THREE.DirectionalLight("#fff1ca", 2.4));
-    this.scene.fog = new THREE.Fog("#cfefff", 70, 240);
+    this.scene.fog = new THREE.Fog("#dff5f0", 78, 196);
     this.overlayScene.fog = this.scene.fog;
     this.renderer.autoClear = false;
     this.renderer.info.autoReset = false;
@@ -333,14 +333,23 @@ export class Renderer {
     if (era !== this.era) {
       this.era = era;
       const { colors } = ERAS[era];
-      this.renderer.setClearColor(colors.haze);
-      (this.scene.fog as THREE.Fog).color.set(colors.haze);
+      this.renderer.setClearColor(colors.skyHorizon);
+      (this.scene.fog as THREE.Fog).color.set(colors.skyHorizon);
       this.terrainMat.uniforms.grass.value.set(colors.grass);
       this.terrainMat.uniforms.road.value.set(colors.accent);
-      this.terrainMat.uniforms.haze.value.set(colors.haze);
-      this.skyDome.material.uniforms.horizon.value.set(colors.haze);
+      this.terrainMat.uniforms.haze.value.set(colors.skyHorizon);
+      this.terrainMat.uniforms.valleyFog.value.set(colors.valleyFog);
+      this.terrainMat.uniforms.sunTint.value.set(colors.sunTint);
+      this.terrainMat.uniforms.cloudShadowColor.value.set(colors.cloudShadow);
+      this.skyDome.material.uniforms.zenith.value.set(colors.skyZenith);
+      this.skyDome.material.uniforms.horizon.value.set(colors.skyHorizon);
+      this.skyDome.material.uniforms.sun.value.set(colors.sunTint);
+      this.skyDome.material.uniforms.haze.value.set(colors.skyHorizon);
+      this.skyDome.material.uniforms.valleyFog.value.set(colors.valleyFog);
+      this.skyDome.material.uniforms.sunTint.value.set(colors.sunTint);
+      this.cloudscape.setPalette(colors);
       this.terrainChunks.setWaterColor(colors.water);
-      this.terrainChunks.setHaze(colors.haze);
+      this.terrainChunks.setHaze(colors.skyHorizon, colors.valleyFog, colors.sunTint, colors.skyZenith, colors.skyHorizon);
     }
     const display = options.display,
       launch = options.launching ?? 0;
@@ -412,14 +421,19 @@ export class Renderer {
         this.camera.up.set(0, 1, 0);
         const yaw = this.displayOrbitYaw;
         const pitch = this.displayOrbitPitch;
-        const horizontal = Math.cos(pitch) * distance;
-        const cameraBase = RULES.flightAltitude + 5;
+        const inspection = p.frame.geometryProfile === "pioneerReview";
+        const orbitDistance = inspection
+          ? Math.max(displaySpan / this.camera.aspect, p.stats.length * .80, displaySpan * .54)
+              * .84 / Math.tan(this.camera.fov * RAD / 2)
+          : distance;
+        const horizontal = Math.cos(pitch) * orbitDistance;
+        const cameraBase = RULES.flightAltitude + (inspection ? orbitDistance * .28 : 5);
         this.camera.position.set(
           this.displayAnchor.x + Math.sin(yaw) * horizontal,
-          cameraBase + Math.sin(pitch) * distance,
+          cameraBase + Math.sin(pitch) * orbitDistance,
           this.displayAnchor.z - Math.cos(yaw) * horizontal,
         );
-        this.camera.lookAt(this.displayAnchor.x, RULES.flightAltitude, this.displayAnchor.z - 2);
+        this.camera.lookAt(this.displayAnchor.x, RULES.flightAltitude, this.displayAnchor.z - (inspection ? 0 : 2));
       }
       this.camera.updateMatrixWorld();
     } else {
@@ -450,6 +464,7 @@ export class Renderer {
       this.aircraft.group.position.y -= this.crashTime * this.crashTime * 2;
       this.aircraft.group.rotation.z += this.crashTime * 0.9;
     }
+    this.aircraft.syncLiftPivot();
     const showroom = options.showroom === true;
     if (showroom) {
       this.skyDome.visible = false;
@@ -483,6 +498,11 @@ export class Renderer {
       p.vz,
       cloudsEnabled,
     );
+    const activeColors = ERAS[era].colors;
+    const cloudWrap = cloudsEnabled && !showroom
+      ? clamp(Math.max(this.cloudscape.cameraDensity * .35, this.cloudscape.playerDensity * .42), 0, .32)
+      : 0;
+    this.aircraft.setCloudAtmosphere(cloudWrap, activeColors.cloudLit);
     if (import.meta.env.DEV && fixture) {
       environmentState.set(this, {
         sceneTime: this.time,
@@ -651,7 +671,7 @@ export class Renderer {
     const fanMaterial = this.lockFan.material as THREE.MeshBasicMaterial;
     fanMaterial.color.copy(color);
     fanMaterial.opacity = world.lockPulse ? 0.3 : 0.035 + progress * 0.1;
-    this.lockFan.visible = Boolean(lock) && !world.isBombing;
+    this.lockFan.visible = Boolean(lock?.targetId) && !world.isBombing;
     const arc =
       (lock ? lock.config.arc + p.stats.lockArc : 24) *
       RAD *
