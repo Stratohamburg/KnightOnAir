@@ -1,3 +1,4 @@
+import { applyHoPanelLayout } from "./Ho229Layout";
 import { RULES } from "../data/config";
 import {
   combatantById,
@@ -8,7 +9,7 @@ import {
   type EraId,
 } from "../data/combatants";
 import { WEAPONS, type WeaponConfig, type TargetLayer } from "../data/weapons";
-import { FOKKER_UPGRADES, UPGRADES, type Upgrade } from "../data/upgrades";
+import { FOKKER_UPGRADES, HO229_UPGRADES, UPGRADES, type Upgrade } from "../data/upgrades";
 import { AIRFRAMES, type Airframe } from "../data/aircrafts";
 import { ERAS, missionEraOf } from "../data/eras";
 import {
@@ -293,6 +294,7 @@ export class World {
         detachable: recipe.detachable,
         centerline: frame ? recipe.centerline ?? mountForPart({ ...recipe, x: recipe.x ?? 0, z: recipe.z ?? 0 }, frame) : recipe.centerline,
         engineInstallation: recipe.engineInstallation,
+        outletOffset: recipe.outletOffset,
       });
       return part;
     });
@@ -323,6 +325,9 @@ export class World {
         .filter(line => line.kind === "wing" && line.side === side)
         .map(line => Math.abs(line.origin.x) + line.length + lineExtension(this.player.parts, line.id)));
       this.player.stats.wingspan = extent(-1) + extent(1);
+    } else if (this.player.frame.geometryProfile === "ho229V2") {
+      applyHoPanelLayout(this.player.parts, statWingspan);
+      this.player.stats.wingspan = statWingspan + lineExtension(this.player.parts, "left-wing-0") + lineExtension(this.player.parts, "right-wing-0");
     } else this.player.stats.wingspan = statWingspan + wingExtension;
     this.player.stats.length = statLength + structuralLength;
   }
@@ -735,6 +740,10 @@ export class World {
         ? { wingspan: frame.wingspan, length: frame.length, width: frame.engines === 4 ? .75 : .48, tiers: frame.wingCount ?? 1, wingLength: frame.length }
         : npcAirframeShape(config.visual.modelKey, config.era);
       refreshAirframeSilhouette(parts, shape.wingspan, shape.length, shape.width, shape.tiers, shape.wingLength, undefined, frame?.geometryProfile ?? config.id);
+      if (frame?.geometryProfile === "ho229V2" && config.topology) {
+        applyCenterlineLayout(config.topology, parts);
+        applyHoPanelLayout(parts, frame.wingspan);
+      }
       if (frame?.geometryProfile === "fokkerDr1" && config.topology) applyCenterlineLayout(config.topology, parts);
     }
     const totalHealth = totalPartHealth(parts);
@@ -1587,7 +1596,8 @@ export class World {
       upgrades: this.player.upgrades,
       parts: this.player.parts,
       weapons: this.player.weapons,
-    }, this.player.frame.geometryProfile === "fokkerDr1" ? FOKKER_UPGRADES : UPGRADES);
+    }, this.player.frame.geometryProfile === "fokkerDr1" ? FOKKER_UPGRADES :
+      this.player.frame.geometryProfile === "ho229V2" ? HO229_UPGRADES : UPGRADES);
   }
   private refitWeapon(id: string) { return refitWeaponForEra(id, this.refitEra); }
   private upgradeWeight(u: Upgrade) {
@@ -1662,7 +1672,7 @@ export class World {
     const newlyAdded: Part[] = [];
     u.parts.forEach((recipe, i) => {
       const existing =
-        u.repeatable &&
+        u.repeatable && !u.wingBay &&
         !["left_wing_segment", "right_wing_segment", "tail_side_bay"].includes(u.id) &&
         p.parts.find(
           (part) => part.id.startsWith(`${u.id}_`) && part.kind === recipe.kind,
@@ -1692,15 +1702,20 @@ export class World {
         recipe.kind === "wing" ? 1.1 : 0.5,
       );
       part.centerline = mountForUpgrade(u.id, part, p.frame, p.parts);
-      if (part.role === "engine") {
+      if (u.wingBay && i === 0) {
+        Object.assign(part.centerline, { segmentRole: "insert", insertion: u.wingBay.insertion, segmentLength: u.wingBay.width });
+      }
+      if (part.role === "engine" && !u.wingBay) {
         part.engineInstallation = p.frame.id === "stingray_16" ? "pusher" : "tractor";
         part.centerline.axis = part.engineInstallation;
         part.centerline.clearance = .8;
       }
-      const terminal = p.frame.geometryProfile === "fokkerDr1" && part.centerline.insertion === "tip-before"
+      const terminal = part.centerline.insertion === "root-before"
+        ? p.parts.find(candidate => candidate.id === (side < 0 ? "left_wing" : "right_wing"))
+        : (p.frame.geometryProfile === "fokkerDr1" || p.frame.geometryProfile === "ho229V2") && part.centerline.insertion === "tip-before"
         ? p.parts.find(candidate => candidate.centerline?.lineId === part.centerline!.lineId && candidate.centerline.segmentRole === "tip")
         : undefined;
-      const parent = terminal ? p.parts.find(candidate => candidate.id === terminal.parentId) : u.id === "left_wing_segment" || u.id === "right_wing_segment"
+      const parent = u.wingBay && i > 0 ? newlyAdded[0] : terminal ? p.parts.find(candidate => candidate.id === terminal.parentId) : u.id === "left_wing_segment" || u.id === "right_wing_segment"
         ? p.parts.slice().reverse().find((candidate) => candidate.slot === recipe.slot && candidate.role === "wing" && candidate.health > 0)
         : u.id === "tail_side_bay" ? p.parts.find((candidate) => candidate.id === "tail")
           : u.id === "airship_gun_gallery" ? p.parts.find((candidate) => candidate.slot === "leftWing" && candidate.role === "wing")
@@ -1722,7 +1737,7 @@ export class World {
     });
     u.weapons?.forEach((id, i) => {
       if (id === "lock_missile" && this.mainLock) return;
-      const part = newlyAdded[Math.min(i, newlyAdded.length - 1)];
+      const part = u.wingBay ? newlyAdded.find(p => p.role === "gun") : newlyAdded[Math.min(i, newlyAdded.length - 1)];
       if (!part || part.destroyed) return;
       const baseWeapon = this.refitWeapon(id);
       const c = u.id === "nose_cannon"

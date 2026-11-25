@@ -1,0 +1,27 @@
+.ho229-plate label, .ho229-plate small { font-size: .72rem; color: #425e58; }
+.ho229-plate label { cursor: pointer; }
+.ho229-views { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: .6rem; }
+.ho229-views .ho-plan { grid-column: 1 / -1; }
+.ho229-views figure svg { aspect-ratio: auto; max-height: none; overflow: hidden; }
+.ho229-views image { opacity: 0; mix-blend-mode: multiply; }
+.ho229-plate:has(.ho-overlay:checked) image { opacity: .7; }
+.ho229-views path { fill: none; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.ho229-views .ho-skin { stroke: #315c57; fill: #8db4a52e; }
+.ho229-views .ho-joint, .ho229-views .ho-gear { stroke: #526d64; }
+.ho229-views .ho-canopy { stroke: #32718b; fill: #7ab0c73d; }
+.ho229-views .ho-engine { stroke: #a65833; fill: #cb8c5530; }
+.ho229-views .ho-engine-position { stroke: #8c381e; stroke-dasharray: 6 2 1 2; }
+.ho229-views .ho-engine-hidden { stroke: #744652; stroke-dasharray: 3 3; stroke-width: 1; }
+.ho-engine-body { fill: #dba03b55; stroke: #895914; vector-effect: non-scaling-stroke; }
+.reference-feature-key .ho-engine-body-key { height: .55rem; border: 1px solid #895914; background: #dba03b55; }
+.ho229-views .ho-front .ho-engine-position { stroke-dasharray: none; }
+.reference-feature-key .ho-position-key { width: 1.4rem; height: 0; border-top: 2px dashed #8c381e; }
+.reference-feature-key .ho-hidden-key { width: 1.4rem; height: 0; border-top: 2px dashed #744652; background: transparent; }
+.ho-outlet-label path { stroke: #a65833; }
+.ho-outlet-label text { fill: #874323; font-size: 16px; }
+.ho229-views .ho-control { stroke: #79618e; fill: #9a81ae38; }
+.ho229-views .ho-datum { stroke: #7d8b83; stroke-width: .7; stroke-dasharray: 4 4; }
+@media (max-width: 760px) {
+  .ho229-views { grid-template-columns: minmax(0, 1fr); }
+}
+.reference-model-host.ho229-plan-view canvas { transform: scaleX(-1); }

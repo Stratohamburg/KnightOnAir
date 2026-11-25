@@ -1,4 +1,6 @@
 import { stationZ, wingBays, wings } from "../data/fokkerDr1Sheet";
+import { hoTopology } from "./Ho229Layout";
+import { hoZ } from "../data/ho229V2Sheet";
 import type { Airframe } from "../data/aircrafts";
 import type { Point3 } from "../content/3d/anchors";
 import type { Part, PartRole, Slot } from "./types";
@@ -54,7 +56,7 @@ export interface CenterlineMount {
   offset?: Point3;
   segmentLength?: number;
   segmentRole?: "root" | "tip" | "insert" | "mount";
-  insertion?: "tip-before" | "station";
+  insertion?: "tip-before" | "root-before" | "station";
   axis?: "tractor" | "pusher";
   clearance?: number;
   profile?: CenterlineProfile;
@@ -199,6 +201,7 @@ export function layerForPart(part: Pick<Part, "role" | "kind">): CenterlineMount
 }
 
 export function defaultTopology(frame: Airframe): AircraftTopology {
+  if (frame.geometryProfile === "ho229V2") return hoTopology();
   const centerlines: CenterlineDefinition[] = [];
   const connections: CenterlineConnection[] = [];
   const geometry = aircraftGeometryProfile(frame.geometryProfile);
@@ -336,7 +339,7 @@ export function mountForPart(
   const side = part.side ?? (part.slot === "leftWing" ? -1 : part.slot === "rightWing" ? 1 : 0);
   const wingRootFactor = aircraftGeometryProfile(frame.geometryProfile)?.layout === "flyingWing" ? .17 : .23;
   const wingId = `${side < 0 ? "left" : "right"}-wing-0`;
-  const lineId = options.lineId ?? (part.slot === "leftWing" || part.slot === "rightWing" ? wingId : part.slot === "tail" && frame.geometryProfile !== "ho229" ? "tail" : "fuselage");
+  const lineId = options.lineId ?? (part.slot === "leftWing" || part.slot === "rightWing" ? wingId : part.slot === "tail" ? "tail" : "fuselage");
   const station = options.station ?? (part.slot === "nose" ? frame.length * .31 : part.slot === "tail" ? 0 : part.slot === "bottom" ? 0 : part.slot === "top" ? frame.length * .08 : part.slot === "leftWing" || part.slot === "rightWing" ? frame.wingspan * .17 : 0);
   const base = part.slot === "tail"
     ? { x: 0, y: 0, z: -frame.length * .34 }
@@ -367,6 +370,9 @@ export function mountForUpgrade(
   existing: readonly Part[],
 ): CenterlineMount {
   const side = part.side ?? (part.slot === "leftWing" ? -1 : part.slot === "rightWing" ? 1 : 0);
+  if (frame.geometryProfile === "ho229V2" && part.slot === "tail") {
+    return { lineId: "fuselage", station: hoZ(650), segmentRole: "mount", layer: layerForPart(part) };
+  }
   if (frame.geometryProfile === "fokkerDr1" && !id.endsWith("wing_segment")) {
     const location = {
       left_engine: { x: -2, y: -.25, z: stationZ(45) },

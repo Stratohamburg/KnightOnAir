@@ -37,7 +37,21 @@ Every edge row must identify the views that control it. Confirm a boundary or st
 | Longitudinal station and chord interval | side + top | nose or tail datum, leading and trailing stations |
 | Volume or section shape | front or section detail + side or plan at the same station | section type, extrema, transition evidence and any photographic support |
 
-If a boundary is hidden in one view, use the second view to locate the parent and endpoint. If two views still cannot resolve it, mark the unresolved field as an estimate and log a fallback if one is used. Do not silently fill the row with a generic wing, body, or spacing formula.
+For paired edges, compare the independently traced left and right intervals about the registered aircraft center plane. Record the largest mirrored deviation and its location in the [symmetry check](aircraft-profile-template.md#left-right-symmetry-check). Derive any reconciled contour from the supported measurements.
+
+If an included part's boundary is hidden in one view, use the second view to locate its parent and endpoint. Consult variant documentation and photographs for a required boundary that remains obscured, then ask the user if it remains unresolved. Apply the [part inventory](aircraft-profile-template.md#three-view-part-inventory) to optional items whose presence could not be established.
+
+A projection outline constrains visible extents. Use a section drawing, a locally identifiable photo, or a recorded user constraint to establish the shape at the relevant station. A round inlet supports the inlet section. Downstream nacelle sections, wing thickness and masked joins each need their own evidence. Record incompatible widths, heights or stations as separate source readings and show the proposed resolution in H5 before fitting the surface.
+
+### Locate a concealed engine
+
+1. In side view, identify the housing contour, the exposed rim and the edge of the skin that obscures it. A housing step can locate the outlet's longitudinal station even when only the top of the opening is visible. Check that station in plan and locate each inlet center in front view. The midpoint of a partially visible rim shifts with occlusion.
+2. Recover the full opening from a section or another view where possible. For one approximately cylindrical engine with a dedicated inlet or outlet of comparable bore, start the body diameter close to, and slightly smaller than, the clear dimension of that single opening. Measure across the opposing lip edges in the view that exposes them. A shared intake or a visibly contracted nozzle needs an engine section or another diameter reference. Record the chosen opening and the allowance for the surrounding skin.
+3. For a straight installation, fit one axis through the opening centers. Derive both sides of a constant-diameter body from parallel offsets. At a curved intake lip, the upper edge, axis and lower edge can meet the lip at different longitudinal stations. Overlay all three intersections on the source after moving either end. Where a duct bends or is offset, locate the rigid engine and the duct separately.
+4. Check the fitted axis against the housing over the span occupied by the body. Where the upper housing follows the engine, its local slope should roughly track the upper body edge with room for structure. Compare the gap near both ends and through the middle. A tapered fairing can change that gap. Keep the rigid body straight through the taper.
+5. Show visible contours as solid lines, hidden estimates as dashed lines and the axis as a centerline. If the question is where the engine itself sits, place a translucent rectangle along its axis, leaving the inlet duct and tailpipe their own lengths. Use the same diameter for the rectangle and the inferred body edges so they coincide after a revision. Label its ends as estimated while the internal joints are concealed. Paired engines that coincide in side view can share one marker when the other views establish both positions.
+
+The [Ho 229 V2 profile](../../../../docs/reference/ho229-v2-profile.md) records the lip readings, housing allowance and estimated engine-body interval for this example.
 
 ## Boundary decisions
 
@@ -51,7 +65,7 @@ If a boundary is hidden in one view, use the second view to locate the parent an
 - Read leading-edge stations along the span to determine sweep. Collinear samples can form a swept edge. Equal longitudinal stations identify an unswept edge within the drawing tolerance. Preserve changes in chord independently.
 - At each visible kink, sample the inboard endpoint, kink and outboard endpoint of the same edge. Measure plan sweep relative to the aircraft lateral axis and front-view inclination relative to horizontal. Record the structural bay boundary and the geometric kink independently, including when they coincide.
 - Where a nacelle hides an edge, follow the exposed wing on either side and check another projection before extending the edge through the hidden region. Record the engine mount's parent bay, local offset and propulsion axis separately from the panel angles.
-- A stacked wing needs one record per layer. Derive each layer's `y`, `z`, span, chord, root seam, and support from its evidence rows. A shared `tierGap` is a fallback only after the source search fails for that specific layer and the fallback is recorded.
+- A stacked wing needs one record per layer. Derive each layer's `y`, `z`, span, chord, root seam, and support from its evidence rows. Every layer needs its own measured or explicitly review-constrained spacing. An unresolved layer keeps approval disabled.
 - A flying wing uses the center-body seam and the outer leading and trailing edges as one continuous boundary. A short center pod must not be stretched into a conventional fuselage.
 - A twin-boom aircraft needs a separate edge and parent record for each boom and for the connecting tailplane.
 - Landing gear is a module when the source shows a visible leg, axle, wheel, or fairing. Record its attachment edge and ground clearance.

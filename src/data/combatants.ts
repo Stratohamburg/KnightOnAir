@@ -1,3 +1,4 @@
+import { hoEngines, hoEngineMount, hoGear, hoUnit, hoX, hoZ } from "./ho229V2Sheet";
 import { stationZ, unit, wingSegments } from "./fokkerDr1Sheet";
 import { AIRFRAMES, eraOf, type EraId } from "./aircrafts";
 import { ENEMIES } from "./enemies";
@@ -12,7 +13,7 @@ import { defaultTopology, mountForPart, type AircraftTopology, type CenterlineMo
 export type { EraId } from "./aircrafts";
 export type Layer = "air" | "ground" | "water";
 export type BehaviorKind = "chase" | "patrol" | "intercept" | "escort" | "crossing" | "strafe" | "dive" | "standoff" | "convoy" | "static" | "flee";
-export interface CombatPartRecipe { id: string; parentId?: string; role: PartRole; slot: Slot; side: -1 | 0 | 1; health: number; damageTransfer: number; detachable: boolean; kind?: string; x?: number; y?: number; z?: number; radius?: number; weight?: number; lift?: number; thrust?: number; centerline?: CenterlineMount; engineInstallation?: "tractor" | "pusher"; }
+export interface CombatPartRecipe { outletOffset?: Point3; id: string; parentId?: string; role: PartRole; slot: Slot; side: -1 | 0 | 1; health: number; damageTransfer: number; detachable: boolean; kind?: string; x?: number; y?: number; z?: number; radius?: number; weight?: number; lift?: number; thrust?: number; centerline?: CenterlineMount; engineInstallation?: "tractor" | "pusher"; }
 export type AirframeMotionConfig = {
   model: "air";
   mass: number;
@@ -54,12 +55,24 @@ const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
     { id: "right_wing_tip", role: "wing", slot: "rightWing", side: 1, health: frame.health * .02, damageTransfer: .5, detachable: true, lift: .15 },
     { id: "tail", role: "tail", slot: "tail", side: 0, x: 0, z: -frame.length * .34, health: frame.health * .08, damageTransfer: 1, detachable: false },
     { id: "bay", kind: "bombBay", role: "bay", slot: "bottom", side: 0, x: 0, z: -.3, health: frame.health * .05, damageTransfer: 1, detachable: false },
-    { id: "nose", role: "gun", slot: "nose", side: 0, x: 0, z: frame.length * .31, health: frame.health * .08, damageTransfer: 1, detachable: false },
+    { id: "nose", role: frame.gun ? "gun" : "body", slot: "nose", side: 0, x: 0, z: frame.length * .31, health: frame.health * .08, damageTransfer: 1, detachable: false },
   ];
   if (!frame.bomb) {
     const bay = parts.findIndex((part) => part.id === "bay");
     parts[0].health += parts[bay].health;
     parts.splice(bay, 1);
+  }
+  if (frame.geometryProfile === "ho229V2") {
+    const tail = parts.find(part => part.id === "tail")!;
+    const nose = parts.find(part => part.id === "nose")!;
+    const gear = hoGear[0];
+    Object.assign(nose, { kind: "cannon", parentId: "center_body", z: hoZ(270),
+      centerline: { lineId: "fuselage", station: hoZ(270), layer: "weapon" } });
+    Object.assign(tail, { id: "landing_gear", kind: "landingGear", role: "body", slot: "bottom",
+      parentId: "center_body", x: 0, y: gear.height * hoUnit, z: hoZ(gear.row) });
+    for (const part of parts.filter(p => p.role === "wing")) {
+      part.parentId = part.id.endsWith("_tip") ? part.id.replace("_tip", "") : "center_body";
+    }
   }
   if (frame.geometryProfile === "fokkerDr1") {
     // Keep total native wing health, weight and lift while giving every
@@ -94,21 +107,23 @@ const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
     });
   }
   for (let i = 0; i < frame.engines; i++) {
+    if (frame.geometryProfile === "ho229V2") {
+      const engine = hoEngines[i];
+      const x = hoX(engine.column), mount = hoEngineMount(engine);
+      const side = i === 0 ? -1 : 1;
+      parts.push({ id: `engine_${i}`, role: "engine", parentId: "center_body",
+        slot: side < 0 ? "leftWing" : "rightWing", side, x, ...mount,
+        centerline: { lineId: "fuselage", station: mount.z, layer: "engine", offset: { x, y: mount.y, z: 0 } },
+        health: frame.health * .05, damageTransfer: .35, detachable: false, thrust: 1 });
+      continue;
+    }
     const x = frame.engines === 1
       ? 0
-      : (i - (frame.engines - 1) / 2) * frame.wingspan * (frame.geometryProfile === "ho229" ? .32 : .2);
-    const profile = frame.geometryProfile;
-    const jet = profile === "vampire" || profile === "ho229";
+      : (i - (frame.engines - 1) / 2) * frame.wingspan * .2;
     const side = x < 0 ? -1 : x > 0 ? 1 : 0;
-    const slot: Slot = profile === "vampire" && side === 0
-      ? "center"
-      : side < 0 ? "leftWing" : side > 0 ? "rightWing" : "nose";
-    const z = profile === "fokkerDr1" ? stationZ(12) : profile === "vampire"
-      ? -frame.length * .02
-      : profile === "ho229"
-        ? frame.length * .02
-        : frame.length * .38;
-    parts.push({ id: `engine_${i}`, role: "engine", slot, side, x, z, health: frame.health * .1 / Math.max(1, frame.engines), damageTransfer: .35, detachable: false, thrust: 1, engineInstallation: jet ? "pusher" : "tractor" });
+    const slot: Slot = side < 0 ? "leftWing" : side > 0 ? "rightWing" : "nose";
+    const z = frame.geometryProfile === "fokkerDr1" ? stationZ(12) : frame.length * .38;
+    parts.push({ id: `engine_${i}`, role: "engine", slot, side, x, z, health: frame.health * .1 / Math.max(1, frame.engines), damageTransfer: .35, detachable: false, thrust: 1, engineInstallation: "tractor" });
   }
   if (frame.turret) parts.push({ id: "top_turret", role: "turret", slot: "top", side: 0, health: frame.health * .08, damageTransfer: 1, detachable: false });
   const wingProfile = aircraftGeometryProfile(frame.geometryProfile)?.wing;
@@ -130,21 +145,29 @@ const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
   }));
 };
 
-const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
-  const gun = WEAPONS[frame.gun];
+function primaryMounts(weaponId?: string): MountRecipe[] {
+  if (!weaponId) return [];
+  const gun = WEAPONS[weaponId];
   const mainCount = gun.count;
   const layers = gun.targetLayers ?? ["air"];
-  const mounts: MountRecipe[] = (frame.gun.includes("wing") || frame.gun.includes("quad") || frame.gun === "ww2_rocket_battery")
+  return (weaponId.includes("wing") || weaponId.includes("quad") || weaponId === "ww2_rocket_battery")
     ? [
-        { id: "primary_left", partId: "left_wing", weaponId: frame.gun, count: mainCount / 2, arc: gun.arc, baseAngle: 0, targetLayers: layers },
-        { id: "primary_right", partId: "right_wing", weaponId: frame.gun, count: mainCount / 2, arc: gun.arc, baseAngle: 0, targetLayers: layers },
+        { id: "primary_left", partId: "left_wing", weaponId, count: mainCount / 2, arc: gun.arc, baseAngle: 0, targetLayers: layers },
+        { id: "primary_right", partId: "right_wing", weaponId, count: mainCount / 2, arc: gun.arc, baseAngle: 0, targetLayers: layers },
       ]
-    : [{ id: "primary", partId: "nose", weaponId: frame.gun, count: mainCount, arc: gun.arc, baseAngle: 0, targetLayers: layers }];
+    : [{ id: "primary", partId: "nose", weaponId, count: mainCount, arc: gun.arc, baseAngle: 0, targetLayers: layers }];
+}
+
+const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
+  const mounts = primaryMounts(frame.gun);
   if (frame.missile) mounts.push({ id: "lock", partId: "nose", weaponId: "lock_missile", count: 1, arc: 26, baseAngle: 0, targetLayers: ["air"] });
   if (frame.turret) mounts.push({ id: "turret", partId: "top_turret", weaponId: "top_turret", count: 1, arc: WEAPONS.top_turret.arc, baseAngle: 0, targetLayers: ["air"] });
   if (frame.bomb) mounts.push({ id: "bomb", partId: "bay", weaponId: frame.bomb, count: 1, arc: 360, baseAngle: 0, targetLayers: WEAPONS[frame.bomb].targetLayers ?? ["ground", "water"] });
   return mounts.map((mount) => ({
     ...mount,
+    ...(frame.geometryProfile === "ho229V2" && mount.id === "primary"
+      ? { count: 2, offset: { x: 0, y: .20, z: .34 }, barrelSpacing: .55 }
+      : {}),
     ...(frame.geometryProfile === "fokkerDr1" && mount.id === "primary"
       ? { offset: { x: 0, y: .2, z: .9 }, barrelSpacing: .2 }
       : {}),

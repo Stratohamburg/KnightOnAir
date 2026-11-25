@@ -13,7 +13,8 @@ import { World } from "../src/simulation/World";
 describe("configuration v3", () => {
   it("loads every combatant and NPC profile without diagnostics", () => {
     expect(CONFIG_DIAGNOSTICS).toEqual([]);
-    expect(AIRFRAMES).toHaveLength(17);
+    expect(AIRFRAMES).toHaveLength(27);
+    expect(new Set(AIRFRAMES.map(frame => frame.id)).size).toBe(AIRFRAMES.length);
     expect(Object.keys(COMBATANT_CONFIGS)).toHaveLength(AIRFRAMES.length + Object.keys(NPC_PROFILES).length);
     for (const frame of AIRFRAMES) {
       const config = COMBATANT_CONFIGS[frame.id];

@@ -1,13 +1,14 @@
 import * as THREE from "three";
 import { RULES, QUALITIES, type Quality } from "../data/config";
 import { eraOf } from "../data/aircrafts";
-import { ERAS, missionEraOf } from "../data/eras";
+import { ERAS } from "../data/eras";
 import { routeHeight } from "../simulation/Routes";
 import { clamp, damp, RAD } from "../services/Random";
 import { World } from "../simulation/World";
+import { lineExtension } from "../simulation/CenterlineLayout";
 import { surfaceHeight } from "../simulation/Terrain";
 import type { Player, Enemy, WorldEvent } from "../simulation/types";
-import { ProceduralAircraft } from "../content/3d/AircraftFactory";
+import { ProceduralAircraft, type ReferenceAircraft } from "../content/3d/AircraftFactory";
 import { CombatEffects } from "../content/fx/CombatEffects";
 import { ContentCatalog } from "../content/3d/ContentCatalog";
 import { createBombs, createProjectileBatches, createSurfaceActor, type SceneActor } from "../content/3d/SceneObjects";
@@ -261,8 +262,8 @@ export class Renderer {
     this.setQuality("standard");
     this.resize();
   }
-  setPlayer(p: Player) {
-    if (this.aircraft?.actor === p) return;
+  setPlayer(p: Player | ReferenceAircraft) {
+    if (this.aircraft?.actor === p) return this.aircraft.contentError;
     this.crashTime = 0;
     this.effects.reset();
     if (this.aircraft) {
@@ -274,6 +275,7 @@ export class Renderer {
     this.aircraft = new ProceduralAircraft(p, this.content);
     this.overlayScene.add(this.aircraft.group);
     this.displayAnchor.set(p.x, 0, p.z);
+    return this.aircraft.contentError;
   }
   setDisplayOrbit(yaw: number, pitch = this.displayOrbitPitch) {
     this.displayView = "orbit";
@@ -326,8 +328,8 @@ export class Renderer {
       world && !options.display && world.clock.timeScale === 0 ? 0 : dt;
     this.time += sceneDt;
     this.resize();
-    const p = this.aircraft.actor as Player;
-    const era = world?.era ?? options.missionEra ?? missionEraOf(p.frame);
+    const p = this.aircraft.actor as Player | ReferenceAircraft;
+    const era = world?.era ?? options.missionEra ?? p.frame.missionEra ?? p.frame.era ?? "jet";
     if (era !== this.era) {
       this.era = era;
       const { colors } = ERAS[era];
@@ -373,12 +375,16 @@ export class Renderer {
       this.cameraBombing = 0;
       this.displayAnchor.x = damp(this.displayAnchor.x, x, 7, dt);
       this.displayAnchor.z = damp(this.displayAnchor.z, z, 7, dt);
-      const distance = 16 * Math.max(1, p.stats.wingspan / 9, p.stats.length / 10) *
+      // Fixed views look at the center body. Fit the longer half of a unilateral refit.
+      const extraWidth = p.frame.geometryProfile === "ho229V2"
+        ? Math.abs(lineExtension(p.parts, "left-wing-0") - lineExtension(p.parts, "right-wing-0")) : 0;
+      const displaySpan = p.stats.wingspan + extraWidth;
+      const distance = 16 * Math.max(1, displaySpan / 9, p.stats.length / 10) *
         (this.camera.aspect < 0.55 ? 1.12 : 1);
       const targetY = RULES.flightAltitude + .05;
       const targetZ = this.displayAnchor.z;
       if (this.displayView === "front" || this.displayView === "side" || this.displayView === "top") {
-        const viewHeight = Math.max(9.2, p.stats.length * 1.2, p.stats.wingspan * 1.12 / this.camera.aspect);
+        const viewHeight = Math.max(9.2, p.stats.length * 1.2, displaySpan * 1.12 / this.camera.aspect);
         const viewWidth = viewHeight * this.camera.aspect;
         this.camera.projectionMatrix.makeOrthographic(
           -viewWidth * .5,

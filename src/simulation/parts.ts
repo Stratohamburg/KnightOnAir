@@ -1,4 +1,5 @@
 import { bayOutline, sheetSpan, stationZ, unit, wingOutline, wingSegments } from "../data/fokkerDr1Sheet";
+import { applyHoPanelLayout } from "./Ho229Layout";
 import type { Part, PartRole, Slot } from "./types";
 import type { CenterlineMount } from "./CenterlineLayout";
 import { applyCenterlineLayout, lineExtension, type AircraftTopology } from "./CenterlineLayout";
@@ -24,6 +25,7 @@ export interface PartRecipe {
   parentId?: string;
   connection?: { side: -1 | 0 | 1; x: number; z: number };
   centerline?: CenterlineMount;
+  outletOffset?: { x: number; y: number; z: number };
   engineInstallation?: "tractor" | "pusher";
 }
 
@@ -76,6 +78,7 @@ export function partFromRecipe(
     connection: recipe.connection,
     centerline: recipe.centerline,
     engineInstallation: recipe.engineInstallation,
+    outletOffset: recipe.outletOffset,
   };
 }
 
@@ -92,6 +95,10 @@ export function refreshPartLayout(parts: Part[], wingspan: number, length: numbe
 }
 
 export function refreshAirframeSilhouette(parts: Part[], wingspan: number, length: number, width: number, tiers: number, wingLength = length, sideWingspans?: { left: number; right: number }, frameId?: string) {
+  if (frameId === "ho229V2") {
+    const baseSpan = wingspan - lineExtension(parts, "left-wing-0") - lineExtension(parts, "right-wing-0");
+    return applyHoPanelLayout(parts, baseSpan);
+  }
   const geometry = aircraftGeometryProfile(frameId);
   for (const part of parts) {
     if (part.id === "center_body") {

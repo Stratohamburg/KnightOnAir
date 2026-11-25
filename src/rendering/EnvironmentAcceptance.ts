@@ -1,6 +1,8 @@
 import { Vector3 } from "three";
-import { airframeById } from "../data/aircrafts";
+import { airframeById, STARTER_FRAME_ID } from "../data/aircrafts";
 import { RULES, type Quality } from "../data/config";
+import { upgradeById } from "../data/upgrades";
+import { WEAPONS } from "../data/weapons";
 import { World } from "../simulation/World";
 import type { CombatSnapshot, WorldEvent } from "../simulation/types";
 import { frameBattleCamera } from "./BattleCamera";
@@ -62,9 +64,11 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
   function setup(next: Scene, quality: Quality = "standard") {
     scene = next;
     const battle = next === "battle";
-    const frame = battle ? "raptor_14" : next === "terrain" ? "courier_02" : "wasp_04";
-    world = new World(airframeById(frame), 491, { director: false });
-    renderer.setPlayer(world.player);
+    world?.dispose();
+    world = new World(airframeById(STARTER_FRAME_ID), 491, { director: false, missionEra: battle ? "ww2" : "jet" });
+    if (!battle) world.installUpgrade(upgradeById("bomb_bay")!);
+    const modelError = renderer.setPlayer(world.player);
+    if (modelError) throw new Error(modelError);
     renderer.setQuality(quality);
     world.wind.update(52);
     fixture.camera = fixture.lookAt = undefined;
@@ -94,11 +98,10 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       frameBattleCamera(renderer.camera, 0, 0, 0);
       fixture.camera = renderer.camera.position.clone().add(new Vector3(28, -9, 0));
       fixture.lookAt = unit.clone();
-      const lock = world.mainLock;
-      if (lock) {
-        lock.targetId = ground.id;
-        lock.lockProgress = .9;
-      }
+      world.player.weapons.push({
+        ...world.player.weapons[0], config: WEAPONS.lock_missile,
+        targetId: ground.id, lockProgress: .9,
+      });
     }
 
     if (next === "cloudscape") {

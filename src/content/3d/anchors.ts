@@ -47,6 +47,8 @@ export function partAnchor(part: Pick<Part, "x" | "y" | "z" | "kind">): LocalAnc
 }
 
 export function engineOutlet(part: Part): LocalAnchor {
+  if (part.outletOffset) return { x: part.x + part.outletOffset.x, y: (part.y ?? 0) + part.outletOffset.y,
+    z: part.z + part.outletOffset.z, yaw: Math.PI };
   const pusher = part.engineInstallation === "pusher";
   return { ...partAnchor(part), z: part.z + (pusher ? .74 : -.74), yaw: pusher ? 0 : Math.PI };
 }

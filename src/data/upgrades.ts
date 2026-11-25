@@ -8,6 +8,7 @@ export interface PartRecipe {
   weight?: number;
 }
 export interface Upgrade {
+  wingBay?: { insertion: "root-before" | "tip-before"; width: number };
   id: string;
   name: string;
   rarity: "common" | "rare" | "epic";
@@ -548,7 +549,26 @@ export const UPGRADES: Upgrade[] = [
     repeatable: true,
   },
 ];
-export const upgradeById = (id: string) => UPGRADES.find((u) => u.id === id);
+const ho229Bays = (["left", "right"] as const).flatMap((hand): Upgrade[] => {
+  const label = hand === "left" ? "左" : "右";
+  const slot = hand === "left" ? "leftWing" : "rightWing";
+  const spar: PartRecipe = { kind: "wing", slot, health: 24, weight: 5 };
+  return [
+    { id: "ho229_" + hand + "_engine", name: label + "翼根发动机段", rarity: "common", tag: "动力",
+      description: "在中央翼段与" + label + "主翼之间接入一段带单台喷气发动机的翼根。", benefit: "发动机 +1 · 加速度 +16% · 极速 +0.8",
+      cost: "同侧翼展增加 · 能耗 +8%", preview: slot, repeatable: true,
+      wingBay: { insertion: "root-before", width: 1.05 }, parts: [spar, engine(slot)],
+      add: { maxSpeed: .8 }, multiply: { acceleration: 1.16, energyDrain: 1.08 } },
+    { id: "ho229_" + hand + "_cannon", name: label + "外翼机炮段", rarity: "common", tag: "火力",
+      description: "在" + label + "主翼与翼尖之间接入一段带单门前射机炮的翼段。", benefit: "新增一门独立航空机炮",
+      cost: "同侧翼展增加 · 占用武器挂点", preview: slot, repeatable: true,
+      wingBay: { insertion: "tip-before", width: .58 }, parts: [spar, { kind: "cannon", slot, health: 22, weight: 4 }],
+      weapons: ["ww2_autocannon"] },
+  ];
+});
+export const HO229_UPGRADES = [...ho229Bays,
+  ...UPGRADES.filter(u => ["quick_feed", "low_drag", "armor_belt"].includes(u.id))];
+export const upgradeById = (id: string) => UPGRADES.find(u => u.id === id) ?? ho229Bays.find(u => u.id === id);
 
 export const FOKKER_REFIT_IDS = [
   "quick_feed", "left_wing_segment", "right_wing_segment",

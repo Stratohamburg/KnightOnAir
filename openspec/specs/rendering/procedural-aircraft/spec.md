@@ -22,26 +22,55 @@
 
 ### Requirement: Dedicated aircraft model registry
 
-每个可玩载具 MUST 在统一的飞机模型注册表中绑定自己的模型装配器。注册表只负责模型选择和共享的内容库接口，模型的机身截面、翼面边缘、发动机、座舱、尾翼、支柱、起落架和专属挂点 MUST 由对应机型装配器定义。通用装配器不得覆盖已注册机型的基础外形。
+每个可玩载具 MUST 在统一的飞机模型注册表中绑定自己的模型装配器。注册表只负责模型选择和共享的内容库接口，模型的机身截面、翼面边缘、发动机、座舱、尾翼、支柱、起落架和专属挂点 MUST 由对应机型装配器定义。缺少机型装配器或机型几何资料时 MUST 阻止模型生成，并报告缺失项。
 
 #### Scenario: Build the Fokker Dr.I model
 
 - **WHEN** 参考校验台或战斗场景创建 `fokkerDr1`
-- **THEN** 工厂从飞机模型注册表取得 Fokker Dr.I 专属装配器，生成三层圆角翼、开放式座舱、九缸旋转发动机、双叶螺旋桨、层间支柱、尾翼和双轮起落架，基础模型不经过通用机身加翼模板
+- **THEN** 工厂从飞机模型注册表取得 Fokker Dr.I 专属装配器，生成三层圆角翼、开放式座舱、九缸旋转发动机、双叶螺旋桨、层间支柱、尾翼和双轮起落架，基础模型只使用该机型已审核的几何资料
+
+#### Scenario: Inspect the Meteor F.3 reference model
+
+- **WHEN** 用户依据已审核的流星 F.3 三视图打开原型校验台的三维预览
+- **THEN** 站位、截面和接缝证据核对通过后，工厂使用该机型的专属装配器绘制双圆形进气口、短舱、主翼和高置平尾。校验台以固定正视、侧视和俯视核对实网格与已审核图板
 
 #### Scenario: Keep refits on the dedicated model
 
 - **WHEN** 已注册机型安装翼尖、侧舱或武器扩建件
 - **THEN** 基础模型继续由专属装配器提供，扩建件通过现有部件锚点和中心线挂点附着，内容租约仍由机体实例统一释放
 
+#### Scenario: Block incomplete aircraft generation
+
+- **WHEN** 新机型缺少专属装配器、已审核的 H5 生成数据，或任一必需的几何字段仍为估算或未解决
+- **THEN** 校验台预览与正式工厂均阻止生成并报告待核对项。生成字段须来自该机型证据或明确审核约束
+
 ### Requirement: Configuration-driven aircraft shape
 
-飞机和主要空中载具 MUST 根据机体配置生成可辨识的机身、机翼、发动机、尾翼、炮塔、浮筒或飞艇结构。玩家和敌人的轮廓 MUST 能表达时代、角色和机体大小差异。
+飞机和主要空中载具 MUST 根据该机型已审核的机体配置生成可辨识的机身、机翼、发动机、尾翼、炮塔、浮筒或飞艇结构。玩家和敌人的轮廓 MUST 能表达时代、角色和机体大小差异。机体配置 MUST 为影响轮廓、拓扑、锚点和部件归属的字段提供机型专属值。
 
 #### Scenario: Era-specific shape
 
 - **WHEN** 玩家装备不同时代或不同形状的机体
-- **THEN** 展示和战斗场景使用对应构型，而不会退化成同一个通用轮廓
+- **THEN** 展示和战斗场景使用对应构型，缺少专属字段时保持未生成状态并报告配置缺口
+
+### Requirement: Bilateral symmetry review before model generation
+
+每款新机型的基础构型 MUST 在三视图阶段校验左右对称性。以独立于受检部件的机身中心面或图纸基准配准正视和俯视，分别描读两侧的对应轮廓与定位点，核对横向距离、垂向高度和纵向站位。机型记录 MUST 保留两侧原始读数、差值，以及由分辨率、笔划厚度和配准误差确定的容差。
+
+#### Scenario: Review component locations and paired measurements
+
+- **WHEN** 用户在原型校验台审核新机型的 H5 三视图
+- **THEN** 图板显示中心线、部件可见范围和定位点，并提供左右测点比对及待确认项
+
+#### Scenario: Reconcile readings within drawing tolerance
+
+- **WHEN** 同构型的双侧证据支持对称，且观测差异判定为图纸误差
+- **THEN** 用已核实的测点拟合轮廓并按中心面镜像。H5 默认显示校正后的轮廓并保留原始描线供对照，缺少证据的字段继续待核对
+
+#### Scenario: Resolve a possible or confirmed asymmetry
+
+- **WHEN** 左右差值超出图纸容差或资料直接显示不对称
+- **THEN** 用同变体、同构型的独立资料复核并记录结果，未解释的差异保持待核对。证据确认真实不对称时，向用户展示部位、差值和来源，由用户确认表达方式后才可定稿和建模
 
 ### Requirement: Shared local anchors
 

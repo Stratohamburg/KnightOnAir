@@ -1,4 +1,6 @@
 import { bodyRadius, baseLength, hull, sheetLength, sheetSpan, stationZ, unit, wings } from "../../data/fokkerDr1Sheet";
+import type { AircraftGeometryProfileId } from "../../data/aircrafts";
+import { hoUnit, hoZ } from "../../data/ho229V2Sheet";
 
 export interface WingShape {
   rootX: number;
@@ -33,13 +35,6 @@ export interface WingLayerProfile {
   /** Source-facing structural record used by the reference lab. */
   edgeNote?: string;
 }
-
-export type AircraftGeometryProfileId =
-  | "fokkerDr1"
-  | "spitfire"
-  | "zero"
-  | "vampire"
-  | "ho229";
 
 export interface AircraftGeometryProfile {
   id: AircraftGeometryProfileId;
@@ -128,34 +123,21 @@ export const FUSELAGE_SECTIONS = [
 
 const FOKKER_DR1_SECTIONS = hull.map(({s, w, deck, belly}) =>
   [stationZ(s) / baseLength, w / bodyRadius, (deck - belly) / (2 * bodyRadius)] as const);
-const SPITFIRE_SECTIONS = [
-  [-.5, .15, .15], [-.34, .56, .54], [-.11, .93, .82], [.12, .78, .72], [.34, .42, .45], [.5, .025, .03],
-] as const;
-const ZERO_SECTIONS = [
-  [-.5, .16, .16], [-.33, .62, .6], [-.08, .9, .88], [.15, .74, .7], [.37, .36, .4], [.5, .025, .03],
-] as const;
-const VAMPIRE_SECTIONS = [
-  [-.5, .2, .2], [-.28, .62, .58], [-.05, .88, .82], [.16, .66, .6], [.36, .28, .32], [.5, .025, .03],
-] as const;
-const HO229_SECTIONS = [
-  [-.5, .22, .15], [-.28, .62, .36], [-.08, .82, .48], [.12, .6, .4], [.28, .28, .2], [.5, .04, .04],
-] as const;
-
-const profile = (
-  id: AircraftGeometryProfileId,
-  layout: AircraftGeometryProfile["layout"],
-  sections: AircraftGeometryProfile["fuselage"]["sections"],
-  wing: AircraftGeometryProfile["wing"],
-  tail: AircraftGeometryProfile["tail"],
-  engine: AircraftGeometryProfile["engine"],
-  width: number,
-  cockpitZ: number,
-  construction: AircraftGeometryProfile["fuselage"]["construction"] = "tube",
-): AircraftGeometryProfile => ({ id, layout, fuselage: { construction, width, cockpitZ, sections }, wing, tail, engine });
-
-export const AIRCRAFT_GEOMETRY_PROFILES: Record<AircraftGeometryProfileId, AircraftGeometryProfile> = {
-  fokkerDr1: profile("fokkerDr1", "conventional", FOKKER_DR1_SECTIONS,
-    {
+const AIRCRAFT_GEOMETRY_PROFILES: Record<AircraftGeometryProfileId, AircraftGeometryProfile> = {
+  ho229V2: {
+    id: "ho229V2", layout: "flyingWing",
+    // The integrated center uses spanwise ribs instead of fuselage rings.
+    fuselage: { construction: "integratedWing", width: 109 * hoUnit, cockpitZ: hoZ(342), sections: [] },
+    wing: { rootZ: hoZ(469), chord: 312 / 523, tipChord: 0, sweep: 351 / 523,
+      planform: "flyingWing", profile: "straight", tierGap: 0, spanScale: 1 },
+    tail: { kind: "none", z: 0, span: 0, chord: 0 },
+    engine: { style: "jet", pusher: false },
+  },
+  fokkerDr1: {
+    id: "fokkerDr1",
+    layout: "conventional",
+    fuselage: { construction: "tube", width: bodyRadius * unit, cockpitZ: stationZ(97), sections: FOKKER_DR1_SECTIONS },
+    wing: {
       rootZ: stationZ((wings[0].leading + wings[0].trailing) / 2),
       chord: (wings[0].trailing - wings[0].leading) / sheetLength,
       tipChord: (wings[0].trailing - wings[0].leading) / sheetLength,
@@ -168,20 +150,9 @@ export const AIRCRAFT_GEOMETRY_PROFILES: Record<AircraftGeometryProfileId, Aircr
         sweep: 0, planform: "nearRectangular", profile: "straight",
       })),
     },
-    { kind: "single", z: stationZ(175) / baseLength, span: 116 / sheetSpan, chord: 69 / sheetLength },
-    { style: "propeller", pusher: false }, bodyRadius * unit, stationZ(97)),
-  spitfire: profile("spitfire", "conventional", SPITFIRE_SECTIONS,
-    { rootZ: .04, chord: .26, tipChord: .065, sweep: .055, planform: "elliptical", profile: "straight", tierGap: .8, spanScale: 1 },
-    { kind: "single", z: -.4, span: .18, chord: .14 }, { style: "propeller", pusher: false }, .45, .14),
-  zero: profile("zero", "conventional", ZERO_SECTIONS,
-    { rootZ: .08, chord: .29, tipChord: .075, sweep: .045, planform: "elliptical", profile: "straight", tierGap: .8, spanScale: 1.02 },
-    { kind: "single", z: -.38, span: .17, chord: .14 }, { style: "propeller", pusher: false }, .44, .1),
-  vampire: profile("vampire", "twinBoom", VAMPIRE_SECTIONS,
-    { rootZ: .06, chord: .26, tipChord: .075, sweep: .16, planform: "swept", profile: "straight", tierGap: .8, spanScale: 1 },
-    { kind: "twin", z: -.36, span: .29, chord: .13 }, { style: "jet", pusher: false }, .46, .1),
-  ho229: profile("ho229", "flyingWing", HO229_SECTIONS,
-    { rootZ: .06, chord: .6, tipChord: .045, sweep: .4, planform: "flyingWing", profile: "down", tierGap: .8, spanScale: 1.06 },
-    { kind: "none", z: -.35, span: 0, chord: 0 }, { style: "jet", pusher: true }, .5, .05, "integratedWing"),
+    tail: { kind: "single", z: stationZ(175) / baseLength, span: 116 / sheetSpan, chord: 69 / sheetLength },
+    engine: { style: "propeller", pusher: false },
+  },
 };
 
 export function aircraftGeometryProfile(id?: string) {

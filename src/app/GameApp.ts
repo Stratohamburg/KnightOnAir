@@ -17,6 +17,7 @@ import { CombatHud, type NameplateView } from "../content/2d/CombatHud";
 import { BattleStatus } from "../content/2d/BattleStatus";
 import { button, dialog } from "../content/2d/components";
 import type { ThreatView } from "../content/2d/combatHints";
+import { resolveAircraftModel } from "../content/3d/aircraftModels";
 
 type Tab = "sortie" | "equipment" | "shop" | "reservedA" | "showroom";
 type Modal = "" | "settings" | "help" | "pause" | "upgrade" | "showroomAircraft" | "mission";
@@ -211,6 +212,7 @@ export class GameApp {
       .classList.toggle("equipment-view", this.tab === "equipment");
     const isUnlocked = this.save.data.unlocked.includes(frame.id),
       isEquipped = this.save.data.equipped === frame.id;
+    const modelError = resolveAircraftModel(frame).error;
     const era = eraOf(frame), mission = ERAS[this.sortieEra];
     const eraFrames = AIRFRAMES.filter((candidate) => eraOf(candidate) === era);
     const missionNumber = String(missionEras.indexOf(this.sortieEra) + 1).padStart(2, "0");
@@ -221,7 +223,7 @@ export class GameApp {
       <div class="plane-caption"><span>01 / ${frame.role}</span><i></i><span>FLYING FREE</span></div>
       <section class="home-card"><div class="card-heading"><div><span class="eyebrow">本关座机</span><h2>${frame.name}</h2></div>${this.sortieEra === "pioneer" ? "" : `<button class="text-button" data-tab="equipment">更换机体 ${icon("arrow")}</button>`}</div><p class="frame-description">${frame.description}</p>${this.stats(frame)}${this.weapons(frame)}
       <div class="mission-strip"><span class="mission-number">${missionNumber}</span><div><strong>${mission.mission}</strong><small>${mission.label} / 无尽巡航</small></div>${button("missions", `选关 ${icon("chevron")}`, "secondary mission-select", 'aria-haspopup="dialog"')}</div>
-      <button class="launch-button" data-action="launch" ${this.renderer ? "" : "disabled"}><span><small>READY WHEN YOU ARE</small>出击</span>${icon("arrow")}</button>
+      <button class="launch-button" data-action="launch" ${this.renderer && !modelError ? "" : "disabled"}><span><small>${modelError ?? "READY WHEN YOU ARE"}</small>${modelError ? "暂不可出击" : "出击"}</span>${icon("arrow")}</button>
       <div class="home-footer"><button data-action="help">${icon("help")} 飞行指南</button><span>最高积分 <b>${fmt(this.save.data.bestScore)}</b></span></div></section>`;
     else if (this.tab === "equipment")
       body = `
@@ -247,8 +249,8 @@ export class GameApp {
             `<button class="${this.highlight === id ? "selected" : ""}" data-part="${id}">${name}</button>`,
         )
         .join("")}</div>
-      <p class="part-hint">${this.highlight ? this.partDescription(this.highlight) : `机身 ${frame.length}m · 点击部位查看挂点与功能`}</p>
-      <button class="primary equip-button" data-action="equip" ${!isUnlocked || isEquipped ? "disabled" : ""}>${isEquipped ? "已装备 · 随时出击" : isUnlocked ? `装备这架飞机 ${icon("arrow")}` : `${icon("lock")} ${frame.unlockText}`}</button><div class="carousel-dots">${eraFrames.map((candidate) => `<button aria-label="预览 ${candidate.name}" data-preview="${AIRFRAMES.indexOf(candidate)}" class="${frame.id === candidate.id ? "active" : ""}"></button>`).join("")}</div></section>`;
+      <p class="part-hint">${modelError ?? (this.highlight ? this.partDescription(this.highlight) : `机身 ${frame.length}m · 点击部位查看挂点与功能`)}</p>
+      <button class="primary equip-button" data-action="equip" ${!isUnlocked || isEquipped || modelError ? "disabled" : ""}>${modelError ? "暂不可出击" : isEquipped ? "已装备 · 随时出击" : isUnlocked ? `装备这架飞机 ${icon("arrow")}` : `${icon("lock")} ${frame.unlockText}`}</button><div class="carousel-dots">${eraFrames.map((candidate) => `<button aria-label="预览 ${candidate.name}" data-preview="${AIRFRAMES.indexOf(candidate)}" class="${frame.id === candidate.id ? "active" : ""}"></button>`).join("")}</div></section>`;
     else if (this.tab === "showroom")
       body = this.showroomPage(frame);
     else
@@ -281,6 +283,8 @@ export class GameApp {
     this.renderer?.setDisplayOrbit(this.showroomOrbitYaw, this.showroomOrbitPitch);
   }
   private showroomPage(frame: Airframe) {
+    const { error } = resolveAircraftModel(frame);
+    if (error) return `<section class="showroom-page"><div class="showroom-stage"><div class="showroom-stage-caption"><strong>${frame.name}</strong><small>${error}</small></div><div class="showroom-stage-actions"><button class="secondary" data-action="showroom-aircraft">切换机体</button><button class="text-button" data-action="reference">原型校验 ↗</button><button class="text-button" data-tab="sortie">返回出击</button></div></div></section>`;
     const world = this.showroom!;
     const options = world.legalUpgradeOptions;
     const weaponCount = world.player.weapons.reduce((total, weapon) => total + weapon.config.count, 0);
@@ -322,7 +326,7 @@ export class GameApp {
     return airframeById(this.sortieEra === "pioneer" ? STARTER_FRAME_ID : this.save.data.equipped);
   }
   private launch() {
-    if (this.screen !== "meta" || !this.renderer) return;
+    if (this.screen !== "meta" || !this.renderer || resolveAircraftModel(this.sortieFrame).error) return;
     this.tab = "sortie";
     this.showMeta();
     this.screen = "launching";
@@ -680,7 +684,7 @@ export class GameApp {
         this.browseEra(1);
         break;
       case "equip":
-        if (this.save.equip(AIRFRAMES[this.preview].id)) {
+        if (resolveAircraftModel(AIRFRAMES[this.preview]).model && this.save.equip(AIRFRAMES[this.preview].id)) {
           this.setTab("sortie");
           this.toast(`已装备 ${AIRFRAMES[this.preview].name}`);
         }

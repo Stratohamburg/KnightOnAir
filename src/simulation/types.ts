@@ -43,6 +43,7 @@ export interface Part {
   parentId?: string;
   connection?: { side: -1 | 0 | 1; x: number; z: number };
   centerline?: CenterlineMount;
+  outletOffset?: { x: number; y: number; z: number };
   engineInstallation?: "tractor" | "pusher";
 }
 export type PartRole =

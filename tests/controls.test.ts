@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as THREE from "three";
-import { AIRFRAMES } from "../src/data/aircrafts";
+import { AIRFRAMES, STARTER_FRAME_ID, airframeById } from "../src/data/aircrafts";
+import { aircraftReviewPlate, resolveAircraftModel } from "../src/content/3d/aircraftModels";
 import { RULES } from "../src/data/config";
 import { VirtualStick } from "../src/input/VirtualStick";
 import { frameBattleCamera } from "../src/rendering/BattleCamera";
@@ -112,13 +113,13 @@ function expectFlightDirection(stick: VirtualStick, x: number, y: number) {
 describe("screen-relative flight controls", () => {
   it("shares geometry across preview and combat models and releases the final lease", () => {
     const catalog = new ContentCatalog();
-    const world = new World(AIRFRAMES[0], 42, { director: false });
+    const world = new World(airframeById(STARTER_FRAME_ID), 42, { director: false });
     const player = world.player;
     const replay = world.spawnReplayOpponent(player.frame, new NetworkController(), 0, 25);
     const preview = new ProceduralAircraft(player, catalog);
     const battle = new ProceduralAircraft(replay, catalog);
     const mesh = (model: ProceduralAircraft) =>
-      model.group.getObjectByName("center_body")!.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+      model.group.getObjectByName("dr1-hull-cockpit") as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
     const shared = mesh(preview).geometry;
     const disposed = vi.fn();
     shared.addEventListener("dispose", disposed);
@@ -137,6 +138,30 @@ describe("screen-relative flight controls", () => {
     battle.dispose();
     expect(disposed).toHaveBeenCalledTimes(1);
     expect(catalog.stats).toMatchObject({ geometries: 0, materials: 0, textures: 0 });
+    world.dispose();
+  });
+
+  it("blocks unregistered aircraft in previews and replays without allocating geometry", () => {
+    const catalog = new ContentCatalog();
+    const frame = AIRFRAMES[0];
+    const world = new World(frame, 42, { director: false, showroom: true });
+    const replay = world.spawnReplayOpponent(frame, new NetworkController(), 0, 25);
+    const playerModel = new ProceduralAircraft(world.player, catalog);
+    const replayModel = new ProceduralAircraft(replay, catalog);
+    try {
+      for (const model of [playerModel, replayModel]) {
+        model.update(1, 1 / 60);
+        expect(model.contentError).toContain("专属 H5");
+        expect(model.group.children).toHaveLength(0);
+      }
+      expect(catalog.stats).toMatchObject({ geometries: 0, materials: 0 });
+      expect(aircraftReviewPlate(frame.id)).toBeUndefined();
+      expect(resolveAircraftModel({ ...frame, geometryProfile: "fokkerDr1" }).model).toBeUndefined();
+    } finally {
+      playerModel.dispose();
+      replayModel.dispose();
+      world.dispose();
+    }
   });
   it.each([
     { name: "up", x: 0, y: -1, key: "ArrowUp" },

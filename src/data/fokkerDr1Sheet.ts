@@ -1,6 +1,35 @@
 // Review drawing units follow the plan panel in Fokker_Dr.I_dwg.jpg.
 // Stations run aft from the propeller. Height is positive above the shaft.
 export const bodyRadius = 21;
+
+export const fokkerReviewViews = {
+  front: {
+    bounds: "-170 -80 340 160",
+    datum: "M0 -73V70",
+    tail: "M-58 -6H58 M0 -6V-41",
+    struts: "M-109 -63V21 M109 -63V21 M-38 -63L-16 -19 M38 -63L16 -19 M-15 17L-34 57H34L15 17",
+    wheels: "M-34 45v24 M34 45v24",
+    cowlingRadius: 17,
+    propeller: "M-36 46L36 -46",
+    hubRadius: 3,
+  },
+  side: {
+    bounds: "-40 -80 340 160",
+    datum: "M-10 0H260",
+    struts: "M18 -21V21 M50 -63L74 21 M17 18L42 55L78 17",
+    wheel: { x: 42, y: 55, radius: 13 },
+    tail: "M178 -6H244",
+    propeller: "M0 -58V58 M0 0H8",
+  },
+  top: {
+    bounds: "-170 -15 340 280",
+    datum: "M0 -9V261",
+    cowling: "M-21 18H21",
+    cockpit: { y: 97, rx: 10, ry: 12 },
+    fin: "M0 215V253",
+    propeller: "M-58 0H58 M0 0V8",
+  },
+} as const;
 const diameter = 2 * bodyRadius;
 export const wings = [
   { id: "lower", label: "下翼", span: 250, leading: 50, trailing: 98, height: -bodyRadius, ink: "#376481" },

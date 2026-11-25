@@ -53,14 +53,19 @@ Aircraft geometry profiles MUST declare whether the fuselage is a conventional t
 - **WHEN** the user selects front, side or top in the reference lab
 - **THEN** the model is aligned to the corresponding aircraft axis, remains level, and can be compared directly with the Wiki three-view source
 
-### Requirement: Feature abstraction before generated geometry
+### Requirement: Variant-specific feature abstraction before generated geometry
 
-原型校验台 MUST show a simplified H5 three-view feature plate before initializing the generated 3D model. The plate MUST expose the centerline, wing leading and trailing edges, fuselage and nacelle contours, propeller disk or tail-nozzle station, and the relative positions of the main modules across front, side, and top views. The plate MUST describe extracted relationships without claiming pixel-level tracing.
+原型校验台 MUST show a simplified H5 three-view feature plate derived from the selected variant's approved evidence before initializing the generated 3D model. The plate MUST expose the centerline, wing leading and trailing edges, fuselage and nacelle contours, propeller disk or tail-nozzle station, and the relative positions of the main modules across front, side, and top views. The plate MUST describe extracted relationships without claiming pixel-level tracing. A generic plate, inherited plate or geometry borrowed from another variant MUST NOT satisfy this gate.
 
 #### Scenario: Review the 2D feature plate before model generation
 
 - **WHEN** the user opens a reference or changes the selected aircraft
 - **THEN** the lab shows the simplified front, side, and top feature plate, keeps fixed-view model controls disabled, and waits for feature-map approval
+
+#### Scenario: Block a missing variant feature plate
+
+- **WHEN** the selected aircraft has no approved variant-specific feature plate or has unresolved geometry evidence
+- **THEN** the lab reports the missing evidence, keeps model generation and approval disabled, and does not draw a generic substitute plate
 
 #### Scenario: Approve the feature plate
 
@@ -76,6 +81,15 @@ Aircraft geometry profiles MUST declare whether the fuselage is a conventional t
 
 - **WHEN** the selected profile declares integrated wing-body construction
 - **THEN** the center body and wing roots form one continuous silhouette, the preview does not add a detached conventional fuselage, and root engines and trailing-edge controls remain anchored to the shared wing structure
+
+#### Scenario: Extend one side of the Ho 229
+
+- **WHEN** Ho 229 V2 installs an engine or cannon bay on one side in the preview or in battle
+- **THEN** its paired nose cannons stay on the center section, each engine bay inserts before the main wing, and each cannon bay inserts before the tip on the selected side. Repeated insertions carry the downstream sections, their hit regions and equipment anchors together.
+
+- **WHEN** inspecting native and added Ho 229 engines from above and aft
+- **THEN** each cylindrical body follows the reviewed side-view axis and body interval. Its round outlet uses the same 35 plate-mm diameter, with 1 plate-mm between its crown and the housing. The slot shoulders mask the lower outlet in side view.
+- **AND** the raised dorsal housing ends at a distinct aft face. The outlet and its effects anchor face straight aft with wing skin below the opening all the way to the trailing edge. Each added engine repeats the thick installation section and the native intake, housing and outlet dimensions. On the extended side, successive engines sit progressively farther aft along the leading-edge sweep. The outer wing and its tip follow that sweep, and the trailing shoulder joins continuously across the bay seams.
 
 #### Scenario: Battle refit or weapon configuration changes
 

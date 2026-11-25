@@ -1,16 +1,30 @@
-import { bayOutline, clipOutline, elevatorHalf, finOutline, hull, hullAt, hullBays, mirroredOutline, rib, rudderPivot, stabilizerHalf, stationZ, unit, wingPanels, wingSegments, type Point, type Wing } from "../../data/fokkerDr1Sheet";
+import { bayOutline, clipOutline, elevatorHalf, finOutline, hull, hullAt, hullBays, mirroredOutline, rib, rudderPivot, stabilizerHalf, stationZ, unit, wingPanels, wings, wingSegments, type Point, type Wing } from "../../data/fokkerDr1Sheet";
 import * as THREE from "three";
 import type { Airframe } from "../../data/aircrafts";
 import type { Part, Player, Enemy } from "../../simulation/types";
-import { aircraftGeometryProfile, type AircraftGeometryProfile } from "./airframeShape";
+import { aircraftGeometryProfile } from "./airframeShape";
+import { AIRCRAFT_REFERENCES, aircraftReferenceByFrameId } from "../../data/aircraftReferences";
+import { aircraftTracePlate } from "../2d/aircraftTracePlate";
+import { fokkerReviewPlate } from "../2d/fokkerReviewPlate";
+import { buildHo229Model } from "./ho229Model";
+import { ho229ReviewPlate } from "../2d/ho229ReviewPlate";
+import { pistonFighterReviewPlate } from "../2d/pistonFighterReviewPlate";
+import { buildPistonFighter, createFighterPreview, fighterFrame } from "./pistonFighterModel";
+import { spitfireVbSheet, zero21Sheet, type FighterSheet } from "../../data/pistonFighterSheets";
+import { meteorF3ReviewPlate } from "../2d/meteorF3ReviewPlate";
+import { meteorF3Id } from "../../data/meteorF3Sheet";
+import { meteorF3Frame } from "../../data/meteorF3ModelSheet";
+import { buildMeteorF3Model, createMeteorF3Preview } from "./meteorF3Model";
+import type { ReferenceAircraft } from "./AircraftFactory";
 import { muzzleAnchor, partAnchor } from "./anchors";
 
+export type AircraftVisualFrame = Omit<Pick<Airframe,
+  "id" | "name" | "role" | "color" | "accent" | "length" | "wingspan" | "shape" | "era" | "missionEra" | "geometryProfile"
+>, "geometryProfile"> & { geometryProfile?: Airframe["geometryProfile"] | "meteorF3" | FighterSheet["assembly"]["profile"] };
+
 export interface AircraftModelContext {
-  actor: Player | Enemy;
-  frame: Airframe;
-  stats: { length: number; wingspan: number };
-  profile: AircraftGeometryProfile;
-  group: THREE.Group;
+  actor: Player | Enemy | ReferenceAircraft;
+  frame: AircraftVisualFrame;
   handledParts: Set<string>;
   partRoot(part: Part): { root: THREE.Group; material: THREE.ShaderMaterial };
   geometry<T extends THREE.BufferGeometry>(key: string, create: () => T): T;
@@ -173,6 +187,16 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
 
   for (const part of context.actor.parts) {
     if (part.role !== "wing") continue;
+    if (part.id.startsWith("giant_wing_")) {
+      // This refit has an independent fitting on the lower wing.
+      const { root, material } = context.partRoot(part);
+      const side = part.slot === "leftWing" ? -1 : 1;
+      const outline: Point[] = [[0, 50], [1.2 / unit, 79], [1.2 / unit, 94], [0, 98]];
+      const geometry = cached("giant-wing:" + side, () => wingSkin(outline, wings[0], side * unit));
+      context.mesh(geometry, material, root, part.x, part.y ?? 0, part.z - stationZ(74));
+      mark(context, part.id);
+      continue;
+    }
     const segment = wingSegments.find(candidate => candidate.id === part.id);
     const section = part.silhouette?.[0];
     if (!section?.length) continue;
@@ -363,14 +387,60 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
   }
 }
 
-export const AIRCRAFT_MODEL_BUILDERS: Record<string, AircraftModelBuilder> = {
-  fokkerDr1: buildFokkerDr1Model,
-};
-
-export function aircraftModelBuilder(id?: string) {
-  return id ? AIRCRAFT_MODEL_BUILDERS[id] : undefined;
+interface AircraftModelRegistration {
+  reviewPlate: (blockedReason?: string) => string;
+  preview?: { frame: AircraftVisualFrame; create: () => ReferenceAircraft };
+  model?: {
+    profileId: NonNullable<AircraftVisualFrame["geometryProfile"]>;
+    build: AircraftModelBuilder;
+  };
 }
 
-export function aircraftModelProfile(id?: string) {
-  return id ? aircraftGeometryProfile(id) : undefined;
+function fighterRegistration(sheet: FighterSheet): AircraftModelRegistration {
+  return {
+    reviewPlate: reason => pistonFighterReviewPlate(sheet, reason),
+    preview: { frame: fighterFrame(sheet), create: () => createFighterPreview(sheet) },
+    model: { profileId: sheet.assembly.profile, build: context => buildPistonFighter(context, sheet) },
+  };
+}
+
+// A plate may be reviewed before its variant has an approved mesh builder.
+const aircraftModels = new Map<string, AircraftModelRegistration>([
+  [spitfireVbSheet.assembly.frameId, fighterRegistration(spitfireVbSheet)],
+  [zero21Sheet.assembly.frameId, fighterRegistration(zero21Sheet)],
+  ["stingray_16", { reviewPlate: ho229ReviewPlate, model: { profileId: "ho229V2", build: buildHo229Model } }],
+  ["heron_09", { reviewPlate: fokkerReviewPlate, model: { profileId: "fokkerDr1", build: buildFokkerDr1Model } }],
+  [meteorF3Id, {
+    reviewPlate: meteorF3ReviewPlate,
+    preview: { frame: meteorF3Frame, create: createMeteorF3Preview },
+    model: { profileId: "meteorF3", build: buildMeteorF3Model },
+  }],
+]);
+
+for (const { frameId, study } of AIRCRAFT_REFERENCES) {
+  if (frameId && study && !aircraftModels.has(frameId)) {
+    aircraftModels.set(frameId, { reviewPlate: () => aircraftTracePlate(study) });
+  }
+}
+
+export const aircraftReviewPlate = (frameId: string) => aircraftModels.get(frameId)?.reviewPlate;
+export const aircraftReferencePreview = (frameId: string) => aircraftModels.get(frameId)?.preview;
+
+export function resolveAircraftModel(frame: AircraftVisualFrame) {
+  const registration = aircraftModels.get(frame.id);
+  if (!registration) return { error: "缺少该机型的专属 H5 图板与装配器" };
+  const reference = aircraftReferenceByFrameId(frame.id);
+  if (reference?.study?.pending) return { error: reference.study.pending };
+  const pipeline = reference?.pipeline;
+  if (!pipeline?.evidenceMatrix?.length) return { error: "缺少该机型的几何证据记录" };
+  const pending = pipeline.evidenceMatrix.filter(({ status }) => status === "unresolved" || status === "estimate");
+  if (pending.length) {
+    const modules = [...new Set(pending.map(({ module }) => module))];
+    return { error: `三维几何待核对 · ${modules.join("、")}` };
+  }
+  if (!pipeline.generatedFromApprovedSheet) return { error: "三维生成所需的 H5 特征尚待确认" };
+  const { model } = registration;
+  if (!model || model.profileId !== frame.geometryProfile || (!registration.preview && !aircraftGeometryProfile(model.profileId)))
+    return { error: "缺少该机型的专属几何资料或装配器" };
+  return { model };
 }
