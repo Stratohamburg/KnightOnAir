@@ -71,7 +71,7 @@
   - 中央：紧凑计时/积分/任务航段读数（去掉过大衬线钟面，总高度压缩至 ~48px）。
   - 右侧：`32px` 视觉暂停圆钮（热区 `44px`），并把帮助按钮移入暂停菜单或极简右上角辅助位，取消无用的底部 `KNIGHT ON AIR / FPS` 状态栏（FPS/画质信息改为极细微半透明角标，不独立占行）。
   - 顶部紧贴安全区下方放置 `2px` 贯穿 XP 细刻度条 + 右端 `LV.xx` 微角标。
-- **悬浮底部控制布局（对齐 `docs/systems/01-control-camera.md` 右手单手大拇指短路径，`control-deck` 改为 `pointer-events: none` 透明承载层，子控件 `pointer-events: auto`）**：
+- **悬浮底部控制布局（对齐 `docs/archive/v0.3/systems/01-control-camera.md` 右手单手大拇指短路径，`control-deck` 改为 `pointer-events: none` 透明承载层，子控件 `pointer-events: auto`）**：
   - 上沿扇形肩部（位于摇杆上方左右两侧，靠近屏幕中轴且与摇杆及相邻控件保持 `≥ 14px` 视觉间隔、外扩热区互不重叠）：
     - 左上：`sm` 级「改装升级 + 次数角标」紧凑仪表胶囊钮；
     - 右上：`sm` 级「轰炸模式开关」紧凑拨动仪表钮（无弹舱或弹舱损毁时同步体现禁用态）。

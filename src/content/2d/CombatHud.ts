@@ -11,12 +11,14 @@ export interface NameplateView {
   y: number;
   quality: number;
   health: number;
+  mission?: boolean;
+  friendly?: boolean;
 }
 
 type ProjectedLabel = { text: string; x: number; y: number; ready?: boolean };
 
 const RADAR_DIAMETER = 84;
-const EDGE_INSET = { left: 14, right: 14, top: 72, bottom: 156 };
+const EDGE_INSET = { left: 14, right: 14, top: 124, bottom: 156 };
 
 export class CombatHud {
   readonly root = document.createElement("div");
@@ -24,7 +26,7 @@ export class CombatHud {
   private readonly edges = document.createElement("div");
   private readonly feed = document.createElement("div");
   private readonly feedSlots = Array.from({ length: 3 }, () => document.createElement("div"));
-  private readonly radarPool = this.pool(this.radar, RULES.maxTotal);
+  private readonly radarPool = this.pool(this.radar, RULES.maxTotal + 2);
   private readonly edgePool = this.pool(this.edges, RULES.edgeMax);
   private readonly nameplates: NodePool<{ node: HTMLDivElement; label: HTMLSpanElement; fill: HTMLElement }>;
   private readonly lock = document.createElement("div");
@@ -49,7 +51,7 @@ export class CombatHud {
     labels.append(this.lock, this.aim);
 
     this.nameplates = new NodePool(
-      RULES.maxTotal,
+      RULES.maxTotal + 2,
       () => {
         const node = document.createElement("div");
         const label = document.createElement("span");
@@ -136,22 +138,32 @@ export class CombatHud {
     this.radarPool.update(contacts, (dot, contact) => {
       const point = radarPoint(contact, player, RADAR_DIAMETER);
       const threat = contact.firing || contact.chasing;
-      dot.className = `radar-contact ${contact.layer}${threat ? " firing" : ""}${contact.breaking ? " breaking" : ""}`;
+      dot.className = `radar-contact ${contact.layer}${threat ? " firing" : ""}${contact.breaking ? " breaking" : ""}${contact.missionName ? " mission-marker" : ""}${contact.friendly ? " friendly" : ""}`;
       dot.style.transform = `translate3d(${point.x.toFixed(1)}px, ${point.y.toFixed(1)}px, 0)`;
     });
 
     this.edgePool.update(edgeAnchors(contacts, this.edgeBounds()), (arrow, anchor) => {
-      arrow.className = anchor.breaking ? "edge-indicator breaking" : "edge-indicator";
-      arrow.style.transform = `translate3d(${anchor.x.toFixed(1)}px, ${anchor.y.toFixed(1)}px, 0) translate(-50%, -50%) rotate(${anchor.angle.toFixed(1)}deg)`;
-      const text = anchor.count > 1 ? `×${anchor.count}` : "◆";
+      arrow.className = `edge-indicator${anchor.breaking ? " breaking" : ""}${anchor.missionName ? " mission-marker" : ""}${anchor.friendly ? " friendly" : ""}`;
+      const x = anchor.missionName ? Math.max(75, Math.min(this.viewportWidth - 75, anchor.x)) : anchor.x;
+      const angle = anchor.missionName ? "" : ` rotate(${anchor.angle.toFixed(1)}deg)`;
+      arrow.style.transform = `translate3d(${x.toFixed(1)}px, ${anchor.y.toFixed(1)}px, 0) translate(-50%, -50%)${angle}`;
+      const direction = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"][(Math.round(anchor.angle / 45) + 8) % 8];
+      const text = anchor.missionName ? `${direction} ◇ ${anchor.missionName}` : anchor.count > 1 ? `×${anchor.count}` : "◆";
       if (arrow.textContent !== text) arrow.textContent = text;
     });
   }
 
   updateLabels(contacts: readonly NameplateView[], lock?: ProjectedLabel, aim?: ProjectedLabel) {
+    const occupied: { x: number; y: number }[] = [];
     this.nameplates.update(contacts, ({ node, label, fill }, contact) => {
-      node.className = `enemy-label ${contact.layer}${contact.quality < 1 ? " cloud-occluded" : ""}`;
-      node.style.transform = `translate3d(${contact.x.toFixed(1)}px, ${contact.y.toFixed(1)}px, 0) translate(-50%, -100%)`;
+      let y = contact.y;
+      if (contact.mission) {
+        while (occupied.some((point) => Math.abs(point.x - contact.x) < 80 && Math.abs(point.y - y) < 23))
+          y += 23;
+        occupied.push({ x: contact.x, y });
+      }
+      node.className = `enemy-label ${contact.layer}${contact.quality < 1 ? " cloud-occluded" : ""}${contact.mission ? " mission-marker" : ""}${contact.friendly ? " friendly" : ""}`;
+      node.style.transform = `translate3d(${contact.x.toFixed(1)}px, ${y.toFixed(1)}px, 0) translate(-50%, -100%)`;
       node.style.opacity = String(contact.quality);
       if (label.textContent !== contact.label) label.textContent = contact.label;
       setMeter(fill, contact.health);

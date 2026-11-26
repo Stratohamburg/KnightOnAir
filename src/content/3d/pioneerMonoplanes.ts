@@ -76,6 +76,8 @@ export function bleriot(a: PioneerAssembly) {
     );
   }
   a.rod(body, [0, 0.92, 1.61], [0, 0.92, 2.51]);
+  a.protrusion(body, "upper-pylon", [0, 0.92, 2.51]);
+  a.protrusion(body, "lower-pylon", [0, -0.97, 2.51]);
   a.fin(tail, 0, [
     [-2.76, 0.1],
     [-2.86, 0.22],

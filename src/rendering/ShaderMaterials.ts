@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { TERRAIN } from "../simulation/Terrain";
+import type { AircraftLivery } from "../data/aircraftLiveries";
 import { aircraftShadowGLSL } from "./AircraftShadows";
-import { cloudShadowGLSL } from "./Cloudscape";
-import { cloudSun } from "./CloudscapeLayout";
+import { cloudShadowGLSL } from "./CloudShadowShader";
+import { landscapeLightUniforms } from "./SortieLighting";
 import { vegetationWindGLSL, vegetationWindUniforms } from "./VegetationWind";
 const noise = `
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
@@ -10,24 +11,40 @@ float noise(vec2 p) { vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f); return mix(m
 float fbm(vec2 p) { return noise(p)*.55+noise(p*2.03)*.28+noise(p*4.01)*.17; }
 `;
 export const landscapeLight = `
-  uniform vec3 haze, valleyFog, sunTint;
-  const vec3 landscapeSun = normalize(vec3(${cloudSun.join(", ")}));
+  uniform vec3 haze, valleyFog, sunTint, landscapeSun;
+  uniform float sunlightAmount, ambientAmount, weatherVisibility;
   vec3 aerialPerspective(vec3 color, vec3 world) {
     vec3 toPoint = world - cameraPosition;
     float range = length(toPoint);
     // Keep the top-down playable view crystal clear and sunny; only soften far screen top edge.
-    float farFog = smoothstep(118., 245., range);
+    float farFog = smoothstep(118. * weatherVisibility, 245. * weatherVisibility, range);
     vec3 fogColor = mix(haze, sunTint, .12);
-    return mix(color, fogColor, farFog * .62);
+    return mix(color * ambientAmount, fogColor, farFog * mix(.88, .62, weatherVisibility));
   }
 `;
 export function aircraftMaterial(
   color: THREE.ColorRepresentation,
   accent = false,
+  livery?: AircraftLivery,
 ) {
+  const primary = new THREE.Color(livery?.primary ?? color);
+  const secondary = new THREE.Color(livery?.secondary ?? color);
+  const trim = new THREE.Color(livery?.trim ?? color);
+  const liveryEnabled = livery && !accent ? 1 : 0;
+  const pattern = {
+    solid: 0, band: 1, panel: 2, checker: 3, cross: 4, stripe: 5, tailband: 6, anchor: 7,
+  }[livery?.pattern ?? "solid"] ?? 0;
   return new THREE.ShaderMaterial({
     uniforms: {
-      baseColor: { value: new THREE.Color(color) },
+      baseColor: { value: primary },
+      liverySecondary: { value: secondary },
+      liveryTrim: { value: trim },
+      liveryPattern: { value: pattern },
+      liveryStripeCenter: { value: livery?.stripeCenter ?? .5 },
+      liveryStripeWidth: { value: livery?.stripeWidth ?? .08 },
+      liveryPanelContrast: { value: livery?.panelContrast ?? 0 },
+      liveryEnabled: { value: liveryEnabled },
+      liveryDetail: { value: 1 },
       damage: { value: 0 },
       heat: { value: 0 },
       time: { value: 0 },
@@ -35,21 +52,101 @@ export function aircraftMaterial(
       accent: { value: accent ? 1 : 0 },
       cloudVeil: { value: 0 },
       cloudTint: { value: new THREE.Color("#f3f9fc") },
+      sceneSun: { value: new THREE.Vector3(-.6, 1, .8).normalize() },
+      sceneAmbient: { value: 1 },
+      sceneDirect: { value: 1 },
+      cloudShadowMap: { value: null },
+      cloudShadowCenter: { value: new THREE.Vector2() },
+      cloudShadowStrength: { value: 0 },
+      cloudShadowSun: { value: new THREE.Vector3(-.6, 1, .8).normalize() },
     },
-    vertexShader: `varying vec3 vNormal; varying vec3 vView; varying vec3 vLocal;
-      void main(){vLocal=position; vec4 mv=modelViewMatrix*vec4(position,1.); vNormal=normalize(normalMatrix*normal); vView=-mv.xyz; gl_Position=projectionMatrix*mv;}`,
-    fragmentShader: `${noise}
-      uniform vec3 baseColor, cloudTint; uniform float damage,heat,time,highlight,accent,cloudVeil;
-      varying vec3 vNormal,vView,vLocal;
-      void main(){vec3 n=normalize(vNormal); float light=max(0.,dot(n,normalize(vec3(-.6,1.,.8))));
+    vertexShader: `varying vec3 vNormal; varying vec3 vView; varying vec3 vLocal; varying vec3 vWorld;
+      #ifdef AIRCRAFT_PIECES
+        attribute float pieceId;
+        uniform mat4 pieceTransform[AIRCRAFT_PIECES];
+        uniform vec4 pieceState[AIRCRAFT_PIECES], pieceFinish[AIRCRAFT_PIECES];
+        uniform vec4 pieceLivery[AIRCRAFT_PIECES], piecePattern[AIRCRAFT_PIECES];
+        uniform vec3 pieceTrim[AIRCRAFT_PIECES];
+        varying vec4 vState, vFinish, vLivery, vPattern;
+        varying vec3 vTrim;
+        #endif
+        void main(){
+          vLocal=position;
+          mat4 modelView=modelViewMatrix;
+          vec4 localPosition=vec4(position,1.);
+          mat3 normals=normalMatrix;
+          #ifdef AIRCRAFT_PIECES
+          int id=int(pieceId);
+          vState=pieceState[id]; vFinish=pieceFinish[id]; vLivery=pieceLivery[id]; vPattern=piecePattern[id]; vTrim=pieceTrim[id];
+          if(vState.w<.5){gl_Position=vec4(2.,2.,2.,1.);return;}
+          mat4 transform=pieceTransform[id];
+          modelView*=transform;
+          localPosition=transform*localPosition;
+          normals*=transpose(inverse(mat3(transform)));
+          #endif
+          vec4 mv=modelView*localPosition;
+          vWorld=(modelMatrix*localPosition).xyz;
+          vNormal=normalize(normals*normal); vView=-mv.xyz; gl_Position=projectionMatrix*mv;
+        }`,
+    fragmentShader: `${noise} ${cloudShadowGLSL}
+      uniform vec3 baseColor, liverySecondary, liveryTrim, cloudTint, sceneSun;
+      uniform float liveryPattern,liveryStripeCenter,liveryStripeWidth,liveryPanelContrast,liveryEnabled,liveryDetail;
+      uniform float damage,heat,time,highlight,accent,cloudVeil,sceneAmbient,sceneDirect;
+      #ifdef AIRCRAFT_PIECES
+      varying vec4 vState, vFinish, vLivery, vPattern;
+      varying vec3 vTrim;
+      #define damage vState.x
+      #define heat vState.y
+      #define highlight vState.z
+      #define baseColor vFinish.rgb
+      #define accent vFinish.w
+      #endif
+      varying vec3 vNormal,vView,vLocal,vWorld;
+      void main(){
+        vec3 n=normalize(vNormal);
+        vec3 secondary=liverySecondary, trim=liveryTrim;
+        float pattern=liveryPattern, stripeCenter=liveryStripeCenter, stripeWidth=liveryStripeWidth;
+        float panelContrast=liveryPanelContrast*liveryDetail, enabled=liveryEnabled;
+        #ifdef AIRCRAFT_PIECES
+          secondary=vLivery.rgb; trim=vTrim; enabled=vLivery.w;
+          pattern=vPattern.x; stripeCenter=vPattern.y; stripeWidth=vPattern.z; panelContrast=vPattern.w;
+        #endif
+        float lightDot=dot(n,sceneSun);
+        float wrap=smoothstep(-.42,.78,lightDot);
+        float shadow=cloudLightAt(vWorld);
+        float panel=fbm(vLocal.xz*2.35+vLocal.yz*1.2)-.5;
+        float bandDistance=abs(fract(vLocal.z*.16+stripeCenter)-.5);
+        float band=1.-smoothstep(stripeWidth,stripeWidth+.035,bandDistance);
+        float checkerCell=mod(floor(abs(vLocal.x)*1.55)+floor((vLocal.z+4.)*1.55),2.);
+        float checker=step(.5,checkerCell);
+        float crossArm=max(1.-smoothstep(.11,.24,abs(vLocal.x)),1.-smoothstep(.11,.24,abs(vLocal.z)));
+        float tailSection=smoothstep(1.05,2.25,abs(vLocal.z));
+        float stripeSection=1.-smoothstep(stripeWidth,stripeWidth+.06,abs(fract(vLocal.x*.22+stripeCenter)-.5));
+        float anchorStem=(1.-smoothstep(.055,.14,abs(vLocal.x)))*smoothstep(-1.2,.65,vLocal.z);
+        float anchorBar=(1.-smoothstep(.055,.14,abs(vLocal.z+.15)))*(1.-smoothstep(.32,.48,abs(vLocal.x)));
+        float anchorHook=1.-smoothstep(.06,.16,abs(length(vec2(vLocal.x,vLocal.z+.58))-.28));
+        float anchorMark=max(max(anchorStem,anchorBar),max(anchorHook*.72, stripeSection*tailSection));
+        vec3 painted=baseColor;
+        painted=mix(painted,painted*(1.+panel*panelContrast),step(.5,pattern));
+        painted=mix(painted,secondary,band*step(.5,pattern)*(1.-step(2.5,pattern))*enabled*.72);
+        painted=mix(painted,secondary,checker*step(2.5,pattern)*enabled*.78);
+        painted=mix(painted,trim,crossArm*step(3.5,pattern)*enabled*.78);
+        painted=mix(painted,secondary,stripeSection*step(4.5,pattern)*enabled*.78);
+        painted=mix(painted,secondary,tailSection*step(5.5,pattern)*enabled*.78);
+        painted=mix(painted,trim,anchorMark*step(6.5,pattern)*enabled*.74);
+        painted=mix(painted,trim,(1.-smoothstep(0.,.08,abs(vLocal.y)))*step(1.5,pattern)*enabled*.32);
         float grain=fbm(vLocal.xz*12.); float burn=smoothstep(.45,.72,grain+damage*.5)*damage;
-        vec3 col=baseColor*(.54+light*.55)*(1.-burn*.8);
-        float rim=pow(1.-max(0.,dot(n,normalize(vView))),3.);
-        col+=vec3(.68,.86,.78)*rim*.24; col+=vec3(1.,.23,.08)*heat*(.6+sin(time*22.)*.15);
+        vec3 warmLight=vec3(1.16,1.08,.92);
+        vec3 coolLight=vec3(.60,.76,.88);
+        vec3 lighting=mix(coolLight,warmLight,wrap)*mix(.72,1.,shadow);
+        float direct=max(0.,lightDot)*sceneDirect;
+        vec3 col=painted*lighting*(.62*sceneAmbient+direct*.62)*(1.-burn*.8);
+        float rim=pow(1.-max(0.,dot(n,normalize(vView))),2.7);
+        col+=mix(coolLight,cloudTint,shadow)*rim*mix(.09,.16,liveryDetail); col+=vec3(1.,.23,.08)*heat*(.6+sin(time*22.)*.15);
         col=mix(col,vec3(.76,1.,.85),highlight*(.35+.2*sin(time*5.)));
         // Soft luminous cloud wrap when flying through clouds (bounded so player silhouette stays crisp).
         float veil = clamp(cloudVeil, 0., .32);
-        col = mix(col, cloudTint * (1.04 + .16 * light), veil * (.55 + .45 * rim));
+        col = mix(col, cloudTint * (1.04 + .16 * wrap), veil * (.55 + .45 * rim));
         col += cloudTint * rim * veil * .48;
         col+=accent*.035; gl_FragColor=vec4(col,1.);
         #include <tonemapping_fragment>
@@ -61,6 +158,7 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
   return new THREE.ShaderMaterial({
     uniforms: {
       ...wind,
+      ...landscapeLightUniforms(),
       detailTexture: { value: detailTexture },
       grass: { value: new THREE.Color("#68ad76") },
       road: { value: new THREE.Color("#94c779") },
@@ -140,7 +238,7 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
         float valleyShade = 1. - smoothstep(0., 6.5, vWorld.y);
         vec3 coolShadow = mix(vec3(.68, .82, .92), cloudShadowColor, .35);
         vec3 warmLight = mix(vec3(1.18, 1.13, .98), sunTint * 1.15, .42);
-        vec3 lighting = mix(coolShadow, warmLight, diffuse);
+        vec3 lighting = mix(coolShadow, warmLight, diffuse * sunlightAmount);
 
         float surfaceLight = cloudLightAt(vWorld);
         float planeLight = aircraftSunlightAt(vWorld);
@@ -157,6 +255,7 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
 export function skyDomeMaterial() {
   return new THREE.ShaderMaterial({
     uniforms: {
+      ...landscapeLightUniforms(),
       zenith: { value: new THREE.Color("#4d9ed6") },
       horizon: { value: new THREE.Color("#dff5f0") },
       sun: { value: new THREE.Color("#fff3cc") },
@@ -184,7 +283,7 @@ export function skyDomeMaterial() {
         col=mix(col,mix(horizon,sun,.32),horizonGlow*.38);
         float sunDot=max(0.,dot(direction,landscapeSun));
         float sunHalo=pow(sunDot,10.)*.28+pow(sunDot,96.)*.65;
-        col+=sun*sunHalo;
+        col+=sun*sunHalo*sunlightAmount;
         gl_FragColor=vec4(col,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -199,6 +298,7 @@ export function waterMaterial(wind = vegetationWindUniforms()) {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...wind,
+      ...landscapeLightUniforms(),
       time: { value: 0 },
       tint: { value: new THREE.Color("#399db4") },
       haze: { value: new THREE.Color("#dff5f0") },
@@ -243,7 +343,7 @@ export function waterMaterial(wind = vegetationWindUniforms()) {
         float specDot = max(0., dot(reflect(-landscapeSun, normalWorld), view));
         float broadSun = pow(specDot, 18.) * .32;
         float sparkle = pow(specDot, 96.) * smoothstep(.52, .86, waveFine) * .85;
-        col += mix(foamColor, sunTint, .55) * (broadSun + sparkle);
+        col += mix(foamColor, sunTint, .55) * (broadSun + sparkle) * sunlightAmount;
         float edge = 1. - smoothstep(.05, .36, vDepth + ripple * .11);
         float streak = (1. - smoothstep(.04, .18, abs(vDepth - .52 + ripple * .13))) * smoothstep(.56, .82, wave);
         col = mix(col, foamColor, max(edge * .74, streak * .34));

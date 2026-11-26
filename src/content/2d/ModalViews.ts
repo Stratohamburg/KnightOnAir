@@ -1,11 +1,13 @@
-import { airframeById, STARTER_FRAME_ID, type Airframe, type EraId } from "../../data/aircrafts";
+import type { Airframe, EraId } from "../../data/aircrafts";
+import type { CampaignMission } from "../../data/campaignMissions";
 import { QUALITIES, type Quality } from "../../data/config";
 import { ERAS } from "../../data/eras";
 import type { World } from "../../simulation/World";
 import { actionButton } from "./components";
 import { formatCount } from "./HangarView";
 import { icon, planePreview } from "./icons";
-import { formatUpgradeDelta } from "./ShowroomView";
+import { formatRefitDelta } from "./ShowroomView";
+import { upgradeById, upgradePrice } from "../../data/upgrades";
 
 export function formatClock(seconds: number) {
   return `${Math.floor(seconds / 60)
@@ -62,9 +64,9 @@ export function renderHelpModal() {
       <h2>单手飞行指南</h2>
     </div>
     <div class="help-step">${icon("plane")}<div><b>中央摇杆转向与加速</b><p>内圈控制普通油门，拉入外圈开启加力；松手巡航并恢复加力储备。</p></div></div>
-    <div class="help-step">${icon("target")}<div><b>保持敌机在火线</b><p>武器沿机体挂点方向自动开火，命中依靠转向、滚转和提前量。</p></div></div>
+    <div class="help-step">${icon("target")}<div><b>把敌机带进射界</b><p>用摇杆控制航向。敌机进入炮位射界后，武器会预估提前量并自动开火。</p></div></div>
     <div class="help-step">${icon("bomb")}<div><b>轰炸模式与松杆稳定</b><p>开启右上轰炸开关，松杆等待准心变绿后点击右下投弹环。</p></div></div>
-    <div class="help-step">${icon("wrench")}<div><b>累积改装升级</b><p>升级次数可累积，点击左上改装钮暂停战斗并在三张强化卡中任选其一。</p></div></div>
+    <div class="help-step">${icon("wrench")}<div><b>局内改装</b><p>点击改装预览三项升级，确认后支付本局金币。也可以返回战斗，保留升级次数和候选。</p></div></div>
     <div class="modal-actions">
       ${actionButton("close-modal", `明白了 ${icon("arrow")}`, { size: "md", variant: "primary", block: true })}
     </div>`;
@@ -85,56 +87,76 @@ export function renderPauseModal() {
     </div>`;
 }
 
-export function renderMissionModal(missionEras: readonly EraId[], currentEra: EraId, equippedId: string) {
-  const choices = missionEras
-    .map((id, index) => {
-      const mission = ERAS[id];
-      const selected = id === currentEra;
-      const aircraft = id === "pioneer" ? airframeById(STARTER_FRAME_ID) : airframeById(equippedId);
-      return actionButton(
-        "select-mission",
-        `<span class="mission-number">${String(index + 1).padStart(2, "0")}</span><span><strong>${mission.mission}</strong><small>${mission.label} · ${aircraft.name}</small></span>${icon(selected ? "check" : "chevron")}`,
-        {
-          size: "sm",
-          variant: "secondary",
-          extraClass: "mission-option",
-          attributes: `data-mission="${id}" aria-pressed="${selected}"`,
-        },
-      );
-    })
-    .join("");
+export function renderMissionModal(
+  missions: readonly { mission: CampaignMission; unlocked: boolean; cleared: boolean }[],
+  currentMission: string | undefined,
+  patrolEra: EraId,
+) {
+  const option = (action: string, id: string, title: string, subtitle: string, selected: boolean, locked = false, number = "") =>
+    actionButton(action, `${number ? `<span class="mission-number">${number}</span>` : ""}
+      <span><strong>${title}</strong><small>${subtitle}</small></span>${icon(selected ? "check" : "chevron")}`, {
+      size: "sm", variant: "secondary", extraClass: "mission-option",
+      attributes: `data-mission="${id}" aria-pressed="${selected}"${locked ? " disabled" : ""}`,
+    });
+  const choices = missions.map(({ mission, unlocked, cleared }) => option(
+    "select-mission", mission.id, mission.name,
+    `${ERAS[mission.era].label}${cleared ? " · 已通关" : unlocked ? "" : " · 待解锁"}`,
+    mission.id === currentMission, !unlocked, String(mission.order).padStart(2, "0"),
+  )).join("");
+  const patrols = (Object.keys(ERAS) as EraId[]).map((id) =>
+    option("select-patrol", id, ERAS[id].mission, ERAS[id].label, !currentMission && id === patrolEra)).join("");
   return `<div class="modal-heading">
-      <span class="eyebrow">MISSION ROUTE</span>
-      <h2>选择出击航线</h2>
+      <h2>战役选关</h2>
     </div>
-    <div class="mission-options">${choices}</div>`;
+    <div class="mission-options">${choices}<h3>自由巡航</h3>${patrols}</div>`;
 }
 
 export function renderUpgradeModal(world: World) {
   const isDr1 = world.player.frame.geometryProfile === "fokkerDr1";
-  const choices = world.choices
-    .map((u) => {
-      const rarityLabel = u.rarity === "common" ? "标准" : u.rarity === "rare" ? "稀有" : "史诗";
-      return `<button type="button" class="upgrade-card ${u.rarity}" data-upgrade="${u.id}">
-        ${planePreview(u.preview, isDr1 ? u.id : undefined)}
-        <div>
-          <span class="upgrade-rarity">${rarityLabel} / ${u.tag}</span>
-          <h3>${u.name}</h3>
-          <p class="upgrade-gain">${u.benefit}</p>
-          <p class="upgrade-cost">${u.cost}</p>
-          <p class="upgrade-delta">${formatUpgradeDelta(u, world)}</p>
-          <small>${u.description}</small>
-        </div>
-        ${icon("arrow")}
-      </button>`;
-    })
-    .join("");
-  return `<div class="modal-heading">
-      <span class="eyebrow">FIELD MODIFICATION · LV.${world.level}</span>
-      <h2>选择机身改装</h2>
-      <p>战斗已暂停 · 剩余可用 ${world.upgradesAvailable} 次</p>
+  const choices = world.choices.map((upgrade) => {
+    const price = upgradePrice(upgrade);
+    return `<div class="upgrade-option" data-upgrade-option="${upgrade.id}">
+      <button type="button" class="upgrade-card ${upgrade.rarity}" data-upgrade="${upgrade.id}"
+        aria-pressed="false" aria-label="${upgrade.name}，${price} 金币" aria-describedby="refit-delta-${upgrade.id}">
+        ${planePreview(upgrade.preview, isDr1 ? upgrade.id : undefined)}
+        <span class="upgrade-card-copy">
+          <strong>${upgrade.name}</strong>
+          <span id="refit-delta-${upgrade.id}" class="upgrade-delta">${formatRefitDelta(upgrade, world)}</span>
+        </span>
+        <span class="upgrade-price">${price} 金币</span>
+      </button>
+      <button type="button" data-action="confirm-upgrade" class="upgrade-confirm" hidden disabled
+        aria-label="确认安装${upgrade.name}，支付 ${price} 金币" aria-describedby="upgrade-payment">确认安装</button>
+    </div>`;
+  }).join("");
+  const installed = world.upgradeInstallation && upgradeById(world.upgradeInstallation.upgradeId);
+  return `<div class="upgrade-heading">
+      <h2>局内改装</h2>
+      <p class="upgrade-balance">${world.coins} 金币 · ${world.upgradesAvailable} 次</p>
+      <button type="button" data-action="return-from-upgrade" class="upgrade-return" ${installed ? "hidden" : ""}>返回战斗</button>
     </div>
+    <p class="upgrade-payment" id="upgrade-payment" role="status">${installed ? "已支付 · 正在安装 " + installed.name : ""}</p>
     <div class="upgrade-choices">${choices}</div>`;
+}
+
+export function updateUpgradeSelection(sheet: ParentNode, world: World) {
+  const selected = world.choices.find(choice => choice.id === world.selectedUpgradeId);
+  const shortfall = selected ? Math.max(0, upgradePrice(selected) - world.coins) : 0;
+  for (const option of sheet.querySelectorAll<HTMLElement>("[data-upgrade-option]")) {
+    const pressed = selected?.id === option.dataset.upgradeOption;
+    option.querySelector("[data-upgrade]")?.setAttribute("aria-pressed", String(pressed));
+    const confirm = option.querySelector<HTMLButtonElement>(".upgrade-confirm");
+    if (confirm) {
+      confirm.hidden = !pressed;
+      confirm.disabled = !pressed || shortfall > 0;
+    }
+  }
+  const payment = sheet.querySelector("#upgrade-payment");
+  if (payment && !world.upgradeInstallation) {
+    payment.textContent = selected
+      ? shortfall > 0 ? `还需 ${shortfall} 金币` : `将支付 ${upgradePrice(selected)} 金币`
+      : "选择一项预览";
+  }
 }
 
 export interface ResultViewModel {
@@ -144,9 +166,10 @@ export interface ResultViewModel {
   bestScore: number;
   bestTime: number;
   unlocked: readonly Airframe[];
+  nextMission?: CampaignMission;
 }
 
-export function renderResultPage({ world, sorties, previousBest, bestScore, bestTime, unlocked }: ResultViewModel) {
+export function renderResultPage({ world, sorties, previousBest, bestScore, bestTime, unlocked, nextMission }: ResultViewModel) {
   const survived = world.player.health > 0;
   const configSummary = world.player.upgrades.length
     ? world.player.upgrades
@@ -158,11 +181,18 @@ export function renderResultPage({ world, sorties, previousBest, bestScore, best
     .map((f) => `<div class="unlock-banner">${icon("shield")}新机体已解锁 · ${f.name}</div>`)
     .join("");
 
+  const mission = world.mission?.mission;
+  const outcome = world.mission?.result;
+  const outcomeLabel = outcome && {
+    victory: "任务完成", mission_failed: "任务失败", aircraft_destroyed: "座机坠毁", retreat: "主动返航",
+  }[outcome.outcome];
   return `<div class="result-page">
     <section class="result-sheet panel-surface">
       <span class="eyebrow">FLIGHT REPORT · #${String(sorties).padStart(3, "0")}</span>
-      <h1>${survived ? "平安返航" : "航迹永不消失"}<span>.</span></h1>
-      <p class="result-lead">${survived ? "带着新的飞行数据，准备下一段航程。" : "每一次迫降，都让下一次升空更远。"}</p>
+      <h1>${outcomeLabel ?? (survived ? "平安返航" : "航迹永不消失")}<span>.</span></h1>
+      <p class="result-lead">${mission && outcome
+        ? `${mission.name} · 已完成阶段 ${outcome.completedStages}/${mission.stages.length}${outcome.detail ? ` · ${outcome.detail}` : ""}`
+        : `自由巡航 · ${ERAS[world.era].mission}`}</p>
       <div class="result-score">
         <small>本次积分${world.score > previousBest ? "<b>NEW BEST</b>" : ""}</small>
         <strong>${formatCount(world.score)}</strong>
@@ -185,7 +215,8 @@ export function renderResultPage({ world, sorties, previousBest, bestScore, best
       </div>
       <div class="result-actions">
         ${actionButton("home", "返回机库", { size: "md", variant: "secondary", block: true })}
-        ${actionButton("retry", `再次出击 ${icon("arrow")}`, { size: "md", variant: "primary", block: true })}
+        ${actionButton("retry", mission ? "重试" : "再次出击", { size: "md", variant: nextMission ? "secondary" : "primary", block: true })}
+        ${nextMission ? actionButton("next-mission", `下一关 ${icon("arrow")}`, { size: "md", variant: "primary", block: true }) : ""}
       </div>
       <small class="result-best">历史最高 ${formatCount(bestScore)} PTS · 最长巡航 ${formatClock(bestTime)}</small>
     </section>

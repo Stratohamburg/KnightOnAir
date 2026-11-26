@@ -104,6 +104,7 @@ function markup(mission: string, era: string) {
       <div class="battle-clock">
         <span class="eyebrow">${mission} · ${era}</span>
         <div class="battle-clock-row"><b id="battle-time">00:00</b><small id="battle-score">0 PTS</small></div>
+        <div id="mission-objective" class="mission-objective"></div>
       </div>
       <div class="battle-top-actions">
         ${button("pause", icon("pause"), "icon-button pause-button", 'aria-label="暂停游戏"')}
@@ -111,11 +112,12 @@ function markup(mission: string, era: string) {
     </header>
     <div class="xp-bar"><i id="xp-fill"></i><span id="level-label">LV.01</span><small class="quality-chip" id="quality-readout"></small></div>
     <div class="battle-announcement" id="battle-notice" role="status" aria-live="polite"></div>
-    <div class="battle-status"><span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span></div>
+    <div class="battle-status"><span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span><span id="environment-notice" role="status"></span></div>
     <div class="control-deck" data-bombing="false">
       <div class="deck-top">
         <button type="button" class="upgrade-button" data-action="upgrade" id="upgrade-button" disabled>${icon("wrench")}<span>改装</span><b id="upgrade-count">0</b></button>
         <button type="button" class="mode-button" data-action="bomb-mode" id="mode-button" aria-pressed="false">${icon("target")}<span>轰炸</span><i></i></button>
+        <span id="mission-prompt" class="mission-prompt"></span>
       </div>
       <div class="deck-main">
         <div class="control-readout">

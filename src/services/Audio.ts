@@ -29,6 +29,9 @@ export class GameAudio {
         const sound = event.type === "player_hit" ? "hit" :
           event.snapshot.damageType === "explosive" ? "explosiveImpact" : "impact";
         cue(sound, event.time, .13);
+      } else if (event.type === "upgrade_installed") {
+        this.play("upgrade", false);
+        if (this.vibration) globalThis.navigator?.vibrate?.(event.animation === "extension" ? 28 : 16);
       } else if (event.type === "enemy_destroyed") cue("kill", event.time);
       else if (event.type === "part_disabled") cue("part", event.time);
       else if (event.type === "pickup") cue(event.kind === "coin" ? "coin" : "heal", event.time);
@@ -45,7 +48,7 @@ export class GameAudio {
       /* Silent play is supported. */
     }
   }
-  play(kind: Sound) {
+  play(kind: Sound, haptic = true) {
     if (
       !this.enabled ||
       !this.context ||
@@ -92,7 +95,7 @@ export class GameAudio {
       osc.disconnect();
       gain.disconnect();
     };
-    if (this.vibration && ["hit", "bomb", "upgrade", "alert", "part", "heal"].includes(kind))
+    if (haptic && this.vibration && ["hit", "bomb", "upgrade", "alert", "part", "heal"].includes(kind))
       navigator.vibrate?.(kind === "hit" ? 35 : kind === "alert" ? 18 : kind === "heal" ? 15 : 20);
   }
 }

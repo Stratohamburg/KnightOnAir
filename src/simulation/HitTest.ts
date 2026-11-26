@@ -7,6 +7,8 @@ export interface SweptProjectile {
   x: number;
   z: number;
   radius?: number;
+  y?: number;
+  prevY?: number;
 }
 
 interface Point { x: number; z: number }
@@ -51,7 +53,7 @@ function circleEntry(start: Point, dx: number, dz: number, x: number, z: number,
   return root >= 0 && root <= 1 ? root : Infinity;
 }
 
-function polygonEntry(start: Point, dx: number, dz: number, points: Point[], radius: number) {
+function polygonEntry(start: Point, dx: number, dz: number, points: Point[], radius: number, entry = 0, exit = 1) {
   let area = 0;
   for (let i = 0; i < points.length; i++) {
     const a = points[i], b = points[(i + 1) % points.length];
@@ -59,7 +61,7 @@ function polygonEntry(start: Point, dx: number, dz: number, points: Point[], rad
   }
   if (Math.abs(area) < 1e-9) return Infinity;
   const sign = Math.sign(area);
-  let entry = 0, exit = 1;
+  if (entry > exit) return Infinity;
   for (let i = 0; i < points.length; i++) {
     const a = points[i], b = points[(i + 1) % points.length];
     const ex = b.x - a.x, ez = b.z - a.z;
@@ -77,7 +79,7 @@ function polygonEntry(start: Point, dx: number, dz: number, points: Point[], rad
   return entry;
 }
 
-export function hitEntity(entity: Target, projectile: SweptProjectile): HitPart | undefined {
+export function hitEntity(entity: Target, projectile: SweptProjectile, altitude?: number): HitPart | undefined {
   // Keep the projectile relative to the target at both step endpoints. The
   // midpoint orientation represents the bank and heading over this fixed step.
   const heading = entity.heading - angleDelta(entity.heading, entity.prevHeading ?? entity.heading) * .5;
@@ -92,6 +94,22 @@ export function hitEntity(entity: Target, projectile: SweptProjectile): HitPart 
   const extent = (entity.hitExtent ?? silhouetteExtent(entity.parts)) + radius * 2;
   if (Math.min(start.x, end.x) > extent || Math.max(start.x, end.x) < -extent ||
       Math.min(start.z, end.z) > extent || Math.max(start.z, end.z) < -extent) return;
+  // Multi-deck wings have open space between skins in the same plan footprint.
+  // When the projectile carries altitude, unroll the sweep and clip each deck independently.
+  const hasHeight = altitude !== undefined && projectile.y !== undefined;
+  const sy = (projectile.prevY ?? projectile.y ?? 0) - (altitude ?? 0);
+  const ey = (projectile.y ?? 0) - (altitude ?? 0);
+  const deckStart = {x:start.x*rollCos + sy*rollSin, z:start.z};
+  const deckEndX = end.x*rollCos + ey*rollSin;
+  const y0 = sy*rollCos - start.x*rollSin;
+  const dy = ey*rollCos - end.x*rollSin - y0;
+  function deckEntry(polygon: NonNullable<Part["silhouette"]>[number], r: number) {
+    const heights = polygon.map(p => p.y);
+    const bottom = Math.min(...heights) - .085 - r, top = Math.max(...heights) + .085 + r;
+    if (Math.abs(dy) < 1e-8 && (y0 < bottom || y0 > top)) return Infinity;
+    const t0 = dy ? (bottom-y0)/dy : 0, t1 = dy ? (top-y0)/dy : 1;
+    return polygonEntry(deckStart,deckEndX-deckStart.x,dz,polygon,r,Math.max(0,Math.min(t0,t1)),Math.min(1,Math.max(t0,t1)));
+  }
   let envelope = Infinity;
   let attribution = Infinity;
   let attributed: Part | undefined;
@@ -111,6 +129,10 @@ export function hitEntity(entity: Target, projectile: SweptProjectile): HitPart 
     let contact = Infinity;
     if (part.silhouette) {
       for (const polygon of part.silhouette) {
+        if (hasHeight && part.layeredWing) {
+          contact = Math.min(contact,deckEntry(polygon,radius));
+          continue;
+        }
         const projected = polygon.map(({ x, y, z }) => ({ x: x * rollCos - y * rollSin, z }));
         contact = Math.min(contact, polygonEntry(start, dx, dz, projected, radius));
       }
@@ -127,6 +149,10 @@ export function hitEntity(entity: Target, projectile: SweptProjectile): HitPart 
     let partEntry = Infinity;
     if (part.silhouette) {
       for (const polygon of part.silhouette) {
+        if (hasHeight && part.layeredWing) {
+          partEntry = Math.min(partEntry,deckEntry(polygon,0));
+          continue;
+        }
         const projected = polygon.map(({ x, y, z }) => ({ x: x * rollCos - y * rollSin, z }));
         partEntry = Math.min(partEntry, polygonEntry(start, dx, dz, projected, 0));
       }

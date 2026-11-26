@@ -43,6 +43,7 @@ export interface Part {
   visual?: { kind: string; scale: number; detachable: boolean };
   hitCircles?: { x: number; z: number; r: number }[];
   silhouette?: Point3[][];
+  layeredWing?: boolean;
   detachSeed?: number;
   parentId?: string;
   connection?: { side: -1 | 0 | 1; x: number; z: number };
@@ -114,6 +115,12 @@ export interface Player extends AirMotionState {
   hitExtent: number;
   damageRevision: number;
 }
+export interface UpgradePreview {
+  player: Player;
+  partIds: string[];
+  focusPartIds: string[];
+  mountIds: string[];
+}
 export interface Stats {
   maxSpeed: number;
   acceleration: number;
@@ -182,6 +189,7 @@ export interface Enemy extends AirMotionState {
   tailAttack: boolean;
   attackTargetHeading: number;
   breakWindow: number;
+  combatGeometry?: AirCombatGeometry;
   factionId?: string;
   controllerId?: string;
   parts: Part[];
@@ -195,7 +203,20 @@ export interface Enemy extends AirMotionState {
   routeDistance?: number;
   laneOffset?: number;
 }
+export interface AirCombatGeometry {
+  distance: number;
+  bearing: number;
+  targetHeadingDelta: number;
+  closingSpeed: number;
+  lateralOffset: number;
+  energy: number;
+  targetEnergy: number;
+  predicted: { x: number; z: number };
+  aimError: number;
+  weaponSolution: boolean;
+}
 export interface Projectile {
+  effectId?: string;
   active: boolean;
   id: number;
   team: "player" | "enemy";
@@ -229,6 +250,9 @@ export interface Projectile {
   armorBreak: number;
 }
 export interface AirMotionState {
+  effectiveThrottle?: number;
+  acceleration?: number;
+  turnLoad?: number;
   heading: number;
   speed: number;
   vx: number;
@@ -245,6 +269,7 @@ export interface ControllerIntent {
   targetHeading?: number;
   continuousTurn?: ContinuousTurn;
   targetPoint?: { x: number; z: number };
+  attackPoint?: { x: number; z: number };
   throttle: number;
   boost: number;
   fire: boolean;
@@ -283,6 +308,14 @@ export interface CombatEntity {
 export type PickupKind = "coin" | "repairSmall" | "repairLarge";
 export type DamageType = "kinetic" | "explosive" | "fire" | "contact";
 export interface CombatSnapshot {
+  effectId?: string;
+  damageSiteId?: number;
+  actorPose?: import("../content/3d/anchors").ActorPose;
+  contact?: boolean;
+  barrel?: { partId: string; index: number };
+  ammunition?: "gun" | "powered" | "bomb";
+  surface?: "metal" | "fabric" | "ground" | "water";
+  damagedParts?: { id: string; amount: number }[];
   position: Point3;
   direction: Point3;
   velocity: Point3;
@@ -291,8 +324,18 @@ export interface CombatSnapshot {
   damageType: DamageType;
   weaponId?: string;
 }
+export interface UpgradeInstalledEvent {
+  type: "upgrade_installed";
+  time: number;
+  upgradeId: string;
+  partIds: string[];
+  mountIds: string[];
+  pose: import("../content/3d/anchors").ActorPose;
+  animation: "extension" | "mount" | "system";
+}
 export type WorldEvent =
-  | { type: "effect_requested"; time: number; profile: "burst" | "coin" | "heal"; position: Point3; size: number; duration: number }
+  | UpgradeInstalledEvent
+  | { type: "effect_requested"; time: number; profile: "burst" | "coin" | "heal"; surface?: "water" | "ground"; position: Point3; size: number; duration: number }
   | { type: "weapon_fired"; time: number; owner: "player" | "enemy"; entityId: number | string; anchorId: string; projectileId?: number; snapshot: CombatSnapshot }
   | { type: "part_detached"; time: number; owner: "player" | "enemy"; entityId: number | string; partId: string; partKind: string; color: string; snapshot: CombatSnapshot }
   | { type: "player_destroyed"; time: number; snapshot: CombatSnapshot }

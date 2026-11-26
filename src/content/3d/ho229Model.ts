@@ -3,6 +3,7 @@ import { hoEngines, hoEngineSize, hoGear, hoLeadingRow, hoSpan, hoUnit, hoX, hoZ
 import { hoPlacedPanels, hoSectionAt, type HoSection } from "../../simulation/Ho229Layout";
 import { lineExtension } from "../../simulation/CenterlineLayout";
 import { engineOutlet, muzzleAnchor } from "./anchors";
+import { outlineVertex } from "./aircraftEffectSites";
 import type { Part } from "../../simulation/types";
 import type { AircraftModelContext } from "./aircraftModels";
 
@@ -187,10 +188,20 @@ function buildHoPanel(context: AircraftModelContext, parent: THREE.Object3D,
     const skin = context.geometry(key + ":skin:" + i, () => wingVolume(band, hinge, false, pockets));
     const shell = context.mesh(skin, material, parent);
     shell.name = "ho229-wing-skin";
+    context.effectSites.surfaces.push({partId: id, mesh: shell});
+    const part = context.actor.parts.find(part => part.id === id)!;
+    if (part.role === "wing") {
+      if (!part.visual?.detachable) context.effectSites.addWingFlow(id, "panel-flow-" + i, shell);
+      const side = part.side || (part.slot === "leftWing" ? -1 : 1);
+      if (part.visual?.detachable && (side < 0 ? i === 0 : end === rows.length-1))
+        context.effectSites.add(id, "tip", "wingTip", shell, outlineVertex(shell,"x",side));
+    }
     if (pockets.length) shell.material = [material, context.paint("#4e6264")];
     if (hinge) {
       const control = context.geometry(key + ":control:" + i, () => wingVolume(band, hinge, true));
-      context.mesh(control, context.paint("#73868b"), parent).name = "ho229-elevon";
+      const elevon = context.mesh(control, context.paint("#73868b"), parent);
+      elevon.name = "ho229-elevon";
+      context.effectSites.surfaces.push({partId: id, mesh: elevon});
     }
     i = end;
   }
@@ -280,7 +291,11 @@ export function buildHo229Model(context: AircraftModelContext) {
           [e.radius * Math.cos(i * Math.PI / 12), e.radius * Math.sin(i * Math.PI / 12), 0]));
         return loft(rings, false);
       });
-      context.mesh(cover, material, sheet, e.x, e.y, e.z).name = "ho229-engine-cover";
+      const casing = context.mesh(cover, material, sheet, e.x, e.y, e.z);
+      casing.name = "ho229-engine-cover";
+      context.effectSites.surfaces.push({partId: part.id, mesh: casing});
+      context.effectSites.add(part.id, "nozzle", "jetOutlet", sheet, [e.x,e.y,e.z], {radius: e.radius});
+      context.effectSites.add(part.id, "outlet-shoulder", "protrusion", casing, outlineVertex(casing,"y",1));
       const rim = context.mesh(cache("buried-outlet-rim", () => new THREE.LatheGeometry(
         [[1, -.078], [1, 0], [.84, 0], [.79, -.043]].map(([radius, z]) => new THREE.Vector2(radius, z)), 24)),
         metal, sheet, e.x, e.y, e.z);
@@ -330,6 +345,8 @@ export function buildHo229Model(context: AircraftModelContext) {
           muzzle.x - part.x, muzzle.y - (part.y ?? 0), muzzle.z - part.z);
         barrel.rotation.x = Math.PI / 2;
         barrel.name = "ho229-cannon";
+        context.effectSites.add(part.id, "casing-" + i, "casing", barrel, [0,-.55,.084],
+          {direction: [0,0,1], basis: "configuredFallback"});
       }
     } else if (!rows) {
       // Add-on equipment uses the refit's own local anchor and part state.

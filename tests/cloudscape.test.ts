@@ -1,16 +1,84 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { Vector3, type WebGLRenderer } from "three";
+import { Group, Vector2, Vector3, type WebGLRenderer } from "three";
+import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
+import { airframeById, STARTER_FRAME_ID } from "../src/data/aircrafts";
+import { World } from "../src/simulation/World";
+import { CloudWake, VehicleCloudWakes, cloudWakeCapacity, wakeLifetime } from "../src/rendering/CloudWake";
+import { buildCloudGeometry } from "../src/content/3d/CloudGeometry";
 import { QUALITIES } from "../src/data/config";
 import { ERAS } from "../src/data/eras";
 import { cloudBillowOffset, cloudMorph, cloudSelfMorphSpeed, cloudVelocity, morphWallDensity } from "../src/rendering/CloudFlow";
 import { Cloudscape } from "../src/rendering/Cloudscape";
+import { evaluateActiveClouds, evaluateCloudGroupSdf } from "../src/rendering/CloudLobes";
 import { bakeCloudWall, cloudWallWeight, sampleCloudWall } from "../src/rendering/CloudWall";
 import {
   bakeBillowNoise, bakeCloudMap, bakeCloudNoise, cloudBase, cloudMapSize, cloudNoiseSize, cloudTop,
-  estimateCloudDensity, sampleCloudColumn,
+  cloudSun, estimateCloudDensity, sampleCloudColumn,
 } from "../src/rendering/CloudscapeLayout";
 
 describe("coastal cloudscape", () => {
+  it("cuts at each vehicle's own height and keeps disconnected histories after removal", () => {
+    const field = new VehicleCloudWakes(), drift = new Vector2();
+    const makeHull = (x: number, y: number) => {
+      const group = new Group();
+      group.position.set(x, y, 0);
+      return { group, cloudContactSites: [new Vector3(0, 1, -1), new Vector3(0, 1, 1), new Vector3(0, 1, 0)], dispose() {} };
+    };
+    const truck = makeHull(24, 0), boat = makeHull(-24, 0);
+    const fog = (_x: number, y: number) => Number(y >= 12);
+    field.update(.1, drift, undefined, [truck, boat], fog);
+    expect(field.cutCount).toBe(0);
+    truck.group.position.y = boat.group.position.y = 12;
+    for (let i = 0; i < 24; i++) {
+      truck.group.position.z += 1.5;
+      boat.group.position.z -= 1.5;
+      field.update(.05, drift, undefined, [truck, boat], fog);
+    }
+    expect(field.count).toBe(cloudWakeCapacity);
+    expect(field.cutCount).toBe(6);
+    expect(field.cuts.slice(0, 6).every(c => c.y === 13 && c.w <= 2.1)).toBe(true);
+    for (let i = 0; i < field.count; i++) expect(field.starts[i].x).toBe(field.ends[i].x);
+    for (const x of [-24, 24]) expect(field.starts.slice(0, field.count).some(p => p.x === x)).toBe(true);
+    field.update(.1, drift, undefined, [], fog);
+    expect(field.cutCount).toBe(0);
+    expect(field.count).toBeGreaterThan(0);
+    field.update(wakeLifetime, drift, undefined, [], fog);
+    expect(field.count).toBe(0);
+  });
+  it("keeps a grazing wing's trail in cloud space across a turn, a gap and a pause", () => {
+    const world = new World(airframeById(STARTER_FRAME_ID), 491);
+    const plane = new ProceduralAircraft(world.player);
+    const wake = new CloudWake();
+    const drift = new Vector2();
+    try {
+      const fly = (z: number, dt: number, contact = true) => {
+        plane.group.position.set(drift.x, 24, z + drift.y);
+        wake.update(dt, drift, plane, x => Number(contact && x > drift.x + .1));
+      };
+      fly(0, .1);
+      fly(6, .1);
+      expect(wake.contacts.map(tip => tip.w)).toEqual([0, 1, 0]);
+      expect(wake.count).toBe(3);
+      const recorded = wake.starts[0].clone();
+      drift.set(3, 2);
+      fly(8, .1, false);
+      world.player.heading = .3;
+      plane.group.rotation.y = .3;
+      fly(12, .1);
+      expect(wake.count).toBe(4);
+      expect(wake.starts[0].x).toBe(recorded.x);
+      expect(wake.starts[0].z).toBe(recorded.z);
+      expect(wake.starts[3]).toEqual(wake.ends[3]);
+      const frozen = wake.ends.map(p => p.clone());
+      fly(15, 0);
+      expect(wake.ends).toEqual(frozen);
+      fly(15, wakeLifetime + .1, false);
+      expect(wake.count).toBe(0);
+    } finally {
+      plane.dispose();
+      world.dispose();
+    }
+  });
   let map: Uint8Array;
   beforeAll(() => { map = bakeCloudMap(491); });
 
@@ -70,12 +138,78 @@ describe("coastal cloudscape", () => {
   });
 
   it("keeps each quality tier within the ray marcher budget", () => {
+    expect(QUALITIES.low.cloud.resolution).toBe(.55);
+    expect(QUALITIES.standard.cloud.resolution).toBe(.75);
+    expect(QUALITIES.high.cloud.resolution).toBe(1);
     expect(QUALITIES.low.cloud.resolution).toBeLessThan(QUALITIES.standard.cloud.resolution);
-    expect(QUALITIES.standard.cloud.resolution).toBe(.5);
-    expect(QUALITIES.high.cloud.resolution).toBeLessThan(1);
+    expect(QUALITIES.standard.cloud.resolution).toBeLessThan(QUALITIES.high.cloud.resolution);
     expect(QUALITIES.low.cloud.samples).toBeLessThan(QUALITIES.standard.cloud.samples);
     expect(QUALITIES.standard.cloud.samples).toBeLessThan(QUALITIES.high.cloud.samples);
     expect(QUALITIES.high.cloud.samples).toBeLessThanOrEqual(24);
+  });
+
+  it("extracts the joined coast bank as one closed, outward-facing indexed surface", () => {
+    const field = evaluateActiveClouds(0, 18, 0, 0, 0, 0, 491, true);
+    const bank = field.clusters.find(group => group.count > 8)!;
+    const lobes = field.lobes.slice(bank.start, bank.start + bank.count);
+    const geometry = buildCloudGeometry(lobes);
+    try {
+      const positions = geometry.getAttribute("position");
+      const normals = geometry.getAttribute("normal");
+      const indices = geometry.getIndex()!;
+      expect(indices.count / 3).toBeLessThan(15000);
+      expect(indices.count).toBeGreaterThan(positions.count * 4);
+      const uses = new Map<number, number>();
+      const a = new Vector3(), ab = new Vector3(), ac = new Vector3(), n = new Vector3();
+      let facing = 0;
+      for (let i = 0; i < indices.count; i += 3) {
+        const ia = indices.getX(i), ib = indices.getX(i + 1), ic = indices.getX(i + 2);
+        for (const [u, v] of [[ia, ib], [ib, ic], [ic, ia]]) {
+          const key = Math.min(u, v) * positions.count + Math.max(u, v);
+          uses.set(key, (uses.get(key) ?? 0) + 1);
+        }
+        a.fromBufferAttribute(positions, ia);
+        ab.fromBufferAttribute(positions, ib).sub(a);
+        ac.fromBufferAttribute(positions, ic).sub(a);
+        facing += Number(ab.cross(ac).dot(n.fromBufferAttribute(normals, ia)) > 0);
+      }
+      expect([...uses.values()].every(use => use === 2)).toBe(true);
+      expect(facing / (indices.count / 3)).toBeGreaterThan(.99);
+      for (let i = 0; i < positions.count; i += 11) {
+        a.fromBufferAttribute(positions, i);
+        expect(Math.abs(evaluateCloudGroupSdf(lobes, a.x, a.y, a.z))).toBeLessThan(.25);
+      }
+    } finally {
+      geometry.dispose();
+    }
+  });
+
+  it("attenuates sunlight on a facing patch when a separate crown crosses the light path", () => {
+    const towardSun = new Vector3(cloudSun[0] * 1.55, cloudSun[1] * .52, cloudSun[2] * 1.55).normalize();
+    const base = { x: 0, y: 28, z: 0, radius: 8, yScale: 1, blend: 2, phase: 0, crownBias: 0 };
+    const blocker = { ...base, x: towardSun.x * 32, y: base.y + towardSun.y * 32, z: towardSun.z * 32 };
+    const patch = towardSun.clone().multiplyScalar(8).add(new Vector3(0, base.y, 0));
+    function transmission(lobes: typeof base[]) {
+      const g = buildCloudGeometry(lobes);
+      try {
+        const points = g.getAttribute("position");
+        const light = g.getAttribute("cloudLighting");
+        const p = new Vector3();
+        let total = 0, count = 0;
+        for (let i = 0; i < points.count; i++) {
+          if (p.fromBufferAttribute(points, i).distanceToSquared(patch) < 9) {
+            total += light.getY(i);
+            count++;
+          }
+        }
+        expect(count).toBeGreaterThan(0);
+        return total / count;
+      } finally {
+        g.dispose();
+      }
+    }
+    expect(transmission([base])).toBeGreaterThan(.8);
+    expect(transmission([base, blocker])).toBeLessThan(.4);
   });
 
   it("integrates the wind vector without rotating past cloud displacement", () => {
@@ -142,7 +276,7 @@ describe("coastal cloudscape", () => {
     const t1 = cloudBillowOffset(billowA, 180, 28, -220, 4, .72);
     expect(t0).toEqual(cloudBillowOffset(billowB, 180, 28, -220, 0, .72));
     expect(Math.abs(t1.tuft - t0.tuft) + Math.abs(t1.dy - t0.dy)).toBeGreaterThan(.05);
-    expect(Math.hypot(t1.dx, t1.dz)).toBeLessThan(2);
+    expect(Math.hypot(t1.dx, t1.dz)).toBeLessThan(2.5);
 
     const renderer = { extensions: { has: () => false } } as unknown as WebGLRenderer;
     const clouds = new Cloudscape(renderer, 491);
@@ -150,21 +284,21 @@ describe("coastal cloudscape", () => {
     try {
       // Sunny openings between cloud walls stay clear (no full-map overcast low cloud sea).
       for (const y of [16, 20, 28, 36]) {
-        expect(clouds.sampleDensityAt(-4, y, -10)).toBeLessThan(.1);
+        expect(clouds.sampleDensityAt(0, y, -10)).toBeLessThan(.1);
       }
       // Flanking cloud walls outside the estuary opening remain dense and towering.
-      expect(clouds.sampleDensityAt(30, 34, 0)).toBeGreaterThan(.4);
-      expect(clouds.sampleDensityAt(-38, 34, 0)).toBeGreaterThan(.35);
+      expect(clouds.sampleDensityAt(28, 30, 0)).toBeGreaterThan(.4);
+      expect(clouds.sampleDensityAt(-30, 30, 0)).toBeGreaterThan(.4);
 
       // Calm air evolves local billowing without changing horizontal drift; pause freezes both.
       clouds.update(2, 0, 0, 0, camera, 0, 24, 0, 0, 0, true);
       expect(clouds.flow.drift).toEqual([0, 0]);
       expect(clouds.flow.selfTime).toBeGreaterThan(0);
       const frozenTime = clouds.flow.selfTime;
-      const frozenSample = clouds.sampleDensityAt(30, 34, 0);
+      const frozenSample = clouds.sampleDensityAt(28, 30, 0);
       clouds.update(0, 1, 1, 1, camera, 0, 24, 0, 0, 0, true);
       expect(clouds.flow.selfTime).toBe(frozenTime);
-      expect(clouds.sampleDensityAt(30, 34, 0)).toBe(frozenSample);
+      expect(clouds.sampleDensityAt(28, 30, 0)).toBe(frozenSample);
 
       // Era palette updates cloud atmosphere colors cleanly.
       clouds.setPalette(ERAS.ww2.colors);

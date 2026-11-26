@@ -4,7 +4,7 @@ import type { BehaviorKind } from "./combatants";
 type EraEnemy = readonly [
   era: EraId, id: string, name: string, template: string, behavior: BehaviorKind,
   availableFrom: "intro" | "skirmish" | "pressure" | "elite", health: number,
-  speed: number, turnRate: number | null, xp: number, coins: number, weapon: string | null,
+  speed: number, turnRate: number | null, xp: number, coins: number, weapon: string | null, modelKey?: string,
 ];
 
 export const ERA_ENEMIES: readonly EraEnemy[] = [
@@ -18,6 +18,7 @@ export const ERA_ENEMIES: readonly EraEnemy[] = [
   ["ww1", "hunter", "双翼战斗机", "hunter", "chase", "intro", 52.0, 6.4, 86.0, 20, 2, "ww1_twin_mg"],
   ["ww1", "bomber", "双发轰炸机", "bomber", "crossing", "skirmish", 104.0, 4.1, 33.0, 44, 5, "ww1_twin_mg"],
   ["ww1", "escort", "护卫机", "escort", "escort", "pressure", 36.0, 5.8, 81.0, 22, 2, "ww1_sync_mg"],
+  ["ww1", "fighter_ace", "堑壕王牌", "hunter", "intercept", "elite", 115.0, 7.5, 103.0, 105, 13, "ww1_twin_mg", "hunter"],
   ["ww1", "striker", "俯冲攻击机", "striker", "dive", "skirmish", 64.0, 5.8, 57.0, 32, 3, "ww1_twin_mg"],
   ["ww1", "recon_balloon", "侦察气球", "scout", "patrol", "intro", 36.0, 0.5, 19.0, 19, 5, null],
   ["ww1", "elite", "大型飞艇", "elite", "standoff", "elite", 520.0, 2.7, 19.0, 176, 19, "ww1_sync_mg"],
@@ -52,6 +53,7 @@ export const ERA_ENEMIES: readonly EraEnemy[] = [
   ["jet", "bomber", "喷气轰炸机", "bomber", "crossing", "pressure", 130.0, 4.8, 35.0, 55, 6, "jet_autocannon"],
   ["jet", "jet_bomber", "高速掠袭机", "bomber", "crossing", "pressure", 260.0, 10.5, 55.0, 150, 18, "jet_autocannon"],
   ["jet", "escort", "护卫无人机", "escort", "escort", "pressure", 45.0, 6.8, 85.0, 28, 3, "jet_autocannon"],
+  ["jet", "recon_balloon", "空中靶球", "scout", "patrol", "intro", 58.0, 0.5, 18.0, 12, 3, null],
   ["jet", "ace", "王牌飞行员", "hunter", "intercept", "elite", 220.0, 9.0, 105.0, 180, 20, "jet_heavy_cannon"],
   ["jet", "elite", "空中堡垒", "elite", "standoff", "elite", 650.0, 3.2, 20.0, 220, 24, "jet_autocannon"],
   ["jet", "heavy_fighter", "喷气重战", "hunter", "chase", "pressure", 160.0, 7.0, 70.0, 70, 8, "jet_heavy_cannon"],

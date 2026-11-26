@@ -1,4 +1,6 @@
 import { bayOutline, sheetSpan, stationZ, unit, wingOutline, wingSegments } from "../data/fokkerDr1Sheet";
+import type { Airframe } from "../data/aircrafts";
+import { fighterStationZ, fighterUnit, spitfireVbSheet, zero21Sheet } from "../data/pistonFighterSheets";
 import { applyHoPanelLayout } from "./Ho229Layout";
 import type { Part, PartRole, Slot } from "./types";
 import type { CenterlineMount } from "./CenterlineLayout";
@@ -94,12 +96,15 @@ export function refreshPartLayout(parts: Part[], wingspan: number, length: numbe
   if (topology) applyCenterlineLayout(topology, parts);
 }
 
-export function refreshAirframeSilhouette(parts: Part[], wingspan: number, length: number, width: number, tiers: number, wingLength = length, sideWingspans?: { left: number; right: number }, frameId?: string) {
+export function refreshAirframeSilhouette(parts: Part[], wingspan: number, length: number, width: number, tiers: number, wingLength = length, sideWingspans?: { left: number; right: number }, frame?: Airframe | string) {
+  const frameId = typeof frame === "string" ? frame : frame?.geometryProfile;
   if (frameId === "ho229V2") {
     const baseSpan = wingspan - lineExtension(parts, "left-wing-0") - lineExtension(parts, "right-wing-0");
     return applyHoPanelLayout(parts, baseSpan);
   }
   const geometry = aircraftGeometryProfile(frameId);
+  const earlyWingZ = typeof frame === "object" ? frame.pioneerLayout?.wingZ : undefined;
+  const fighter = frameId === "spitfireVb" ? spitfireVbSheet : frameId === "zero21" ? zero21Sheet : undefined;
   for (const part of parts) {
     if (part.id === "center_body") {
       const sections = geometry?.fuselage.sections ?? FUSELAGE_SECTIONS;
@@ -114,6 +119,7 @@ export function refreshAirframeSilhouette(parts: Part[], wingspan: number, lengt
         ];
       });
     }
+    if (part.role === "wing") part.layeredWing = tiers > 1 || geometry?.id === "fokkerDr1";
     if (geometry?.id === "fokkerDr1" && part.role === "wing") {
       const segment = wingSegments.find(candidate => candidate.id === part.id);
       if (segment) {
@@ -139,6 +145,20 @@ export function refreshAirframeSilhouette(parts: Part[], wingspan: number, lengt
     }
     if (/^(left|right)_wing(_tip)?$/.test(part.id)) {
       const side = part.side ?? 1;
+      if (fighter) {
+        const ribs = fighter.readings.plan.map(([sheetX, leftFore, leftAft, rightFore, rightAft]) => ({
+          x: side * (250 - sheetX) * fighterUnit,
+          fore: fighterStationZ(fighter, (leftFore + rightFore) / 2 - 14),
+          aft: fighterStationZ(fighter, (leftAft + rightAft) / 2 - 14),
+        }));
+        const root = { ...ribs.at(-1)!, x: 0 };
+        ribs.push(root);
+        part.silhouette = [[
+          ...ribs.map(({x, fore}) => ({ x, y: part.y ?? 0, z: fore })),
+          ...ribs.reverse().map(({x, aft}) => ({ x, y: part.y ?? 0, z: aft })),
+        ]];
+        continue;
+      }
       const sideSpan = side < 0 ? sideWingspans?.left ?? wingspan : sideWingspans?.right ?? wingspan;
       const tip = part.id.endsWith("_tip");
       const hasTip = parts.some(({ id }) => id === `${part.id}_tip`);
@@ -153,12 +173,12 @@ export function refreshAirframeSilhouette(parts: Part[], wingspan: number, lengt
         if (geometry?.layout === "flyingWing") base.rootX = 0;
         else if (layer?.rootOffset !== undefined) base.rootX = side * layer.rootOffset;
         const fallbackY = tier === 0 ? -.02 : tier * (profile?.tierGap ?? .8) - .02;
-        const fallbackZ = tier === 0 ? profile?.rootZ ?? base.z : (profile?.rootZ ?? .12) - tier * .12;
+        const fallbackZ = (earlyWingZ ?? profile?.rootZ ?? base.z) - tier * .12;
         part.silhouette.push(wingSection({
           ...base,
           y: layer?.y ?? fallbackY,
           z: layer?.z ?? fallbackZ,
-          chord: wingLength * (layer?.chord ?? profile?.chord ?? .37) * (tier === 0 ? 1 : .9),
+          chord: wingLength * (layer?.chord ?? profile?.chord ?? (earlyWingZ === undefined ? .37 : .25)) * (tier === 0 ? 1 : .9),
           tipChord: wingLength * (layer?.tipChord ?? profile?.tipChord ?? .16) * (tier === 0 ? 1 : .9),
           sweep: wingLength * (layer?.sweep ?? profile?.sweep ?? .13),
           planform: layer?.planform ?? profile?.planform ?? base.planform,

@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { riverZ, surfaceHeight } from "../simulation/Terrain";
-import { cloudShadowGLSL } from "./Cloudscape";
+import { cloudShadowGLSL } from "./CloudShadowShader";
 import { landscapeLight } from "./ShaderMaterials";
 
 function stoneArch(x: number, z: number, span: number, rise: number, angle: number, seed: number) {

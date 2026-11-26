@@ -2,6 +2,7 @@ import type { EraId } from "./aircrafts";
 
 export type TargetLayer = "air" | "ground" | "water";
 export interface WeaponConfig {
+  effectId?: string;
   eras?: EraId[];
   targetLayers?: TargetLayer[];
   armorPierce?: number;

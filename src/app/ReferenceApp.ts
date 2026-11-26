@@ -1,6 +1,7 @@
 import { addMeshOverlays } from "../content/3d/aircraftMeshOverlay";
-import { Renderer } from "../rendering/Renderer";
-import { aircraftReferencePreview, aircraftReviewPlate, resolveAircraftModel } from "../content/3d/aircraftModels";
+import { PrototypePreview } from "../rendering/PrototypePreview";
+import { aircraftOverlayPanels, aircraftReferencePreview, aircraftReviewPlate, resolveAircraftModel } from "../content/3d/aircraftModels";
+import { aircraftEffectPlate } from "../content/3d/aircraftEffectPlate";
 import type { ReferenceAircraft } from "../content/3d/AircraftFactory";
 import { button } from "../content/2d/components";
 import {
@@ -12,7 +13,8 @@ import {
 } from "../content/2d/referenceLab";
 import { World } from "../simulation/World";
 import { AIRFRAMES } from "../data/aircrafts";
-import { DEFAULT_AIRCRAFT_REFERENCE, aircraftReferenceByFrameId, type AircraftReference } from "../data/aircraftReferences";
+import type { AircraftReference } from "../data/aircraftReferences";
+import type { previewAircraftCatalog } from "../content/3d/previewAircraftCatalog";
 
 type ReferenceMode = "outline" | "model";
 
@@ -25,10 +27,11 @@ const fixedViews = {
 } as const;
 
 export class ReferenceApp {
-  private renderer?: Renderer;
+  private renderer?: PrototypePreview;
   private previewWorld?: World;
   private referenceAircraft?: ReferenceAircraft;
-  private reference = DEFAULT_AIRCRAFT_REFERENCE;
+  private reference: AircraftReference;
+  private active = true;
   private mode: ReferenceMode = "outline";
   private highlight = "";
   private orbitYaw = defaultYaw;
@@ -50,8 +53,12 @@ export class ReferenceApp {
   private readonly records: HTMLElement;
   private readonly tabs: Record<ReferenceMode, HTMLButtonElement>;
 
-  constructor(private readonly root: HTMLElement) {
-    root.className = "reference-root";
+  constructor(private readonly root: HTMLElement, reference: AircraftReference,
+    private readonly library: ReturnType<typeof previewAircraftCatalog>,
+    private readonly onSelected: () => void,
+    private readonly onCatalog: (open: boolean) => void,
+  ) {
+    this.reference = reference;
     root.innerHTML = this.shell();
     this.catalog = root.querySelector(".reference-roster")!;
     this.catalogMount = root.querySelector(".reference-catalog-mount")!;
@@ -69,24 +76,15 @@ export class ReferenceApp {
     };
     this.bindEvents();
     this.placeCatalog();
-    const requestedFrame = new URLSearchParams(location.search).get("frame");
-    const requested = requestedFrame ? aircraftReferenceByFrameId(requestedFrame) : undefined;
-    this.mountReference(requested ?? DEFAULT_AIRCRAFT_REFERENCE);
+    this.mountReference(reference);
     this.revealSelected();
   }
 
   private shell() {
     return `
-      <header class="reference-header">
-        <div class="reference-brand"><strong>原型校验台</strong></div>
-        <div class="reference-header-actions">
-          ${button("open-catalog", "机型目录", "reference-back reference-catalog-toggle",
-            'aria-haspopup="dialog" aria-controls="reference-catalog-dialog"')}
-          ${button("back", "返回游戏", "reference-back")}
-        </div>
-      </header>
+      <p class="reference-unmapped" role="status" hidden>当前机型没有对应的原型档案，可保留原选择或另选档案。</p>
       <main class="reference-main">
-        <aside class="reference-catalog-mount">${referenceCatalog()}</aside>
+        <aside class="reference-catalog-mount">${referenceCatalog(this.library.prototypes)}</aside>
         <article class="reference-detail" aria-labelledby="reference-title">
           <div class="reference-heading-host"></div>
           <section class="reference-preview" aria-label="机型预览">
@@ -109,6 +107,39 @@ export class ReferenceApp {
     `;
   }
 
+  get selected() { return this.reference; }
+
+  followSelection(reference: AircraftReference | undefined) {
+    this.root.querySelector<HTMLElement>(".reference-unmapped")!.hidden = !!reference;
+    if (reference && reference !== this.reference) this.mountReference(reference);
+  }
+
+  toggleCatalog() {
+    if (this.drawer.open) this.closeCatalog();
+    else {
+      this.drawer.show();
+      this.onCatalog(true);
+      this.revealSelected();
+      this.catalog.querySelector<HTMLButtonElement>("[aria-current]")?.focus({ preventScroll: true });
+    }
+  }
+
+  private closeCatalog() {
+    if (!this.drawer.open) return;
+    this.drawer.close();
+    this.onCatalog(false);
+  }
+
+  setActive(active: boolean) {
+    this.active = active;
+    if (!active) {
+      this.closeCatalog();
+      this.stopDrawing();
+    } else if (this.mode === "model") {
+      this.startDrawing();
+    }
+  }
+
   private get preview() {
     const { frameId } = this.reference;
     const registration = frameId ? aircraftReferencePreview(frameId) : undefined;
@@ -122,7 +153,8 @@ export class ReferenceApp {
       const input = event.target;
       if (!(input instanceof HTMLInputElement) || !input.matches(".mesh-toggle:checked") || this.outline.querySelector(".trace-mesh")) return;
       const { registration } = this.preview;
-      if (registration && this.reference.study) addMeshOverlays(this.outline, this.reference.study, registration.create());
+      const panels = this.reference.study?.panels ?? aircraftOverlayPanels(this.reference.frameId ?? "");
+      if (registration && panels) addMeshOverlays(this.outline, panels, registration.create());
     }, { signal });
     this.narrow.addEventListener("change", () => this.placeCatalog(), { signal });
     this.records.addEventListener("error", event => {
@@ -135,16 +167,19 @@ export class ReferenceApp {
     this.drawer.addEventListener("click", event => {
       if (event.target !== this.drawer) return;
       const { left, top, right, bottom } = this.drawer.getBoundingClientRect();
-      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) this.drawer.close();
+      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) this.closeCatalog();
     }, { signal });
     this.root.addEventListener("click", event => {
       const target = (event.target as HTMLElement).closest<HTMLButtonElement>("button");
       if (!target) return;
       const { action, frame, highlight, mode, view, wingBay } = target.dataset;
       if (frame) {
-        const reference = aircraftReferenceByFrameId(frame);
-        if (reference && reference !== this.reference) this.mountReference(reference);
-        if (this.drawer.open) this.drawer.close();
+        const reference = this.library.prototype(frame);
+        if (reference) {
+          this.followSelection(reference);
+          this.onSelected();
+        }
+        this.closeCatalog();
       } else if (mode === "outline") {
         this.showMode("outline");
       } else if (mode === "model") {
@@ -167,19 +202,16 @@ export class ReferenceApp {
         this.renderer?.setDisplayView(view);
       } else if (action === "reset-view") {
         this.resetOrbit();
-      } else if (action === "open-catalog") {
-        this.drawer.showModal();
-        this.revealSelected();
-        this.catalog.querySelector<HTMLButtonElement>("[aria-current]")?.focus({ preventScroll: true });
       } else if (action === "close-catalog") {
-        this.drawer.close();
-      } else if (action === "back") {
-        this.dispose();
-        location.href = location.pathname;
+        this.closeCatalog();
       }
     }, { signal });
 
     this.root.addEventListener("keydown", event => {
+      if (event.key === "Escape" && this.drawer.open) {
+        this.closeCatalog();
+        return;
+      }
       if (!(event.target instanceof HTMLButtonElement) || event.target.getAttribute("role") !== "tab") return;
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
@@ -218,7 +250,7 @@ export class ReferenceApp {
     if (this.narrow.matches) {
       this.drawer.append(this.catalog);
     } else {
-      if (this.drawer.open) this.drawer.close();
+      this.closeCatalog();
       this.catalogMount.append(this.catalog);
       this.catalog.scrollTop = scroll;
       this.revealSelected();
@@ -314,7 +346,7 @@ export class ReferenceApp {
       const actor = this.referenceAircraft ?? this.previewWorld?.player;
       if (!actor) return false;
       this.model.hidden = false;
-      this.renderer = new Renderer(this.modelHost);
+      this.renderer = new PrototypePreview(this.modelHost);
       const error = this.renderer.setPlayer(actor);
       if (error) throw new Error(error);
       this.resetOrbit();
@@ -353,6 +385,7 @@ export class ReferenceApp {
     this.records.innerHTML = referenceDetails(this.reference, frame && actor ? {
       length: frame.length, wingspan: frame.wingspan, parts,
     } : undefined);
+    if (actor) this.records.append(aircraftEffectPlate(actor));
     this.updateHighlights();
   }
 
@@ -365,11 +398,11 @@ export class ReferenceApp {
   }
 
   private startDrawing() {
-    if (this.animation !== undefined) return;
+    if (this.animation !== undefined || !this.active) return;
     const draw = (time: number) => {
       const dt = this.previous ? Math.min(0.05, (time - this.previous) / 1000) : 0.016;
       this.previous = time;
-      this.renderer?.render(this.previewWorld, dt, { display: true, showroom: true, highlight: this.highlight });
+      this.renderer?.draw(dt, this.highlight);
       this.animation = requestAnimationFrame(draw);
     };
     this.animation = requestAnimationFrame(draw);

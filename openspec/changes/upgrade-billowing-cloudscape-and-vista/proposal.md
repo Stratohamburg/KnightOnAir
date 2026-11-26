@@ -21,13 +21,17 @@
 
 ### Modified Capabilities
 
-- `volumetric-cloud-rendering`: 定义俯视角晴天多云的分组巨型云墙结构、三维原地翻涌与有界轻微局部偏移、风场整体移动约束、单步太阳导数自阴影与空域零 3D 采样性能约束、无切片采样及玩家穿云光雾融合。
+- `rendering/volumetric-cloud-rendering`: 定义俯视角晴天多云的分组巨型云墙结构、三维原地翻涌与有界轻微局部偏移、风场整体移动约束、单步太阳导数自阴影与空域零 3D 采样性能约束、无切片采样及玩家穿云光雾融合。
 - `rendering/terrain-rendering`: 定义俯视角视野内晴天通透地表表现（禁止近中景阴天低谷雾）、明媚丝绒草浪、清透冷蓝云影与闪光水面。
-- `wind-driven-vegetation`: 升级树木树冠为低面数柔和蓬松绘本球簇与连续受光过渡，同时保持既有风场摆动、贴地与低三角面预算。
+- `rendering/wind-driven-vegetation`: 升级树木树冠为低面数柔和蓬松绘本球簇与连续受光过渡，同时保持既有风场摆动、贴地与低三角面预算。
 
 ## Impact
 
-- 规则文档：`docs/IMPLEMENTATION_0_4_TERRAIN_CLOUD.md`、`docs/systems/06-procedural-3d.md`、`docs/README.md`（已落地俯视角云野视觉原则与性能红线）。
+- 规则文档：`docs/RENDERING_GUIDE.md`、`docs/README.md`（已落地俯视角云野视觉原则与性能红线）。
 - 渲染与配置代码：`src/rendering/Cloudscape.ts`、`src/rendering/CloudscapeLayout.ts`、`src/rendering/CloudFlow.ts`、`src/rendering/ShaderMaterials.ts`、`src/rendering/VegetationField.ts`、`src/rendering/Renderer.ts`、`src/content/3d/AircraftFactory.ts`、`src/data/config.ts`、`src/data/eras.ts`。
 - 测试与验收：`tests/cloudscape.test.ts`、`tests/controls.test.ts`、`tests/vegetation.test.ts` 及 `src/rendering/EnvironmentAcceptance.ts`。
 - 不修改 `src/simulation` 的固定步进飞行、地形高度采样、路线与命中判定规则，不引入外部贴图或模型。
+
+## 路线 B 后续
+
+默认移动端采用融合网格、顶点三维翻涌和有限航迹段驱动的局部云肩形变，以原生分辨率呈现连续云墙。沿用既有云场布局、风场和玩家覆盖层。

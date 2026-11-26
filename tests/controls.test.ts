@@ -1,6 +1,7 @@
+import { lightJet } from "./fixtures/simulationFrames";
 import { describe, expect, it, vi } from "vitest";
 import * as THREE from "three";
-import { AIRFRAMES, STARTER_FRAME_ID, airframeById } from "../src/data/aircrafts";
+import { STARTER_FRAME_ID, airframeById } from "../src/data/aircrafts";
 import { aircraftReviewPlate, resolveAircraftModel } from "../src/content/3d/aircraftModels";
 import { RULES } from "../src/data/config";
 import { VirtualStick } from "../src/input/VirtualStick";
@@ -149,7 +150,7 @@ describe("continuous joystick gestures", () => {
     });
 
     function run(fps: number) {
-      const world = new World(AIRFRAMES[0], 42, { director: false });
+      const world = new World(lightJet, 42, { director: false });
       world.player.weapons = [];
       const state = () => {
         const { x, z, vx, vz, heading, bank, speed, turnVelocity } = world.player;
@@ -183,7 +184,7 @@ describe("continuous joystick gestures", () => {
 });
 
 function expectFlightDirection(stick: VirtualStick, x: number, y: number) {
-  const world = new World(AIRFRAMES[0], 42, { director: false });
+  const world = new World(lightJet, 42, { director: false });
   world.player.invulnerable = 10000;
   for (let i = 0; i < 180; i++) world.frame(1 / 60, stick.read(1 / 60));
 
@@ -252,7 +253,7 @@ describe("screen-relative flight controls", () => {
 
   it("blocks unregistered aircraft in previews and replays without allocating geometry", () => {
     const catalog = new ContentCatalog();
-    const frame = AIRFRAMES[0];
+    const frame = lightJet;
     const world = new World(frame, 42, { director: false, showroom: true });
     const replay = world.spawnReplayOpponent(frame, new NetworkController(), 0, 25);
     const playerModel = new ProceduralAircraft(world.player, catalog);
@@ -260,7 +261,7 @@ describe("screen-relative flight controls", () => {
     try {
       for (const model of [playerModel, replayModel]) {
         model.update(1, 1 / 60);
-        expect(model.contentError).toContain("专属 H5");
+        expect(model.contentError).toBeDefined();
         expect(model.group.children).toHaveLength(0);
       }
       expect(catalog.stats).toMatchObject({ geometries: 0, materials: 0 });

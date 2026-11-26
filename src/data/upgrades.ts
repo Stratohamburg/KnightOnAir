@@ -1,4 +1,6 @@
 import type { Slot, Stats } from "../simulation/types";
+import type { Airframe } from "./aircrafts";
+import { WEAPONS } from "./weapons";
 export interface PartRecipe {
   kind: string;
   slot: Slot;
@@ -16,6 +18,10 @@ export interface Upgrade {
   description: string;
   benefit: string;
   cost: string;
+  price?: number;
+  stackLimit?: number;
+  structureLength?: number;
+  capacityContribution?: number;
   preview: string;
   add?: Partial<Stats>;
   multiply?: Partial<Stats>;
@@ -23,9 +29,18 @@ export interface Upgrade {
   weapons?: string[];
   conflicts?: string[];
   requires?: string[];
-  max?: number;
-  repeatable?: boolean;
+  unique?: boolean;
 }
+const DEFAULT_UPGRADE_PRICES: Record<Upgrade["rarity"], number> = {
+  common: 4,
+  rare: 8,
+  epic: 12,
+};
+
+export function upgradePrice(upgrade: Upgrade): number {
+  return upgrade.price ?? DEFAULT_UPGRADE_PRICES[upgrade.rarity];
+}
+
 const engine = (slot: Slot): PartRecipe => ({
   kind: "engine",
   slot,
@@ -44,7 +59,6 @@ export const UPGRADES: Upgrade[] = [
     preview: "top",
     parts: [],
     multiply: { fireRate: 1.15 },
-    repeatable: true,
   },
   {
     id: "twin_mount",
@@ -56,8 +70,7 @@ export const UPGRADES: Upgrade[] = [
     cost: "占用同一枪位 · 枪座损伤同步",
     preview: "nose",
     parts: [],
-    max: 1,
-    repeatable: true,
+    unique: true,
   },
   {
     id: "radiator",
@@ -70,8 +83,6 @@ export const UPGRADES: Upgrade[] = [
     preview: "center",
     multiply: { energyDrain: 0.8 },
     parts: [{ kind: "cooler", slot: "center", health: 22, weight: 4 }],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "cooling_loop",
@@ -84,8 +95,6 @@ export const UPGRADES: Upgrade[] = [
     preview: "tail",
     multiply: { energyRecover: 1.3 },
     parts: [{ kind: "cooler", slot: "tail", health: 20, weight: 4 }],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "stable_bomb_rack",
@@ -99,8 +108,6 @@ export const UPGRADES: Upgrade[] = [
     multiply: { bombSettle: 1.2 },
     parts: [{ kind: "bombBay", slot: "bottom", health: 20, weight: 4 }],
     requires: ["bomb_bay"],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "turret_fast_traverse",
@@ -114,11 +121,12 @@ export const UPGRADES: Upgrade[] = [
     multiply: { turnRate: 1 },
     parts: [],
     requires: ["top_turret"],
-    max: 1,
-    repeatable: true,
+    unique: true,
   },
   {
     id: "left_wing_segment",
+    structureLength: .7,
+    capacityContribution: 1,
     name: "左翼延长机枪段",
     rarity: "rare",
     tag: "结构",
@@ -129,11 +137,11 @@ export const UPGRADES: Upgrade[] = [
     multiply: { leftTurn: 0.96, rightTurn: 1.02 },
     parts: [{ kind: "wing", slot: "leftWing", health: 24, weight: 7 }],
     weapons: ["light_cannon"],
-    repeatable: true,
-    max: 2,
   },
   {
     id: "right_wing_segment",
+    structureLength: .7,
+    capacityContribution: 1,
     name: "右翼延长机枪段",
     rarity: "rare",
     tag: "结构",
@@ -144,11 +152,11 @@ export const UPGRADES: Upgrade[] = [
     multiply: { rightTurn: 0.96, leftTurn: 1.02 },
     parts: [{ kind: "wing", slot: "rightWing", health: 24, weight: 7 }],
     weapons: ["light_cannon"],
-    repeatable: true,
-    max: 2,
   },
   {
     id: "tail_side_bay",
+    structureLength: .7,
+    capacityContribution: 1,
     name: "尾段侧射舱",
     rarity: "rare",
     tag: "结构",
@@ -156,15 +164,13 @@ export const UPGRADES: Upgrade[] = [
     benefit: "新增侧向枪位 · 尾翼后移",
     cost: "机长和尾部受弹面积增加",
     preview: "tail",
-    add: { length: 0.7 },
     multiply: { acceleration: 0.97 },
     parts: [{ kind: "tailGun", slot: "tail", health: 26, weight: 8 }],
     weapons: ["light_cannon"],
-    repeatable: true,
-    max: 2,
   },
   {
     id: "serial_bomb_bay",
+    structureLength: .7,
     name: "串列弹舱",
     rarity: "rare",
     tag: "轰炸",
@@ -172,14 +178,12 @@ export const UPGRADES: Upgrade[] = [
     benefit: "新增连续投放舱段",
     cost: "机身加长 · 投放阶段增加",
     preview: "bottom",
-    add: { length: 0.9 },
     parts: [{ kind: "bombBay", slot: "bottom", health: 26, weight: 6 }],
     requires: ["bomb_bay"],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "float_pylon",
+    capacityContribution: 1,
     name: "浮筒外托架",
     rarity: "rare",
     tag: "结构",
@@ -189,11 +193,10 @@ export const UPGRADES: Upgrade[] = [
     preview: "leftWing",
     parts: [{ kind: "wing", slot: "leftWing", health: 22, weight: 5 }],
     weapons: ["light_cannon"],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "airship_gun_gallery",
+    capacityContribution: 1,
     name: "飞艇舷侧炮廊",
     rarity: "rare",
     tag: "火力",
@@ -203,11 +206,10 @@ export const UPGRADES: Upgrade[] = [
     preview: "leftWing",
     parts: [{ kind: "tailGun", slot: "leftWing", health: 30, weight: 10 }],
     weapons: ["light_cannon"],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "wingtip_rail",
+    capacityContribution: 1,
     name: "翼尖发射轨",
     rarity: "rare",
     tag: "火力",
@@ -218,8 +220,6 @@ export const UPGRADES: Upgrade[] = [
     parts: [{ kind: "rocket", slot: "rightWing", health: 20, weight: 4 }],
     weapons: ["rocket_pod"],
     requires: ["nose_radar"],
-    max: 1,
-    repeatable: true,
   },
   {
     id: "right_engine",
@@ -275,6 +275,7 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     id: "nose_radar",
+    unique: true,
     name: "机头锁定雷达",
     rarity: "common",
     tag: "锁定",
@@ -373,6 +374,7 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     id: "giant_wing",
+    capacityContribution: 2,
     name: "巨型外挂翼",
     rarity: "rare",
     tag: "结构",
@@ -472,6 +474,7 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     id: "modular_frame",
+    capacityContribution: 3,
     name: "模块化机架",
     rarity: "epic",
     tag: "结构",
@@ -498,6 +501,7 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     id: "napalm",
+    unique: true,
     name: "凝固汽油弹舱",
     rarity: "rare",
     tag: "轰炸",
@@ -518,7 +522,6 @@ export const UPGRADES: Upgrade[] = [
     preview: "top",
     multiply: { damage: 1.12, turnRate: 0.98 },
     parts: [{ kind: "ammo", slot: "top", health: 20 }],
-    repeatable: true,
   },
   {
     id: "cooler",
@@ -532,7 +535,6 @@ export const UPGRADES: Upgrade[] = [
     add: { energyMax: 10 },
     multiply: { energyRecover: 1.15 },
     parts: [{ kind: "cooler", slot: "center", health: 22 }],
-    repeatable: true,
   },
   {
     id: "armor_belt",
@@ -546,7 +548,6 @@ export const UPGRADES: Upgrade[] = [
     add: { health: 12 },
     multiply: { turnRate: 0.99 },
     parts: [],
-    repeatable: true,
   },
 ];
 const ho229Bays = (["left", "right"] as const).flatMap((hand): Upgrade[] => {
@@ -556,19 +557,24 @@ const ho229Bays = (["left", "right"] as const).flatMap((hand): Upgrade[] => {
   return [
     { id: "ho229_" + hand + "_engine", name: label + "翼根发动机段", rarity: "common", tag: "动力",
       description: "在中央翼段与" + label + "主翼之间接入一段带单台喷气发动机的翼根。", benefit: "发动机 +1 · 加速度 +16% · 极速 +0.8",
-      cost: "同侧翼展增加 · 能耗 +8%", preview: slot, repeatable: true,
+      cost: "同侧翼展增加 · 能耗 +8%", preview: slot,
       wingBay: { insertion: "root-before", width: 1.05 }, parts: [spar, engine(slot)],
       add: { maxSpeed: .8 }, multiply: { acceleration: 1.16, energyDrain: 1.08 } },
     { id: "ho229_" + hand + "_cannon", name: label + "外翼机炮段", rarity: "common", tag: "火力",
       description: "在" + label + "主翼与翼尖之间接入一段带单门前射机炮的翼段。", benefit: "新增一门独立航空机炮",
-      cost: "同侧翼展增加 · 占用武器挂点", preview: slot, repeatable: true,
-      wingBay: { insertion: "tip-before", width: .58 }, parts: [spar, { kind: "cannon", slot, health: 22, weight: 4 }],
+      cost: "同侧翼展增加 · 占用武器挂点", preview: slot,
+      wingBay: { insertion: "tip-before", width: .58 }, capacityContribution: 1, parts: [spar, { kind: "cannon", slot, health: 22, weight: 4 }],
       weapons: ["ww2_autocannon"] },
   ];
 });
 export const HO229_UPGRADES = [...ho229Bays,
   ...UPGRADES.filter(u => ["quick_feed", "low_drag", "armor_belt"].includes(u.id))];
 export const upgradeById = (id: string) => UPGRADES.find(u => u.id === id) ?? ho229Bays.find(u => u.id === id);
+
+export const refitStructureLength = (upgrade: Upgrade, geometryProfile?: string) =>
+  geometryProfile === "fokkerDr1" && (upgrade.id === "left_wing_segment" || upgrade.id === "right_wing_segment")
+    ? 1
+    : upgrade.structureLength;
 
 export const FOKKER_REFIT_IDS = [
   "quick_feed", "left_wing_segment", "right_wing_segment",
@@ -591,3 +597,43 @@ export const FOKKER_UPGRADES = UPGRADES
       };
     return upgrade;
   });
+
+const positiveInteger = (value: number) => Number.isSafeInteger(value) && value > 0;
+const positiveLength = (value: number) => Number.isFinite(value) && value > 0;
+
+export function validateUpgrade(upgrade: Upgrade): string[] {
+  const errors: string[] = [];
+  if (!/^[a-z][a-z0-9_]*$/.test(upgrade.id)) errors.push("invalid upgrade ID");
+  if (!positiveInteger(upgradePrice(upgrade))) errors.push("invalid upgrade price");
+  if (upgrade.stackLimit !== undefined && (!positiveInteger(upgrade.stackLimit) || upgrade.unique))
+    errors.push("invalid upgrade stack limit");
+  if (upgrade.structureLength !== undefined && (!positiveLength(upgrade.structureLength) || !upgrade.parts.length))
+    errors.push("invalid structure length");
+  if (upgrade.wingBay && (!positiveLength(upgrade.wingBay.width) || !upgrade.parts.length))
+    errors.push("invalid wing bay length");
+  if (upgrade.capacityContribution !== undefined && (!positiveInteger(upgrade.capacityContribution) || !upgrade.parts.length))
+    errors.push("invalid weapon capacity contribution");
+  for (const id of [...upgrade.requires ?? [], ...upgrade.conflicts ?? []])
+    if (id === upgrade.id || !upgradeById(id)) errors.push("invalid dependency " + id);
+  for (const id of upgrade.weapons ?? [])
+    if (!Object.hasOwn(WEAPONS, id)) errors.push("unknown weapon " + id);
+  return errors;
+}
+
+export function upgradeConfigDiagnostics(frames: readonly Airframe[]) {
+  const diagnostics: { id: string; errors: string[] }[] = [];
+  for (const upgrade of [...UPGRADES, ...ho229Bays, ...FOKKER_UPGRADES]) {
+    const errors = validateUpgrade(upgrade);
+    if (errors.length) diagnostics.push({ id: upgrade.id, errors });
+  }
+  for (const frame of frames) {
+    const errors: string[] = [];
+    for (const [id, limit] of Object.entries(frame.upgradeStackLimits ?? {})) {
+      const upgrade = upgradeById(id);
+      if (!upgrade || upgrade.unique || !positiveInteger(limit))
+        errors.push("invalid stack limit for " + id);
+    }
+    if (errors.length) diagnostics.push({ id: frame.id, errors });
+  }
+  return diagnostics;
+}

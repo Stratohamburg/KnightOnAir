@@ -1,3 +1,9 @@
+export const fighterUnit = .025;
+export const fighterSpan = 460 * fighterUnit;
+
+export const fighterStationZ = (sheet: FighterSheet, station: number) =>
+  (sheet.assembly.length / 2 - station) * fighterUnit;
+
 export type BodyRing = [station: number, halfWidth: number, deck: number, belly: number];
 export type SurfaceRib = [span: number, fore: number, aft: number, upper: number, lower: number];
 export type FighterView = "front" | "side" | "plan";

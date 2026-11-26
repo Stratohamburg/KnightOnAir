@@ -27,7 +27,12 @@
 
 ### Requirement: Part attribution is separate from collision truth
 
-整机碰撞体 MUST 覆盖飞机的可见轮廓。部件碰撞体 MUST 只负责命中归因和局部损坏。禁用但仍附着的部件 MUST 保留其外形覆盖和命中归因，已脱落区域 MUST 随当前构型更新。
+整机碰撞体 MUST 覆盖机型配置中可独立承伤的大件轮廓，例如机身、翼段、尾翼、发动机和成套大型功能模块。张线、操纵索、细撑杆及连接件 MUST 作为所属大件的模型细节，排除在独立生命、碰撞覆盖和伤害分摊之外。部件碰撞体 MUST 只负责命中归因和局部损坏。禁用但仍附着的部件 MUST 保留其外形覆盖和命中归因，已脱落区域 MUST 随当前构型更新。
+
+#### Scenario: Shot crosses exposed rigging
+
+- **WHEN** 弹道穿过双翼间的张线，仅经过大件轮廓之间的空隙
+- **THEN** 该机此次没有受击或破洞。若弹道随后进入机翼轮廓，则在机翼接触位置结算命中
 
 #### Scenario: Hit disabled right wing
 

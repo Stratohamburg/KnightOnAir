@@ -11,7 +11,7 @@ export const linen = "#e8d2a0",
   cable = "#42484b",
   iron = "#59616a";
 export const sides = [-1, 1] as const;
-export const wingId = (side: number) => (side < 0 ? "left_wing" : "right_wing");
+export const wingId = (side: number) => (side > 0 ? "left_wing" : "right_wing");
 
 function loft(rings: Point3[][]) {
   const vertices = rings.flat();
@@ -46,7 +46,35 @@ function loft(rings: Point3[][]) {
 type Batch = { part: string; finish: string; group: string; shapes: (() => THREE.BufferGeometry)[] };
 export class PioneerAssembly {
   private batches = new Map<string, Batch>();
+  private skinGroups = new Set<string>();
+  private counts = new Map<string, number>();
+  private sheets = new Map<string, THREE.Group>();
   constructor(private ctx: AircraftModelContext) {}
+
+  private sheet(part: string) {
+    const owner = this.ctx.actor.parts.find(candidate => candidate.id === part)!;
+    const { root, material } = this.ctx.partRoot(owner);
+    let sheet = this.sheets.get(part);
+    if (!sheet) {
+      root.position.set(owner.x, owner.y ?? 0, owner.z);
+      sheet = new THREE.Group();
+      // Sheet x is positive to starboard, which points toward scene -X.
+      sheet.scale.x = -1;
+      sheet.position.copy(root.position).negate();
+      root.add(sheet);
+      this.sheets.set(part, sheet);
+    }
+    return { owner, material, sheet };
+  }
+
+  private mark(part: string, group: string, kind: "wingTip" | "tailTip" | "wingFlow" | "protrusion", p: Point3, end?: Point3, halfSpan?: Point3) {
+    const { sheet } = this.sheet(part);
+    const key = [part, group, kind].join("/");
+    const index = this.counts.get(key) ?? 0;
+    this.counts.set(key, index + 1);
+    this.ctx.effectSites.add(part, group + "-" + kind + "-" + index, kind, sheet, p,
+      end ? { end, halfSpan } : {});
+  }
 
   private add(part: string, group: string, finish: string, shape: () => THREE.BufferGeometry) {
     const key = [part, group, finish].join("/");
@@ -55,14 +83,8 @@ export class PioneerAssembly {
     batch.shapes.push(shape);
   }
   finish() {
-    // Sheet x is positive to starboard. In a right-handed Three.js scene
-    // with nose +Z and up +Y, starboard points toward scene -X.
-    const center = this.ctx.actor.parts.find((part) => part.id === "center_body")!;
-    this.ctx.partRoot(center).root.parent!.scale.x = -1;
     for (const [key, { part, finish, group, shapes }] of this.batches) {
-      const owner = this.ctx.actor.parts.find((p) => p.id === part)!;
-      const { root, material } = this.ctx.partRoot(owner);
-      root.position.set(owner.x, owner.y ?? 0, owner.z);
+      const { owner, sheet, material } = this.sheet(part);
       const geometry = this.ctx.geometry(this.ctx.frame.id + "/" + key, () => {
         const pieces = shapes.map((create) => {
           let piece = create();
@@ -78,17 +100,18 @@ export class PioneerAssembly {
         pieces.forEach((piece) => piece.dispose());
         return merged;
       });
-      this.ctx.mesh(
+      const mesh = this.ctx.mesh(
         geometry,
         finish === linen ? material : this.ctx.partPaint(owner, finish),
-        root,
-        -owner.x,
-        -(owner.y ?? 0),
-        -owner.z,
-      ).name = group;
+        sheet,
+      );
+      mesh.name = group;
+      if (this.skinGroups.has(key) || ["crankcase", "engine-block", "hull", "engine"].includes(group))
+        this.ctx.effectSites.surfaces.push({ partId: part, mesh });
     }
   }
   rod(part: string, a: Point3, b: Point3, radius = 0.037, finish = wood, group = "struts") {
+    if (group === "outer-post") this.mark(part, group, "protrusion", a[1] > b[1] ? a : b);
     this.add(part, group, finish, () => {
       const start = new THREE.Vector3(...a),
         end = new THREE.Vector3(...b);
@@ -109,6 +132,9 @@ export class PioneerAssembly {
   ball(part: string, center: Point3, radii: Point3, finish: string, group: string) {
     this.add(part, group, finish, () => new THREE.SphereGeometry(1, 14, 10).scale(...radii).translate(...center));
   }
+  protrusion(part: string, name: string, point: Point3) {
+    this.mark(part, name, "protrusion", point);
+  }
   wing(
     part: string,
     side: number,
@@ -118,6 +144,23 @@ export class PioneerAssembly {
     incidence = 0.045,
     thickness = 0.023,
   ) {
+    this.skinGroups.add([part, group, linen].join("/"));
+    const [span, fore, aft, height] = ribs.reduce((outer, rib) => rib[0] > outer[0] ? rib : outer);
+    const tip: Point3 = [side*span, height-(fore-aft)*incidence, aft];
+    this.mark(part, group, part === "tail" || part === "nose" ? "tailTip" : group === "outer-cell-aileron" ? "protrusion" : "wingTip", tip);
+    const atSpan = (fraction: number) => {
+      const x = ribs[0][0] + (span-ribs[0][0])*fraction;
+      const end = ribs.findIndex(rib => rib[0] >= x);
+      const a = ribs[Math.max(0,end-1)], b = ribs[end];
+      const t = (x-a[0]) / (b[0]-a[0] || 1);
+      const fore = THREE.MathUtils.lerp(a[1],b[1],t), aft = THREE.MathUtils.lerp(a[2],b[2],t);
+      const y = THREE.MathUtils.lerp(a[3],b[3],t);
+      return {front:new THREE.Vector3(side*x,y,fore), rear:new THREE.Vector3(side*x,y-(fore-aft)*incidence,aft)};
+    };
+    const inner = atSpan(.18), outer = atSpan(.82);
+    const halfSpan = outer.rear.clone().sub(inner.rear).multiplyScalar(.5);
+    this.mark(part,group,"wingFlow",inner.front.lerp(outer.front,.5).toArray(),
+      inner.rear.lerp(outer.rear,.5).toArray(),halfSpan.toArray());
     const profile = [
       [0, 0],
       [0.12, 0.63],
@@ -148,6 +191,9 @@ export class PioneerAssembly {
     );
   }
   fin(part: string, x: number, outline: [z: number, y: number][], group = "rudder", depth = 0.04) {
+    this.skinGroups.add([part, group, linen].join("/"));
+    const [z, y] = outline.reduce((top, p) => p[1] > top[1] || (p[1] === top[1] && p[0] < top[0]) ? p : top);
+    this.mark(part, group, "protrusion", [x, y, z]);
     this.add(part, group, linen, () =>
       loft(sides.map((side) => outline.map(([z, y]) => [x + (side * depth) / 2, y, z]))),
     );
@@ -227,9 +273,7 @@ export class PioneerAssembly {
     this.rod(part, [-x, y, z], [x, y, z], 0.032, iron, "axle");
   }
   prop(part: string, hub: Point3, r: number, angle = 0.55, direction = 1) {
-    const owner = this.ctx.actor.parts.find((p) => p.id === part)!;
-    const { root } = this.ctx.partRoot(owner);
-    root.position.set(owner.x, owner.y ?? 0, owner.z);
+    const { owner, sheet } = this.sheet(part);
     const geometry = this.ctx.geometry("pioneer/propeller", () =>
       loft(
         [
@@ -252,10 +296,8 @@ export class PioneerAssembly {
     const blade = this.ctx.mesh(
       geometry,
       this.ctx.partPaint(owner, wood),
-      root,
-      hub[0] - owner.x,
-      hub[1] - (owner.y ?? 0),
-      hub[2] - owner.z,
+      sheet,
+      ...hub,
     );
     blade.name = "propeller";
     blade.scale.setScalar(r);
@@ -279,6 +321,7 @@ export class PioneerAssembly {
         const a: Point3 = [side * low, bottom, z],
           b: Point3 = [side * high, top, z + stagger];
         this.rod(part, a, b);
+        this.mark(part, "interplane-post", "protrusion", b);
         if (prev) {
           this.wire(part, prev[0], b);
           this.wire(part, prev[1], a);

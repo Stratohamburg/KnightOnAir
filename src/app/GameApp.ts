@@ -1,9 +1,15 @@
-import { AIRFRAMES, STARTER_FRAME_ID, airframeById, eraOf, type EraId } from "../data/aircrafts";
+import { AIRFRAMES, airframeById, eraOf, type EraId } from "../data/aircrafts";
 import { ERAS } from "../data/eras";
+import { AIRCRAFT_LIVERIES, DR1_LIVERY_IDS } from "../data/aircraftLiveries";
+import { CAMPAIGN_MISSIONS, campaignMissionById, missionIsUnlocked, nextCampaignMission, type CampaignMission } from "../data/campaignMissions";
+import { DAY_PERIODS, WEATHER_PRESETS } from "../data/sortieEnvironment";
+import { WEAPONS } from "../data/weapons";
+import { resolveMissionFrame, validateCampaignMissions } from "../simulation/MissionValidation";
 import { combatantById } from "../data/combatants";
 import { QUALITIES, RULES, type Quality } from "../data/config";
 import { World, requiredXp } from "../simulation/World";
 import { Renderer } from "../rendering/Renderer";
+import { upgradeInstallSeconds } from "../rendering/UpgradeAircraft";
 import { cloudDiagnostics } from "../rendering/RenderDiagnostics";
 import { SaveStore } from "../services/Save";
 import { GameAudio } from "../services/Audio";
@@ -37,14 +43,16 @@ import {
   renderResultPage,
   renderSettingsModal,
   renderUpgradeModal,
+  updateUpgradeSelection,
 } from "../content/2d/ModalViews";
 import type { ThreatView } from "../content/2d/combatHints";
 import { resolveAircraftModel } from "../content/3d/aircraftModels";
+import { debugVisible } from "./debugVisibility";
 
 type Modal = "" | "settings" | "help" | "pause" | "upgrade" | "showroomAircraft" | "mission";
-const missionEras = Object.keys(ERAS) as EraId[];
 
 export class GameApp {
+  private readonly showDebug = debugVisible(location.search, import.meta.env.DEV);
   readonly save = new SaveStore();
   readonly audio = new GameAudio();
   readonly stick = new VirtualStick();
@@ -53,11 +61,15 @@ export class GameApp {
   private displayWorld: World;
   private showroom?: World;
   private showroomBuild: string[] = [];
+  private showroomLiveryIndex = 0;
   private showroomPointer?: { id: number; x: number; y: number };
   private showroomOrbitYaw = 0;
   private showroomOrbitPitch = 0.14;
   private tab: MetaTab = "sortie";
-  private sortieEra: EraId = "pioneer";
+  private selectedMission: CampaignMission | undefined = CAMPAIGN_MISSIONS[0];
+  private patrolEra: EraId = "pioneer";
+  private readonly missionDiagnostics = validateCampaignMissions(CAMPAIGN_MISSIONS);
+  private sortieSeed?: number;
   private preview = 0;
   private highlight = "";
   private screen: "meta" | "launching" | "battle" | "result" = "meta";
@@ -66,6 +78,7 @@ export class GameApp {
   private launchTime = 0;
   private previous = 0;
   private hudTimer = 0;
+  private upgradeInstallTime = 0;
   private lastLock = 0;
   private ui: HTMLElement;
   private overlays: HTMLElement;
@@ -93,9 +106,13 @@ export class GameApp {
       this.renderer.setQuality(this.save.data.quality);
       this.renderer.setPlayer(this.displayWorld.player);
       if (import.meta.env.DEV) {
+        const app = this;
         Object.assign(window, {
           __koa: {
             renderer: this.renderer,
+            get world() {
+              return app.world;
+            },
             get cloud() {
               return cloudDiagnostics.get(this.renderer);
             },
@@ -129,7 +146,6 @@ export class GameApp {
       this.stick.reset();
       this.renderer?.resize();
     });
-    window.addEventListener("pagehide", () => this.save.persist());
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         this.stick.reset();
@@ -146,13 +162,13 @@ export class GameApp {
 
   private route(value: string) {
     const valid = META_TABS.find((t) => t.id === (value === "reservedB" ? "showroom" : value));
-    this.tab = valid?.id ?? "sortie";
+    this.tab = valid?.id === "showroom" && !this.showDebug ? "sortie" : valid?.id ?? "sortie";
     this.preview = AIRFRAMES.findIndex((f) => f.id === this.save.data.equipped);
     this.showMeta();
   }
 
   private setTab(tab: MetaTab) {
-    if (this.screen !== "meta") return;
+    if (this.screen !== "meta" || (tab === "showroom" && !this.showDebug)) return;
     if (tab !== "showroom" && this.showroom) {
       this.showroom.dispose();
       this.showroom = undefined;
@@ -203,20 +219,27 @@ export class GameApp {
       .classList.toggle("equipment-view", this.tab === "equipment");
 
     const modelError = resolveAircraftModel(frame).error;
-    const mission = ERAS[this.sortieEra];
-    const missionNumber = String(missionEras.indexOf(this.sortieEra) + 1).padStart(2, "0");
+    const mission = this.selectedMission;
+    const era = ERAS[this.sortieEra];
 
     let body = "";
     if (this.tab === "sortie") {
+      const launchError = this.launchError ?? modelError;
       body = renderSortieBody({
         frame,
         sortieEra: this.sortieEra,
-        missionNumber,
-        missionName: mission.mission,
-        eraLabel: mission.label,
-        bestScore: this.save.data.bestScore,
-        canLaunch: Boolean(this.renderer && !modelError),
-        modelError,
+        missionNumber: mission ? String(mission.order).padStart(2, "0") : "",
+        missionName: mission?.name ?? era.mission,
+        eraLabel: era.label,
+        briefing: mission && {
+          objective: `${mission.stages.find(({ id }) => id === mission.firstStage)?.action} · ${mission.briefing}`,
+          equipment: mission.loadout.weaponId ? WEAPONS[mission.loadout.weaponId]?.name ?? mission.loadout.weaponId : "",
+          environment: `${WEATHER_PRESETS[mission.environment.weather]?.label} · ${DAY_PERIODS[mission.environment.period]?.label}`,
+          preset: Boolean(mission.loadout.frameId),
+        },
+        bestScore: mission ? this.save.data.missionBestScores[mission.id] ?? 0 : this.save.data.bestScore,
+        canLaunch: Boolean(this.renderer && !launchError),
+        modelError: launchError,
       });
     } else if (this.tab === "equipment") {
       body = renderEquipmentBody({
@@ -232,21 +255,32 @@ export class GameApp {
         world: this.showroom,
         build: this.showroomBuild,
         modelError,
+        liveryId: this.showroom?.player.frame.liveryId,
+        liveryIndex: this.showroomLiveryIndex,
+        liveryCount: frame.geometryProfile === "fokkerDr1" ? DR1_LIVERY_IDS.length : 0,
       });
     } else {
       body = renderPlaceholderBody(this.tab);
     }
 
-    this.ui.innerHTML = `${renderTopBar(this.save.playerLevel, this.save.data.currency)}${body}${renderBottomNav(this.tab)}`;
+    this.ui.innerHTML = `${renderTopBar(this.save.playerLevel, this.save.data.currency)}${body}${renderBottomNav(this.tab, this.showDebug)}`;
     if (this.tab === "equipment") {
       this.ui.querySelector(".roster-chip.active")?.scrollIntoView({ inline: "nearest", block: "nearest" });
     }
   }
 
   private rebuildShowroom(frameId = AIRFRAMES[this.preview]?.id, build = this.showroomBuild) {
-    const frame = frameId
+    const baseFrame = frameId
       ? airframeById(frameId)
       : this.showroom?.player.frame ?? airframeById(this.save.data.equipped);
+    if (baseFrame.geometryProfile !== "fokkerDr1") this.showroomLiveryIndex = 0;
+    const liveryId = baseFrame.geometryProfile === "fokkerDr1"
+      ? DR1_LIVERY_IDS[this.showroomLiveryIndex % DR1_LIVERY_IDS.length]
+      : baseFrame.liveryId;
+    const selectedLivery = liveryId ? AIRCRAFT_LIVERIES[liveryId] : undefined;
+    const frame = selectedLivery
+      ? { ...baseFrame, liveryId, color: selectedLivery.primary, accent: selectedLivery.trim }
+      : baseFrame;
     this.showroom?.dispose();
     this.showroomBuild = [...build];
     this.showroom = new World(frame, 1, { director: false, supply: false, showroom: true });
@@ -304,12 +338,25 @@ export class GameApp {
     if (this.showroomPointer?.id === e.pointerId) this.showroomPointer = undefined;
   }
 
+  private get sortieEra() { return this.selectedMission?.era ?? this.patrolEra; }
+
   private get sortieFrame() {
-    return airframeById(this.sortieEra === "pioneer" ? STARTER_FRAME_ID : this.save.data.equipped);
+    return airframeById(this.selectedMission?.loadout.frameId ?? this.save.data.equipped);
   }
 
-  private launch() {
-    if (this.screen !== "meta" || !this.renderer || resolveAircraftModel(this.sortieFrame).error) return;
+  private get launchError() {
+    if (!this.selectedMission) return undefined;
+    if (this.missionDiagnostics.length) return this.missionDiagnostics[0];
+    try {
+      resolveMissionFrame(this.selectedMission, this.sortieFrame);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  private launch(seed?: number) {
+    if (this.screen !== "meta" || !this.renderer || this.launchError || resolveAircraftModel(this.sortieFrame).error) return;
+    this.sortieSeed = seed;
     this.tab = "sortie";
     this.showMeta();
     this.screen = "launching";
@@ -319,16 +366,18 @@ export class GameApp {
     this.root.classList.add("launching");
     const launchBtn = this.ui.querySelector<HTMLButtonElement>('[data-action="launch"]')!;
     launchBtn.disabled = true;
-    launchBtn.innerHTML = `<span>准备起飞</span><span class="loading-spinner"></span>`;
+    launchBtn.innerHTML = `<span>准备起飞 · ${this.selectedMission?.name ?? ERAS[this.patrolEra].mission}</span><span class="loading-spinner"></span>`;
     this.audio.play("upgrade");
   }
 
   private startBattle() {
     this.screen = "battle";
-    this.world = new World(this.sortieFrame, undefined, { missionEra: this.sortieEra });
+    this.world = new World(this.sortieFrame, this.sortieSeed, { missionEra: this.sortieEra, mission: this.selectedMission });
     if (this.renderer) {
       const renderer = this.renderer;
-      this.world.isSpawnVisible = (x, y, z, radius) => renderer.isSpawnVisible(x, y, z, radius);
+      this.world.isSpawnVisible = this.world.mission
+        ? renderer.missionSpawnVisibility(this.world)
+        : (x, y, z, radius) => renderer.isSpawnVisible(x, y, z, radius);
     }
     this.finished = false;
     this.renderer?.setPlayer(this.world.player);
@@ -337,7 +386,7 @@ export class GameApp {
     this.audio.resetBattle();
     this.lastLock = 0;
     const { mission, label } = ERAS[this.world.era];
-    this.battleStatus = new BattleStatus(this.ui, mission, label);
+    this.battleStatus = new BattleStatus(this.ui, this.world.mission?.mission.name ?? mission, label);
     this.stick.attach(this.ui.querySelector(".stick-surface")!);
     this.stick.enabled = true;
     this.combatHud?.dispose();
@@ -365,6 +414,26 @@ export class GameApp {
       stability: w.stability,
       canBomb: w.canBomb,
     });
+    const mission = w.mission;
+    const active = mission && [...mission.targets.values()].filter(({ actor }) => actor && actor.health > 0);
+    const timeLeft = active?.flatMap((target) => {
+      const deadline = mission?.deadline(target, w.elapsed);
+      return deadline ? [deadline.seconds] : [];
+    });
+    const ally = active?.find(({ config }) => config.friendly);
+    const goal = mission?.stage.goal;
+    const counter = goal ? "" : ` ${mission?.defeated}/${mission?.total}`;
+    const objective = mission ? [
+      `${mission.mission.stages.length > 1 ? `${mission.completedStages + 1}/${mission.mission.stages.length} · ` : ""}${mission.stage.action}${counter}`,
+      timeLeft?.length ? `剩余 ${Math.ceil(Math.min(...timeLeft))}秒` : "",
+      ally?.actor ? `${ally.config.name} ${Math.ceil(100 * ally.actor.health / ally.actor.maxHealth)}%` : "",
+      goal?.type === "escort" && ally?.actor && goal.routeDistance !== undefined && ally.initialRouteDistance !== undefined
+        ? `航程 ${Math.floor(100 * Math.max(0, ((ally.actor.routeDistance ?? 0) - ally.initialRouteDistance) / (goal.routeDistance - ally.initialRouteDistance)))}%`
+        : ally?.motion?.points.length ? `航点 ${ally.waypoint}/${ally.motion.points.length}` : "",
+    ].filter(Boolean).join(" · ") : "";
+    const prompt = mission?.practiced ? "" : mission?.stage.prompt === "gun" ? "机头对准靶球，机枪自动开火"
+      : mission?.stage.prompt === "bomb" ? (bomb.status === "ready" ? "可投弹" : bomb.state)
+      : mission?.stage.prompt === "lock" ? "保持机头指向目标，等待锁定" : "";
 
     this.battleStatus?.update({
       text: {
@@ -390,6 +459,9 @@ export class GameApp {
         "bomb-state": bomb.state,
         "quality-readout": `${QUALITIES[this.save.data.quality].label} ${this.renderer?.fps ?? 0}FPS`,
         "battle-notice": w.notice,
+        "environment-notice": w.environmentNotice,
+        "mission-objective": objective,
+        "mission-prompt": prompt,
       },
       meters: {
         "health-fill": p.health / maxHealth,
@@ -426,6 +498,9 @@ export class GameApp {
       const pos = r.project(e.x, y, e.z);
       const dx = e.x - p.x;
       const dz = e.z - p.z;
+      const candidate = w.mission?.targetFor(e.id);
+      const missionTarget = candidate?.config.support ? undefined : candidate;
+      const urgency = missionTarget && w.mission?.deadline(missionTarget, w.elapsed)?.urgency;
       contacts.push({
         id: e.id,
         x: e.x,
@@ -434,12 +509,17 @@ export class GameApp {
         layer: e.layer,
         distance: Math.hypot(dx, dz),
         bearing: Math.atan2(dx, dz) - p.heading,
+        edgeBearing: pos.bearing,
         firing: e.warning > 0,
         chasing: e.state === "attacking",
         breaking: e.state === "breaking",
         onScreen: pos.visible,
         elite: e.kind === "elite",
         kind: e.kind,
+        missionName: missionTarget?.config.name,
+        friendly: missionTarget?.config.friendly,
+        urgency: urgency ?? (e.warning > 0 && missionTarget?.config.attacks ? .9
+          : missionTarget?.config.friendly ? .4 + .6 * (1 - e.health / e.maxHealth) : 0),
       });
       if (pos.visible) {
         labels.push({
@@ -448,10 +528,36 @@ export class GameApp {
           y: pos.y,
           layer: e.layer,
           health: e.health / e.maxHealth,
-          quality: r.isCloudOccluded(e.x, y, e.z) ? 0.16 : 1,
-          label: `${e.kind === "elite" ? "◆ " : ""}${combatantById(e.configId ?? e.kind)?.name ?? e.kind}`,
+          quality: !missionTarget && r.isCloudOccluded(e.x, y, e.z) ? 0.16 : 1,
+          mission: Boolean(missionTarget),
+          friendly: missionTarget?.config.friendly,
+          label: missionTarget ? `◇ ${missionTarget.config.name}` :
+            `${e.kind === "elite" ? "◆ " : ""}${combatantById(e.configId ?? e.kind)?.name ?? e.kind}`,
         });
       }
+    }
+    const addGuide = (id: number, name: string, x: number, y: number, z: number, friendly = false, pending = false) => {
+      const dx = x - p.x, dz = z - p.z;
+      const point = r.project(x, y, z);
+      const onScreen = !pending && point.visible;
+      contacts.push({ id, x, y, z, layer: "air", distance: Math.hypot(dx, dz),
+        bearing: Math.atan2(dx, dz) - p.heading, edgeBearing: point.bearing,
+        missionName: name, friendly, urgency: pending ? -.5 : -.25, onScreen });
+      if (onScreen) labels.push({ id, x: point.x, y: point.y, label: `◇ ${name}`, quality: 1, health: 0, layer: "air", mission: true, friendly });
+    };
+    let guideId = -1;
+    for (const missionTarget of w.mission?.pending(w.elapsed) ?? []) {
+      const place = missionTarget.config.placement;
+      if (!("bearing" in place)) continue;
+      const bearing = place.bearing + p.heading;
+      addGuide(guideId--, `${missionTarget.config.name} · 入场`, p.x + Math.sin(bearing) * 44,
+        RULES.flightAltitude, p.z + Math.cos(bearing) * 44, false, true);
+    }
+    const goal = w.mission?.stage.goal;
+    if (goal?.type === "escort") {
+      const escort = w.mission?.targets.get(goal.target);
+      const waypoint = escort?.motion?.points[escort.waypoint];
+      if (waypoint) addGuide(guideId, `航点 ${(escort?.waypoint ?? 0) + 1}`, waypoint.x, RULES.flightAltitude, waypoint.z, true);
     }
     const lock = w.mainLock;
     const target = w.enemies.find((e) => e.id === lock?.targetId);
@@ -475,6 +581,7 @@ export class GameApp {
           ready: w.canBomb,
           text: w.canBomb
             ? "准许投弹"
+            : w.bombCooldown > 0 ? `装填 ${w.bombCooldown.toFixed(1)}s`
             : w.player.damage.bombFactor <= 0
               ? "弹舱损毁"
               : !w.validBombAim
@@ -511,8 +618,14 @@ export class GameApp {
       bestScore: this.save.data.bestScore,
       bestTime: this.save.data.bestTime,
       unlocked,
+      nextMission: this.nextMission,
     });
-    this.save.persist();
+  }
+
+  private get nextMission() {
+    const result = this.world?.mission?.result;
+    const next = result?.outcome === "victory" ? nextCampaignMission(result.missionId) : undefined;
+    return next && missionIsUnlocked(next, this.save.data.clearedMissions) ? next : undefined;
   }
 
   private showModal(kind: Modal) {
@@ -526,7 +639,10 @@ export class GameApp {
     }
     this.stick.reset();
     this.stick.enabled = false;
-    this.previousFocus = document.activeElement as HTMLElement;
+    const active = document.activeElement as HTMLElement;
+    this.previousFocus = kind === "upgrade" && !this.ui.contains(active)
+      ? this.ui.querySelector<HTMLElement>("#upgrade-button") ?? active
+      : active;
     this.modal = kind;
 
     let content = "";
@@ -544,7 +660,11 @@ export class GameApp {
     } else if (kind === "pause") {
       content = renderPauseModal();
     } else if (kind === "mission") {
-      content = renderMissionModal(missionEras, this.sortieEra, this.save.data.equipped);
+      const cleared = this.save.data.clearedMissions;
+      content = renderMissionModal(
+        CAMPAIGN_MISSIONS.map((mission) => ({ mission, unlocked: missionIsUnlocked(mission, cleared), cleared: cleared.includes(mission.id) })),
+        this.selectedMission?.id, this.patrolEra,
+      );
     } else if (kind === "upgrade" && this.world) {
       content = renderUpgradeModal(this.world);
     }
@@ -555,7 +675,7 @@ export class GameApp {
         help: "飞行指南",
         pause: "暂停游戏",
         upgrade: "选择升级",
-        showroomAircraft: "选择展厅机体",
+        showroomAircraft: "选择展台机体",
         mission: "选择关卡",
       }[kind] ?? "页面";
     const close =
@@ -563,9 +683,10 @@ export class GameApp {
         ? button("close-modal", icon("close"), "icon-button modal-close", 'aria-label="关闭"')
         : "";
     this.overlays.innerHTML = dialog(label, close + content, kind === "upgrade" ? "upgrade-modal" : "");
+    if (kind === "upgrade" && this.world) updateUpgradeSelection(this.overlays, this.world);
     this.ui.setAttribute("inert", "");
     requestAnimationFrame(() =>
-      this.overlays.querySelector<HTMLElement>("button, select, input")?.focus(),
+      this.overlays.querySelector<HTMLElement>(kind === "upgrade" ? "[data-upgrade]" : "button, select, input")?.focus(),
     );
   }
 
@@ -580,7 +701,15 @@ export class GameApp {
     this.overlays.innerHTML = "";
     this.ui.removeAttribute("inert");
     this.stick.enabled = this.screen === "battle";
-    this.previousFocus?.focus();
+    if (this.previousFocus?.matches(":enabled")) this.previousFocus.focus();
+    else if (this.screen === "battle") this.ui.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+    else this.previousFocus?.focus();
+  }
+
+  private finishUpgradeView() {
+    this.modal = "";
+    this.updateHud();
+    this.closeModal();
   }
 
   private pause() {
@@ -641,15 +770,8 @@ export class GameApp {
       updateEquipmentPartHighlight(this.ui, frame, this.highlight, resolveAircraftModel(frame).error);
       return;
     }
-    if (el.dataset.upgrade) {
-      if (this.world?.chooseUpgrade(el.dataset.upgrade)) {
-        this.modal = "";
-        this.overlays.innerHTML = "";
-        this.ui.removeAttribute("inert");
-        this.stick.enabled = true;
-        this.audio.play("upgrade");
-        this.hudTimer = 1;
-      }
+    if (el.dataset.upgrade && this.modal === "upgrade" && this.world) {
+      if (this.world.selectUpgrade(el.dataset.upgrade)) updateUpgradeSelection(this.overlays, this.world);
       return;
     }
     if (el.dataset.showroomUpgrade && this.showroom) {
@@ -669,9 +791,18 @@ export class GameApp {
         if (this.screen === "meta" && this.tab === "sortie") this.showModal("mission");
         break;
       case "select-mission": {
-        const selected = missionEras.find((id) => id === el.dataset.mission);
+        const selected = campaignMissionById(el.dataset.mission ?? "");
+        if (this.screen !== "meta" || this.modal !== "mission" || !selected || !missionIsUnlocked(selected, this.save.data.clearedMissions)) break;
+        this.selectedMission = selected;
+        this.showMeta();
+        this.ui.querySelector<HTMLElement>(".mission-select")?.focus();
+        break;
+      }
+      case "select-patrol": {
+        const selected = (Object.keys(ERAS) as EraId[]).find((id) => id === el.dataset.mission);
         if (this.screen !== "meta" || this.modal !== "mission" || !selected) break;
-        this.sortieEra = selected;
+        this.selectedMission = undefined;
+        this.patrolEra = selected;
         this.showMeta();
         this.ui.querySelector<HTMLElement>(".mission-select")?.focus();
         break;
@@ -711,18 +842,53 @@ export class GameApp {
         this.showResult();
         break;
       case "home":
+        this.world?.dispose();
         this.world = undefined;
         this.ui.removeAttribute("inert");
         this.setTabFromResult();
         break;
-      case "retry":
+      case "retry": {
+        if (this.screen !== "result" || !this.world) break;
+        const { seed, mission, era } = this.world;
+        this.selectedMission = mission?.mission;
+        if (!mission) this.patrolEra = era;
+        this.world.dispose();
         this.world = undefined;
         this.ui.removeAttribute("inert");
         this.screen = "meta";
-        this.launch();
+        this.launch(mission ? seed : undefined);
         break;
+      }
+      case "next-mission": {
+        const next = this.nextMission;
+        if (this.screen !== "result" || !next) break;
+        this.selectedMission = next;
+        this.world?.dispose();
+        this.world = undefined;
+        this.setTabFromResult();
+        break;
+      }
       case "upgrade":
         if (this.world?.openUpgrades()) this.showModal("upgrade");
+        break;
+      case "confirm-upgrade": {
+        const world = this.world;
+        if (!world || this.modal !== "upgrade") break;
+        const oldChoices = world.choices;
+        if (world.confirmUpgrade()) {
+          this.upgradeInstallTime = 0;
+        }
+        if (oldChoices !== world.choices) {
+          const sheet = this.overlays.querySelector<HTMLElement>(".upgrade-modal")!;
+          sheet.innerHTML = renderUpgradeModal(world);
+          sheet.tabIndex = -1;
+          (sheet.querySelector<HTMLElement>("[data-upgrade]") ?? sheet).focus();
+        }
+        updateUpgradeSelection(this.overlays, world);
+        break;
+      }
+      case "return-from-upgrade":
+        if (this.modal === "upgrade" && this.world?.returnFromUpgrade()) this.finishUpgradeView();
         break;
       case "bomb-mode":
         this.world?.toggleBombing();
@@ -739,12 +905,34 @@ export class GameApp {
       case "showroom-aircraft":
         this.showShowroomAircraftPicker();
         break;
+      case "showroom-livery-prev":
+        if (this.showroom?.player.frame.geometryProfile === "fokkerDr1") {
+          this.showroomLiveryIndex = (this.showroomLiveryIndex + DR1_LIVERY_IDS.length - 1) % DR1_LIVERY_IDS.length;
+          this.rebuildShowroom(undefined, this.showroomBuild);
+          this.showMeta();
+        }
+        break;
+      case "showroom-livery-next":
+        if (this.showroom?.player.frame.geometryProfile === "fokkerDr1") {
+          this.showroomLiveryIndex = (this.showroomLiveryIndex + 1) % DR1_LIVERY_IDS.length;
+          this.rebuildShowroom(undefined, this.showroomBuild);
+          this.showMeta();
+        }
+        break;
       case "showroom-fire":
         this.showroom?.previewFire();
         break;
-      case "reference":
-        location.href = `${location.pathname}?reference=1`;
+      case "reference": {
+        if (!this.showDebug || this.tab !== "showroom") break;
+        const destination = new URL(location.href);
+        destination.searchParams.set("reference", "1");
+        destination.searchParams.set("from", "showroom");
+        const frame = this.showroom?.player.frame.id;
+        if (frame) destination.searchParams.set("frame", frame);
+        destination.hash = "";
+        location.assign(destination);
         break;
+      }
       case "showroom-undo":
         if (this.showroomBuild.length) {
           this.rebuildShowroom(undefined, this.showroomBuild.slice(0, -1));
@@ -788,7 +976,7 @@ export class GameApp {
   private onKey(e: KeyboardEvent, down: boolean) {
     if (down && e.code === "Tab" && this.modal) {
       const focusables = Array.from(
-        this.overlays.querySelectorAll<HTMLElement>("button:not(:disabled), select, input"),
+        this.overlays.querySelectorAll<HTMLElement>("button:not(:disabled):not([hidden]), select, input"),
       );
       const first = focusables[0];
       const last = focusables.at(-1);
@@ -802,6 +990,10 @@ export class GameApp {
     }
     if (this.screen !== "battle") {
       if (down && e.code === "Escape" && this.modal) this.closeModal();
+      return;
+    }
+    if (this.modal === "upgrade") {
+      if (down && ["KeyP", "Escape", "KeyB", "KeyU"].includes(e.code)) e.preventDefault();
       return;
     }
     const movement = [
@@ -826,7 +1018,7 @@ export class GameApp {
     if (e.code === "Escape" || e.code === "KeyP") {
       e.preventDefault();
       if (this.modal === "pause") this.resume();
-      else if (this.modal && this.modal !== "upgrade") this.closeModal();
+      else if (this.modal) this.closeModal();
       else this.pause();
     }
     if (this.modal) return;
@@ -869,9 +1061,15 @@ export class GameApp {
           return this.stick.read(RULES.step);
         });
         const events = this.world.consumeEvents();
+        if (events.some(event => event.type === "upgrade_installed")) this.updateHud();
         this.combatHud?.consume(events);
         this.audio.consumeBattle(events);
         this.renderer?.render(this.world, dt, { display: false, events });
+        if (world.upgradeInstallation) {
+          this.upgradeInstallTime += dt;
+          if (this.upgradeInstallTime >= upgradeInstallSeconds && world.finishUpgradeInstallation())
+            this.finishUpgradeView();
+        }
         this.updateCombatHud(dt);
         this.hudTimer += dt;
         if (this.hudTimer > 0.09) {

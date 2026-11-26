@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { InstancedMesh, Matrix4, PerspectiveCamera, Scene, Vector3 } from "three";
 import { CombatEffects } from "../src/content/fx/CombatEffects";
-import { engineOutlet, localToWorld } from "../src/content/3d/anchors";
 import { partFromRecipe } from "../src/simulation/parts";
 import type { CombatSnapshot, WorldEvent } from "../src/simulation/types";
 import { GameAudio } from "../src/services/Audio";
@@ -84,7 +83,7 @@ describe("combat effect lifetimes", () => {
     expect(scene.children).toHaveLength(0);
   });
 
-  it("uses the rolled engine outlet and advances detached parts without their actor", () => {
+  it("requires a registered damage surface and advances detached parts without their actor", () => {
     const scene = new Scene();
     const camera = new PerspectiveCamera();
     const effects = new CombatEffects(scene);
@@ -97,11 +96,10 @@ describe("combat effect lifetimes", () => {
     const event: WorldEvent = { type: "part_detached", time: 0, owner: "enemy", entityId: 42,
       partId: "wing_tip", partKind: "wing", color: "#624437", snapshot };
     effects.update(.01, camera, "standard", [], undefined, [event], [{ id: 42, pose, parts: [engine] }]);
-    const outlet = localToWorld(pose, engineOutlet(engine));
-    expect(position(smoke).toArray()).toEqual([outlet.x, outlet.y, outlet.z].map((value) => expect.closeTo(value, 5)));
+    expect(smoke.count).toBe(0);
     expect(position(detached).toArray()).toEqual([2, 25, 3]);
     effects.update(.5, camera, "standard", []);
-    expect(smoke.count).toBe(1);
+    expect(smoke.count).toBe(0);
     expect(position(detached).x).toBeCloseTo(5.5);
     expect(position(detached).y).toBeLessThan(25);
     effects.dispose();

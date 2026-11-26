@@ -5,16 +5,17 @@ import * as aircraftReferences from "../src/data/aircraftReferences";
 import { meteorF3Id } from "../src/data/meteorF3Sheet";
 
 describe("Meteor F.3 generation gate", () => {
-  it("reports missing geometry and leaves the model empty", () => {
-    const preview = aircraftReferencePreview(meteorF3Id)!;
-    const { model, error } = resolveAircraftModel(preview.frame);
-    expect(model).toBeUndefined();
-    expect(error).toContain("短舱");
-
+  it.each([[meteorF3Id, 2], ["vampire-fb5", 1]] as const)("builds the reviewed %s with finite geometry and its own outlets", (id, outlets) => {
+    const preview = aircraftReferencePreview(id)!;
     const aircraft = new ProceduralAircraft(preview.create());
     try {
-      expect(aircraft.contentError).toBe(error);
-      expect(aircraft.group.children).toHaveLength(0);
+      expect(aircraft.contentError).toBeUndefined();
+      expect(aircraft.effectSites.sources.filter(site => site.kind === "jetOutlet")).toHaveLength(outlets);
+      expect(aircraft.effectSites.surfaces.length).toBeGreaterThan(5);
+      aircraft.group.traverse(node => {
+        const positions = (node as import("three").Mesh).geometry?.getAttribute("position");
+        if (positions) expect(Array.from(positions.array).every(Number.isFinite), node.name).toBe(true);
+      });
     } finally {
       aircraft.dispose();
     }

@@ -13,8 +13,8 @@ describe("registered piston fighter previews", () => {
     try {
       expect(model.contentError).toBeUndefined();
       model.group.updateMatrixWorld(true);
-      const port = model.group.getObjectByName("left_wing")!;
-      const starboard = model.group.getObjectByName("right_wing")!;
+      const port = model.group.getObjectByName("right_wing")!;
+      const starboard = model.group.getObjectByName("left_wing")!;
       const probe = port.getObjectByName("pitot")!;
       expect(probe.getWorldPosition(new THREE.Vector3()).x).toBeGreaterThan(0);
       expect(starboard.getObjectByName("pitot")).toBeUndefined();

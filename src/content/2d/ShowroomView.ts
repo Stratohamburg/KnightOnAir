@@ -1,4 +1,5 @@
 import { AIRFRAMES, eraOf, type Airframe } from "../../data/aircrafts";
+import { DR1_LIVERY_NAMES } from "../../data/aircraftLiveries";
 import { ERAS } from "../../data/eras";
 import { upgradeById, type Upgrade } from "../../data/upgrades";
 import type { Stats } from "../../simulation/types";
@@ -43,6 +44,28 @@ export function formatUpgradeDelta(upgrade: Upgrade, world: World) {
   return changes.join(" · ");
 }
 
+export function formatRefitDelta(upgrade: Upgrade, world: World) {
+  const before = world.player;
+  const after = world.inspectUpgrade(upgrade).player;
+  const stats = [
+    ["翼展", before.stats.wingspan, after.stats.wingspan],
+    ["机长", before.stats.length, after.stats.length],
+    ["武器", before.weapons.length, after.weapons.length],
+    ["齐射弹数", before.weapons.reduce((total, weapon) => total + weapon.config.count, 0),
+      after.weapons.reduce((total, weapon) => total + weapon.config.count, 0)],
+    ["炮塔回转", Math.max(0, ...before.weapons.filter(weapon => weapon.config.category === "turret").map(weapon => weapon.config.turnRate)),
+      Math.max(0, ...after.weapons.filter(weapon => weapon.config.category === "turret").map(weapon => weapon.config.turnRate))],
+    ["部件", before.parts.length, after.parts.length],
+    ["生命", before.maxHealth, after.maxHealth],
+  ] as const;
+  const changes = stats.filter(([, previous, next]) => Math.abs(next - previous) > .001);
+  const effects = formatUpgradeDelta(upgrade, world);
+  return changes.length
+    ? changes.slice(0, 2).map(([label, previous, next]) =>
+      `${label} ${Number(previous.toFixed(1))} → ${Number(next.toFixed(1))}`).join(" · ")
+    : effects;
+}
+
 function renderActiveBuildItems(build: readonly string[]) {
   if (!build.length) return `<li class="empty-build">原装构型</li>`;
   return build
@@ -81,9 +104,12 @@ export interface ShowroomViewModel {
   world?: World;
   build: readonly string[];
   modelError?: string;
+  liveryId?: string;
+  liveryIndex?: number;
+  liveryCount?: number;
 }
 
-export function renderShowroomBody({ frame, world, build, modelError }: ShowroomViewModel) {
+export function renderShowroomBody({ frame, world, build, modelError, liveryId, liveryIndex = 0, liveryCount = 0 }: ShowroomViewModel) {
   if (modelError || !world) {
     return `<section class="showroom-page">
       <div class="showroom-stage">
@@ -96,7 +122,7 @@ export function renderShowroomBody({ frame, world, build, modelError }: Showroom
         </div>
         <div class="showroom-stage-actions">
           ${actionButton("showroom-aircraft", "换机", { size: "xs", variant: "secondary" })}
-          ${actionButton("reference", "校验 ↗", { size: "xs", variant: "ghost" })}
+          ${actionButton("reference", "校验", { size: "xs", variant: "ghost" })}
           <button type="button" class="btn btn-xs btn-ghost" data-tab="sortie">返回</button>
         </div>
       </div>
@@ -130,6 +156,7 @@ export function renderShowroomBody({ frame, world, build, modelError }: Showroom
         ${actionButton("showroom-fire", `试射 ${icon("target")}`, { size: "xs", variant: "primary" })}
         ${actionButton("reference", "校验", { size: "xs", variant: "ghost" })}
         <button type="button" class="btn btn-xs btn-ghost" data-tab="sortie">返回</button>
+        ${liveryCount > 0 ? `<div class="showroom-livery-actions">${actionButton("showroom-livery-prev", "‹", { size: "xs", variant: "secondary", extraClass: "showroom-livery-step", attributes: 'aria-label="上一套涂装"' })}<span class="showroom-livery-label">${DR1_LIVERY_NAMES[liveryId ?? ""] ?? "默认涂装"} · ${liveryIndex + 1}/${liveryCount}</span>${actionButton("showroom-livery-next", "›", { size: "xs", variant: "secondary", extraClass: "showroom-livery-step", attributes: 'aria-label="下一套涂装"' })}</div>` : ""}
       </div>
     </div>
     <section class="showroom-controls">
@@ -183,9 +210,8 @@ export function renderShowroomAircraftPicker(currentFrameId?: string) {
   ).join("");
   return `<div class="modal-heading">
       <span class="eyebrow">AIRCRAFT ROSTER</span>
-      <h2>选择展厅机体</h2>
-      <p>仅改变展厅预览，当前出击装备保持不变。</p>
+      <h2>选择展台机体</h2>
     </div>
     <div class="showroom-aircraft-picker">${choices}</div>
-    <div class="modal-actions">${actionButton("close-modal", "返回展厅", { size: "sm", variant: "secondary", block: true })}</div>`;
+    <div class="modal-actions">${actionButton("close-modal", "返回展台", { size: "sm", variant: "secondary", block: true })}</div>`;
 }

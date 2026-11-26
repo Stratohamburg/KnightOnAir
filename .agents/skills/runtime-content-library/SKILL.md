@@ -30,7 +30,17 @@ Use content IDs and pure data descriptors. Do not place Three.js objects, DOM no
 
 Use shared local anchors for parts, weapon mounts, engine outlets, smoke, hit effects, and detachable debris. Resolve world transforms through the common anchor transform with actor position, heading, bank, local height, local rotation, and inherited velocity.
 
-Reuse before creating.
+## Aircraft effects
+
+Project contacts and sample fallback holes only on surfaces marked for damage on configured major assemblies. Filter out rigging, thin rods and fittings even when they share a parent part with eligible skin or carry airflow anchors. Verify that a shot through rigging alone leaves no hole and a subsequent wing contact places one on the wing.
+
+For aircraft effects, use the [aircraft effects guide](../../../docs/RENDERING_GUIDE.md#飞机-3d-low-poly-特效制作与验收) to select the low-poly shape, driving state and acceptance scene. Resolve the generated part-local airflow landmarks, including weaker but clearly visible streams from protruding points. Drive piston and jet effects from effective throttle and boost, and wing flow from acceleration and turn load. Consume each successful gunshot once for its 3D muzzle sphere, individual smoke puff and configured casing port.
+
+Track surface damage by aircraft instance, part and hole. Place a small black faceted mark at each distinct damaged surface site and emit its smoke or fire from that same pose. Keep each site independently addressable through banking, repair and detachment. Keep the flame root at the hole, follow it with dense smoke, and release emitted smoke into world space. Check two holes on one part, a detached smoking fragment and a clean reset under bounded pool usage.
+
+Use the hit-time pose to map a usable contact onto the damaged surface. Only when that fails, sample a random point on the attributed part's damageable surface. If attribution is missing, sample from attached parts damaged by that event. Treat blast and actor centers as fallback coordinates. Select once when the hole opens and share that local pose across its mark, smoke and flame.
+
+## Reuse and lifecycle
 
 - Cache static geometry, base materials, and reusable textures by content ID.
 - Use bounded pools or instance batches for bullets, trails, glow bursts, particles, smoke, sparks, rings, debris, and repeated HUD nodes.

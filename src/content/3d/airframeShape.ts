@@ -123,7 +123,7 @@ export const FUSELAGE_SECTIONS = [
 
 const FOKKER_DR1_SECTIONS = hull.map(({s, w, deck, belly}) =>
   [stationZ(s) / baseLength, w / bodyRadius, (deck - belly) / (2 * bodyRadius)] as const);
-const AIRCRAFT_GEOMETRY_PROFILES: Record<AircraftGeometryProfileId, AircraftGeometryProfile> = {
+const AIRCRAFT_GEOMETRY_PROFILES: Partial<Record<AircraftGeometryProfileId, AircraftGeometryProfile>> = {
   ho229V2: {
     id: "ho229V2", layout: "flyingWing",
     // The integrated center uses spanwise ribs instead of fuselage rings.

@@ -32,6 +32,7 @@ export function flyer(a: PioneerAssembly) {
         const low: Point3 = [s * x, h - 0.8, z],
           high: Point3 = [s * x, h + 1.08, z];
         a.rod(part, low, high, 0.027);
+        if (x === 5.92) a.protrusion(part, "outer-strut", high);
         if (prev) {
           a.wire(part, prev[0], high);
           a.wire(part, prev[1], low);

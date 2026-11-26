@@ -160,6 +160,8 @@ export function integrateAirActor(
   const throttle = intent.brake ? 0 : clamp(intent.throttle);
   const cruise = config.cruiseSpeed * speedFactor;
   const normalMax = Math.max(cruise, config.maxSpeed * damage.engineFactor * speedFactor);
+  const previousSpeed = actor.speed;
+  actor.effectiveThrottle = throttle;
   const thrust = throttle + (RULES.boost.thrustMultiplier - 1) * actor.boost;
   const baseTarget = cruise + (normalMax - cruise) * throttle;
   const targetSpeed = baseTarget + normalMax * (RULES.boost.speedMultiplier - 1) * actor.boost;
@@ -174,6 +176,8 @@ export function integrateAirActor(
     minTurn,
     maxTurn,
   );
+  actor.acceleration = dt > 0 ? (actor.speed - previousSpeed) / dt : 0;
+  actor.turnLoad = Math.abs(actor.turnVelocity * actor.speed) / FLIGHT_GRAVITY;
   actor.vx = Math.sin(actor.heading) * actor.speed;
   actor.vz = Math.cos(actor.heading) * actor.speed;
   const drift = wind.sample(actor.x + actor.vx * dt, actor.z + actor.vz * dt);

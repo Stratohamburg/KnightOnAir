@@ -1,20 +1,20 @@
 import * as THREE from "three";
-import type { BodyRing, FighterSheet, SurfaceRib, WingReading } from "../../data/pistonFighterSheets";
+import { fighterSpan, fighterStationZ, fighterUnit, type BodyRing, type FighterSheet, type SurfaceRib, type WingReading } from "../../data/pistonFighterSheets";
 import { partFromRecipe } from "../../simulation/parts";
 import type { AircraftModelContext, AircraftVisualFrame } from "./aircraftModels";
 import type { ReferenceAircraft } from "./AircraftFactory";
 import { partAnchor } from "./anchors";
 import { loft, type Vertex } from "./sectionLoft";
 
-export const fighterUnit = .025;
+export { fighterUnit } from "../../data/pistonFighterSheets";
 const segments = 24;
 const mix = THREE.MathUtils.lerp;
 
 export function fighterFrame(sheet: FighterSheet): AircraftVisualFrame {
   const a = sheet.assembly;
-  return { id: a.frameId, geometryProfile: a.profile, era: "ww2", shape: "plane",
+  return { id: a.frameId, liveryId: a.profile === "spitfireVb" ? "falcon-13-olive" : "dragonfly-06-jade", geometryProfile: a.profile, era: "ww2", shape: "plane",
     name: sheet.title, role: "单发螺旋桨战斗机", color: a.color, accent: a.trim,
-    wingspan: 460 * fighterUnit, length: a.length * fighterUnit, liftCenterY: .1, liftCenterZ: .45 };
+    wingspan: fighterSpan, length: a.length * fighterUnit, liftCenterY: .1, liftCenterZ: .45 };
 }
 
 function frontEdges(rows: WingReading[], x: number) {
@@ -58,14 +58,14 @@ const ribY = (r: SurfaceRib, c: number, upper: boolean) =>
 
 export function createFighterPreview(sheet: FighterSheet): ReferenceAircraft {
   const frame = fighterFrame(sheet);
-  const z = (station: number) => (sheet.assembly.length/2-station)*fighterUnit;
+  const z = (station: number) => fighterStationZ(sheet, station);
   const firstRib = wingRibs(sheet)[1];
-  const wing = (port: boolean) => partFromRecipe(port ? "left_wing" : "right_wing", {
-    role: "wing", side: port ? -1 : 1, slot: port ? "leftWing" : "rightWing", parentId: "center_body",
-    x: (port ? 1 : -1)*firstRib[0]*fighterUnit, y: (95-firstRib[3])*fighterUnit, z: z(firstRib[1]-14),
+  const wing = (side: -1 | 1) => partFromRecipe(side < 0 ? "left_wing" : "right_wing", {
+    role: "wing", side, slot: side < 0 ? "leftWing" : "rightWing", parentId: "center_body",
+    x: side*firstRib[0]*fighterUnit, y: (95-firstRib[3])*fighterUnit, z: z(firstRib[1]-14),
   });
   return { frame, parts: [
-    partFromRecipe("center_body", { role: "body" }), wing(true), wing(false),
+    partFromRecipe("center_body", { role: "body" }), wing(-1), wing(1),
     partFromRecipe("engine_0",{ role: "engine", slot: "nose", parentId: "center_body", y: 0, z: z(sheet.assembly.propStation) }),
     partFromRecipe("tail",{ role: "tail", slot: "tail", parentId: "center_body", y: 0, z: z(sheet.assembly.fin[0][0]) }),
   ], weapons: [], x:0,z:0,prevX:0,prevZ:0,vx:0,vz:0,heading:0,bank:0,speed:0,energy:0,
@@ -78,7 +78,7 @@ export function buildPistonFighter(ctx: AircraftModelContext, sheet: FighterShee
   // Author in registered plate coordinates. Positive lateral distance is port
   // in the nose-on camera. The model roots own anchors in game units.
   const point = (x: number, ordinate: number, station: number): Vertex =>
-    [x*fighterUnit,(95-ordinate)*fighterUnit,(a.length/2-station)*fighterUnit];
+    [x*fighterUnit,(95-ordinate)*fighterUnit,fighterStationZ(sheet, station)];
   const part = (id: string) => {
     const owner = ctx.actor.parts.find(p => p.id === id)!;
     const {root,material} = ctx.partRoot(owner);
@@ -90,10 +90,16 @@ export function buildPistonFighter(ctx: AircraftModelContext, sheet: FighterShee
     return {owner,datum,material};
   };
   const center = part("center_body"), tail = part("tail"), engine = part("engine_0");
+  const eligible = new Set(["engine-cowling","fuselage","fin-rudder","tailplane-elevator","main-wing","folding-tip","cooler-oil","cooler-radiator"]);
   const metal = ctx.paint(a.trim), dark = ctx.paint("#293235"), glass = ctx.paint("#547684");
   const add = (parent: THREE.Object3D, name: string, make: () => THREE.BufferGeometry, material: THREE.Material) => {
     const node = ctx.mesh(ctx.geometry(a.profile+":"+name, make),material,parent);
     node.name = name;
+    if (eligible.has(name)) {
+      let host = parent;
+      while (host.parent && !ctx.actor.parts.some(p => p.id === host.name)) host = host.parent;
+      ctx.effectSites.surfaces.push({partId: host.name, mesh: node});
+    }
     return node;
   };
   const shell = (rows: BodyRing[], dome = false) => loft(rows.map(([s,w,h,l]) =>
@@ -121,6 +127,11 @@ export function buildPistonFighter(ctx: AircraftModelContext, sheet: FighterShee
     const node = add(parent,name,()=>new THREE.CylinderGeometry(rEnd*fighterUnit,r*fighterUnit,direction.length(),8),mat);
     node.position.copy(start).lerp(end,.5);
     node.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),direction.normalize());
+    if (name.startsWith("exhaust-"))
+      ctx.effectSites.add(engine.owner.id, name, "exhaust", parent, to, { direction: direction.toArray(), radius: rEnd*fighterUnit });
+    if (name === "antenna-mast" || name === "arrestor-hook" || name === "pitot")
+      ctx.effectSites.add(name === "pitot" ? "right_wing" : name === "arrestor-hook" ? "tail" : "center_body",
+        name, "protrusion", parent, to);
     return node;
   };
   const hub = add(engine.datum,"propeller-hub",()=>new THREE.CylinderGeometry(4*fighterUnit,4*fighterUnit,4*fighterUnit,12).rotateX(Math.PI/2),dark);
@@ -143,12 +154,22 @@ export function buildPistonFighter(ctx: AircraftModelContext, sheet: FighterShee
   }));
   const foldSpan = 204;
   for (const port of [true,false]) {
-    const wing = part(port ? "left_wing" : "right_wing");
+    const wing = part(port ? "right_wing" : "left_wing");
     const wingSpace = new THREE.Group();
     wing.datum.add(wingSpace);
     wingSpace.scale.x = port ? 1 : -1;
     const tailSkin = add(tail.datum,"tailplane-elevator",()=>skin(a.tailplane),tail.material);
     tailSkin.scale.x = wingSpace.scale.x;
+    const tipPoint = (r: SurfaceRib, chord: number): Vertex => point(r[0],ribY(r,chord,true),mix(r[1],r[2],chord)-14);
+    const wingEnd = ribs[ribs.length-1], tailEnd = a.tailplane[a.tailplane.length-1];
+    ctx.effectSites.add(wing.owner.id, "tip", "wingTip", wingSpace, tipPoint(wingEnd, .9));
+    ctx.effectSites.add("tail", port ? "port-tip" : "starboard-tip", "tailTip", tailSkin, tipPoint(tailEnd, .9));
+    const midRib = (fraction: number) => ribAt(ribs,ribs[0][0] + fraction*(wingEnd[0]-ribs[0][0]));
+    const inner = new THREE.Vector3(...tipPoint(midRib(.18),1));
+    const outer = new THREE.Vector3(...tipPoint(midRib(.82),1));
+    const halfSpan = outer.clone().sub(inner).multiplyScalar(.5);
+    ctx.effectSites.add(wing.owner.id, "surface", "wingFlow", wingSpace, tipPoint(midRib(.5),0),
+      {end:inner.lerp(outer,.5).toArray(), halfSpan:halfSpan.toArray()});
     if (spit) {
       add(wingSpace,"main-wing",()=>skin(ribs),wing.material);
       rod(wingSpace,"cannon-fairing",point(85,118,83),point(85,118,49),2.3,dark,.85);
@@ -156,6 +177,8 @@ export function buildPistonFighter(ctx: AircraftModelContext, sheet: FighterShee
       const seam = ribAt(ribs,foldSpan);
       add(wingSpace,"main-wing",()=>skin([...ribs.filter(r=>r[0]<foldSpan),seam]),wing.material);
       add(wingSpace,"folding-tip",()=>skin([seam,...ribs.filter(r=>r[0]>foldSpan)]),wing.material);
+      if (ctx.actor.weapons.some(weapon => weapon.partId === wing.owner.id))
+        rod(wingSpace,"wing-cannon",point(85,106,101),point(85,106,86),1.3,dark);
     }
     const skinPoint = (x: number, planY: number): Vertex => {
       const r = ribAt(ribs,x);

@@ -10,6 +10,7 @@ import { surfaceHeight } from "../simulation/Terrain";
 import type { Player, Enemy, WorldEvent } from "../simulation/types";
 import { ProceduralAircraft, type ReferenceAircraft } from "../content/3d/AircraftFactory";
 import { CombatEffects } from "../content/fx/CombatEffects";
+import { WeatherRain } from "../content/fx/WeatherRain";
 import { ContentCatalog } from "../content/3d/ContentCatalog";
 import { createBombs, createProjectileBatches, createSurfaceActor, type SceneActor } from "../content/3d/SceneObjects";
 import {
@@ -20,10 +21,12 @@ import {
 import { TerrainChunks } from "./TerrainChunks";
 import { AircraftShadows } from "./AircraftShadows";
 import { createTerrainDetail } from "./TerrainDetail";
-import { Cloudscape } from "./Cloudscape";
+import { Cloudscape, type CloudRenderMode } from "./Cloudscape";
 import { cloudSun } from "./CloudscapeLayout";
+import { landscapeLightUniforms, sortieLighting } from "./SortieLighting";
 import { cloudDiagnostics, environmentFixture, environmentState } from "./RenderDiagnostics";
-import { frameBattleCamera } from "./BattleCamera";
+import { frameBattleCamera, UpgradeCamera } from "./BattleCamera";
+import { UpgradeAircraft, UpgradePartMotion, upgradeAircraftBounds, upgradeInstallSeconds } from "./UpgradeAircraft";
 import { updateVegetationWind, vegetationWindUniforms } from "./VegetationWind";
 import { VegetationField } from "./VegetationField";
 import { ShowroomBackdrop } from "../content/3d/ShowroomBackdrop";
@@ -38,11 +41,29 @@ export class Renderer {
   private terrainChunks: TerrainChunks;
   private readonly skyDome: THREE.Mesh<THREE.SphereGeometry, THREE.ShaderMaterial>;
   private readonly cloudscape: Cloudscape;
+  private readonly rain = new WeatherRain();
+  private readonly landscapeLight = landscapeLightUniforms();
+  private readonly sun = new THREE.DirectionalLight("#fff1ca", 3);
+  private readonly ambient = new THREE.HemisphereLight("#f5edd2", "#526b61", 2.8);
+  private readonly aircraftSun = new THREE.DirectionalLight("#fff1ca", 2.4);
+  private readonly aircraftAmbient = new THREE.HemisphereLight("#fff6e5", "#526b61", 2.2);
+  private readonly viewSun = new THREE.Vector3();
+  private lightingKey = "";
+  private activeCloudTint = "#fff9ed";
+  private aircraftQualityDetail = 1;
   private readonly vegetationWind = vegetationWindUniforms();
   private readonly aircraftShadows = new AircraftShadows();
   private readonly terrainDetail = createTerrainDetail();
   private readonly terrainMat = terrainMaterial(this.terrainDetail, this.vegetationWind);
   private readonly content = new ContentCatalog();
+  private readonly upgradeAircraft = new UpgradeAircraft(this.overlayScene, this.content);
+  private readonly upgradeCamera = new UpgradeCamera();
+  private upgradeMotion?: UpgradePartMotion;
+  private upgradeBounds?: ReturnType<typeof upgradeAircraftBounds>;
+  private upgradeModel?: ProceduralAircraft;
+  private upgradeRevision = -1;
+  private upgradeTime = 0;
+  private battleAlpha = 1;
   private readonly showroomBackdrop = new ShowroomBackdrop(this.content);
   private readonly projectileContent = createProjectileBatches(this.content);
   private readonly bombContent = createBombs(this.content, 8);
@@ -50,7 +71,7 @@ export class Renderer {
   private readonly bulletBatches = this.projectileContent.batches;
   private pickups: THREE.InstancedMesh;
   private repairKits: THREE.InstancedMesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
-  private readonly effects = new CombatEffects(this.scene);
+  private readonly effects = new CombatEffects(this.scene,this.overlayScene);
   private readonly bombs = this.bombContent.meshes;
   private bombPath: THREE.Line;
   private crosshair: THREE.Mesh;
@@ -100,10 +121,8 @@ export class Renderer {
       RULES.camera.near,
       RULES.camera.far,
     );
-    this.scene.add(new THREE.HemisphereLight("#f5edd2", "#526b61", 2.8));
-    const sun = new THREE.DirectionalLight("#fff1ca", 3);
-    sun.position.set(...cloudSun);
-    this.scene.add(sun);
+    this.sun.position.set(...cloudSun);
+    this.scene.add(this.ambient, this.sun, this.rain.lines);
     this.scene.add(this.showroomBackdrop.group);
     this.showroomBackdrop.setVisible(false);
     this.skyDome = new THREE.Mesh(
@@ -113,8 +132,7 @@ export class Renderer {
     this.skyDome.renderOrder = -1000;
     this.skyDome.frustumCulled = false;
     this.scene.add(this.skyDome);
-    this.overlayScene.add(new THREE.HemisphereLight("#fff6e5", "#526b61", 2.2));
-    this.overlayScene.add(new THREE.DirectionalLight("#fff1ca", 2.4));
+    this.overlayScene.add(this.aircraftAmbient, this.aircraftSun);
     this.scene.fog = new THREE.Fog("#dff5f0", 115, 260);
     this.overlayScene.fog = this.scene.fog;
     this.renderer.autoClear = false;
@@ -122,20 +140,34 @@ export class Renderer {
     if (import.meta.env.DEV) {
       cloudDiagnostics.set(this, {
         enabled: false,
+        mode: "mesh",
         resolution: [0, 0],
         samples: 0,
+        groups: 0,
+        triangles: 0,
+        wisps: 0,
+        wakeSegments: 0,
         cpuMs: 0,
+        cloudPassCpuMs: 0,
         rayMarchCpuMs: 0,
         cameraDensity: 0,
+        playerDensity: 0,
         windDirection: [0, 0],
         drift: [0, 0],
         morphTime: 0,
         windSpeed: 0,
       });
     }
-    this.cloudscape = new Cloudscape(this.renderer, 491);
-    const terrainLighting = { ...this.cloudscape.shadowUniforms, ...this.aircraftShadows.uniforms };
+    this.cloudscape = new Cloudscape(this.renderer, 491, this.content);
+    const requestedCloudMode = typeof location !== "undefined"
+      ? new URLSearchParams(location.search).get("cloudMode")
+      : null;
+    if (requestedCloudMode === "sdf" || requestedCloudMode === "mesh") {
+      this.cloudscape.setMode(requestedCloudMode);
+    }
+    const terrainLighting = { ...this.cloudscape.shadowUniforms, ...this.aircraftShadows.uniforms, ...this.landscapeLight };
     Object.assign(this.terrainMat.uniforms, terrainLighting);
+    Object.assign(this.skyDome.material.uniforms, this.landscapeLight);
     this.terrainChunks = new TerrainChunks(
       this.scene,
       this.terrainMat,
@@ -265,7 +297,15 @@ export class Renderer {
   setPlayer(p: Player | ReferenceAircraft) {
     if (this.aircraft?.actor === p) return this.aircraft.contentError;
     this.crashTime = 0;
+    this.upgradeAircraft.clear();
+    this.upgradeMotion?.reset();
+    this.upgradeMotion = undefined;
+    this.upgradeCamera.reset();
+    this.upgradeModel = undefined;
+    this.upgradeBounds = undefined;
+    this.battleAlpha = 1;
     this.effects.reset();
+    this.cloudscape.resetWake();
     if (this.aircraft) {
       this.overlayScene.remove(this.aircraft.group);
       this.aircraft.dispose();
@@ -273,6 +313,8 @@ export class Renderer {
     for (const actor of this.enemies.values()) actor.dispose();
     this.enemies.clear();
     this.aircraft = new ProceduralAircraft(p, this.content);
+    this.aircraft.setCloudShadows(this.cloudscape.shadowUniforms);
+    this.aircraft.setQualityDetail(this.aircraftQualityDetail);
     this.overlayScene.add(this.aircraft.group);
     this.displayAnchor.set(p.x, 0, p.z);
     return this.aircraft.contentError;
@@ -287,6 +329,11 @@ export class Renderer {
   }
   setQuality(q: Quality) {
     this.quality = q;
+    this.aircraftQualityDetail = q === "low" ? .52 : q === "standard" ? .82 : 1;
+    this.aircraft?.setQualityDetail(this.aircraftQualityDetail);
+    this.enemies.forEach((actor) => {
+      if (actor instanceof ProceduralAircraft) actor.setQualityDetail(this.aircraftQualityDetail);
+    });
     const { vegetation } = QUALITIES[q];
     this.terrainMat.uniforms.waveDetail.value = vegetation.waveDetail;
     this.terrainMat.uniforms.waveStrength.value = vegetation.waveStrength;
@@ -295,6 +342,12 @@ export class Renderer {
     this.slowFrames = 0;
     this.fastFrames = 0;
     this.resize(true);
+  }
+  setCloudMode(mode: CloudRenderMode) {
+    this.cloudscape.setMode(mode);
+  }
+  get cloudMode(): CloudRenderMode {
+    return this.cloudscape.renderMode;
   }
   resize(force = false) {
     const w = this.host.clientWidth,
@@ -314,6 +367,8 @@ export class Renderer {
     const actor = enemy.layer === "air"
       ? new ProceduralAircraft(enemy, this.content)
       : createSurfaceActor(enemy, this.content);
+    if (actor instanceof ProceduralAircraft) actor.setCloudShadows(this.cloudscape.shadowUniforms);
+    if (actor instanceof ProceduralAircraft) actor.setQualityDetail(this.aircraftQualityDetail);
     this.scene.add(actor.group);
     this.enemies.set(enemy.id, actor);
     return actor;
@@ -330,11 +385,36 @@ export class Renderer {
     this.resize();
     const p = this.aircraft.actor as Player | ReferenceAircraft;
     const era = world?.era ?? options.missionEra ?? p.frame.missionEra ?? p.frame.era ?? "jet";
-    if (era !== this.era) {
+    const environment = world?.environment;
+    const weather = environment?.weather;
+    const hour = environment?.hour ?? 12;
+    const visibility = weather?.visibility ?? 1;
+    const coverage = weather?.cloud ?? 1;
+    const lightKey = `${era}/${hour}/${visibility}/${coverage}`;
+    if (lightKey !== this.lightingKey || era !== this.era) {
+      this.lightingKey = lightKey;
       this.era = era;
-      const { colors } = ERAS[era];
+      const { colors, sun, direct, ambient, shade } = sortieLighting(hour, coverage, visibility, ERAS[era].colors);
+      this.landscapeLight.landscapeSun.value.copy(sun);
+      this.landscapeLight.weatherVisibility.value = visibility;
+      this.landscapeLight.sunlightAmount.value = direct;
+      this.landscapeLight.ambientAmount.value = ambient;
+      this.aircraftShadows.uniforms.aircraftShadowSun.value.copy(sun);
+      this.aircraftShadows.uniforms.aircraftShadowStrength.value = shade;
+      this.cloudscape.setLighting(sun, shade);
+      this.sun.position.copy(sun);
+      this.sun.color.set(colors.sunTint);
+      this.sun.intensity = 3 * direct;
+      this.ambient.intensity = 2.8 * ambient;
+      this.aircraftSun.position.copy(sun);
+      this.aircraftSun.color.copy(this.sun.color);
+      this.aircraftSun.intensity = 2.4 * direct;
+      this.aircraftAmbient.intensity = 2.2 * Math.max(.55, ambient);
       this.renderer.setClearColor(colors.skyHorizon);
-      (this.scene.fog as THREE.Fog).color.set(colors.skyHorizon);
+      const fog = this.scene.fog as THREE.Fog;
+      fog.color.set(colors.skyHorizon);
+      fog.near = 115 * visibility;
+      fog.far = 260 * visibility;
       this.terrainMat.uniforms.grass.value.set(colors.grass);
       this.terrainMat.uniforms.road.value.set(colors.accent);
       this.terrainMat.uniforms.haze.value.set(colors.skyHorizon);
@@ -348,14 +428,45 @@ export class Renderer {
       this.skyDome.material.uniforms.valleyFog.value.set(colors.valleyFog);
       this.skyDome.material.uniforms.sunTint.value.set(colors.sunTint);
       this.cloudscape.setPalette(colors);
+      this.activeCloudTint = colors.cloudLit;
       this.terrainChunks.setWaterColor(colors.water);
       this.terrainChunks.setHaze(colors.skyHorizon, colors.valleyFog, colors.sunTint, colors.skyZenith, colors.skyHorizon);
     }
     const display = options.display,
       launch = options.launching ?? 0;
-    const alpha = world ? clamp(world.clock.accumulator / RULES.step) : 1;
+    if (world && world.clock.timeScale > 0) this.battleAlpha = clamp(world.clock.accumulator / RULES.step);
+    const alpha = world ? this.battleAlpha : 1;
     const x = display ? p.x : p.prevX + (p.x - p.prevX) * alpha;
     const z = display ? p.z : p.prevZ + (p.z - p.prevZ) * alpha;
+    const upgrading = !display && world?.phase === "upgrade";
+    const projection = upgrading ? world?.upgradePreview : undefined;
+    const model = this.upgradeAircraft.show(projection, this.aircraft);
+    const installation = upgrading ? world?.upgradeInstallation : undefined;
+    const refitParts = installation ? new Set(installation.partIds) : this.upgradeAircraft.highlighted;
+    const installEvent = installation && options.events?.includes(installation) ? installation : undefined;
+    const lowRefitEffects = this.quality === "low" || (this.fps > 0 && this.fps < 38);
+    if (!installation) {
+      this.upgradeMotion?.reset();
+      this.upgradeMotion = undefined;
+    }
+    model.update(this.time, sceneDt, options.highlight, display, refitParts);
+    model.group.position.set(x, RULES.flightAltitude, z);
+    if (upgrading && (model !== this.upgradeModel || model.revision !== this.upgradeRevision || !this.upgradeBounds)) {
+      this.upgradeModel = model;
+      this.upgradeRevision = model.revision;
+      this.upgradeBounds = upgradeAircraftBounds(model, refitParts);
+    } else if (!upgrading) {
+      this.upgradeModel = undefined;
+      this.upgradeBounds = undefined;
+    }
+    if (installEvent && upgrading) {
+      this.upgradeMotion = new UpgradePartMotion(model, installEvent);
+      this.upgradeTime = 0;
+    }
+    if (this.upgradeMotion) {
+      this.upgradeTime += dt;
+      this.upgradeMotion.update(this.upgradeTime);
+    }
     if (display && !options.showroom) {
       this.cameraBombing = 0;
       this.displayAnchor.x = damp(this.displayAnchor.x, x, 7, dt);
@@ -437,8 +548,13 @@ export class Renderer {
       }
       this.camera.updateMatrixWorld();
     } else {
-      this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
+      if (!upgrading) this.cameraBombing = damp(this.cameraBombing, world?.isBombing ? 1 : 0, 10, dt);
       frameBattleCamera(this.camera, x, z, this.cameraBombing);
+      const impact = this.upgradeMotion && installation?.animation === "extension"
+        ? Math.max(0, this.upgradeTime - upgradeInstallSeconds * .42) : 0;
+      const shake = impact > 0 && impact < .24
+        ? Math.sin(impact * 83) * (1 - impact / .24) * (lowRefitEffects ? .06 : .24) : 0;
+      this.upgradeCamera.update(this.camera, x, z, dt, this.upgradeBounds, shake);
     }
     const fixture = import.meta.env.DEV ? environmentFixture.get(this) : undefined;
     if (fixture?.camera && fixture.lookAt) {
@@ -449,7 +565,6 @@ export class Renderer {
     this.skyDome.position.copy(this.camera.position);
     this.viewProjection.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     this.viewFrustum.setFromProjectionMatrix(this.viewProjection);
-    this.aircraft.update(this.time, sceneDt, options.highlight, display);
     this.aircraft.group.position.x = x;
     this.aircraft.group.position.y = RULES.flightAltitude;
     this.aircraft.group.position.z = z;
@@ -485,6 +600,8 @@ export class Renderer {
     if (!showroom) this.terrainChunks.updateTime(this.time);
     const cloudsEnabled = !showroom && (fixture?.clouds ?? true);
     const cloudWind = wind?.sample(x, z);
+    this.rain.update(world?.elapsed ?? 0, !display && !showroom ? weather?.rain ?? 0 : 0,
+      x, z, cloudWind?.x ?? 0, cloudWind?.z ?? 0, this.quality);
     if (!showroom) this.cloudscape.update(
       sceneDt,
       cloudWind?.x ?? 0,
@@ -492,17 +609,25 @@ export class Renderer {
       wind?.gust ?? 0,
       this.camera.position,
       x,
-      RULES.flightAltitude,
+      this.aircraft.group.position.y,
       z,
       p.vx,
       p.vz,
       cloudsEnabled,
+      coverage,
     );
-    const activeColors = ERAS[era].colors;
     const cloudWrap = cloudsEnabled && !showroom
-      ? clamp(Math.max(this.cloudscape.cameraDensity * .35, this.cloudscape.playerDensity * .42), 0, .32)
+      ? clamp(Math.max(this.cloudscape.cameraDensity * .24, this.cloudscape.playerDensity * .26), 0, .22)
       : 0;
-    this.aircraft.setCloudAtmosphere(cloudWrap, activeColors.cloudLit);
+    this.viewSun.copy(this.landscapeLight.landscapeSun.value).transformDirection(this.camera.matrixWorldInverse);
+    this.aircraft.setSceneLighting(this.viewSun, Math.max(.55, this.landscapeLight.ambientAmount.value), this.landscapeLight.sunlightAmount.value);
+    this.aircraft.setCloudAtmosphere(cloudWrap, this.activeCloudTint);
+    if (projection) {
+      model.setCloudShadows(this.cloudscape.shadowUniforms);
+      model.setQualityDetail(this.aircraftQualityDetail);
+      model.setSceneLighting(this.viewSun, Math.max(.55, this.landscapeLight.ambientAmount.value), this.landscapeLight.sunlightAmount.value);
+      model.setCloudAtmosphere(cloudWrap, this.activeCloudTint);
+    }
     if (import.meta.env.DEV && fixture) {
       environmentState.set(this, {
         sceneTime: this.time,
@@ -519,46 +644,61 @@ export class Renderer {
       p.stats.wingspan, p.stats.length, .68, p.frame.shape === "airship",
     );
     if (world && !display) {
-      this.updateBattle(world, sceneDt);
+      this.updateBattle(world, sceneDt, cloudWrap);
       this.effects.update(
         sceneDt, this.camera, this.quality, world.projectiles.items, world.wind, options.events,
-        [world.player, ...world.enemies].map((actor) => ({ id: actor.id, pose: world.actorPose(actor), parts: actor.parts })),
+        [world.player, ...world.enemies].map(actor => {
+          const model = typeof actor.id === "number" ? this.enemies.get(actor.id) : this.aircraft;
+          return { id: actor.id, pose: world.actorPose(actor), parts: actor.parts,
+            model: model instanceof ProceduralAircraft ? model : undefined };
+        }),
         world.fires.map((zone) => ({ zone, y: world.surfaceHeight(zone.x, zone.z) + .2 })),
+        { refitDt: upgrading ? dt : sceneDt, reducedRefit: lowRefitEffects },
       );
-    } else if (world && options.showroom) {
+    } else if (display) {
       this.hideBattle(false);
       this.effects.update(
         sceneDt, this.camera, this.quality, [], undefined, options.events,
-        [{ id: world.player.id, pose: world.actorPose(world.player), parts: world.player.parts }],
+        [{ id: world?.player.id ?? "preview", model: this.aircraft, parts: p.parts,
+          pose: { x, y: RULES.flightAltitude, z, heading: p.heading, bank: p.bank, vx: p.vx, vz: p.vz } }],
         [],
       );
     } else {
       this.hideBattle();
     }
+    if (world && !display && !showroom) this.cloudscape.updateWake(sceneDt, this.aircraft, this.enemies.values());
+    else this.cloudscape.resetWake();
     this.renderer.info.reset();
     if (!showroom) this.cloudscape.begin(this.renderer, this.camera, this.quality, fixture?.cloudShadows);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     const cloudStart = import.meta.env.DEV ? performance.now() : 0;
-    let cloudMarchMs = 0;
+    let cloudPassCpuMs = 0;
     if (!showroom && cloudsEnabled) {
       this.cloudscape.renderClouds(this.renderer, this.camera, this.quality);
-      if (import.meta.env.DEV) cloudMarchMs = performance.now() - cloudStart;
+      if (import.meta.env.DEV) cloudPassCpuMs = performance.now() - cloudStart;
     }
-    if (!showroom) this.cloudscape.compositeWorld(this.renderer, this.camera);
+    if (!showroom) this.cloudscape.compositeWorld(this.renderer, this.camera, this.quality);
     if (import.meta.env.DEV) {
       const diagnostics = cloudDiagnostics.get(this)!;
       diagnostics.enabled = cloudsEnabled;
+      diagnostics.mode = this.cloudscape.renderMode;
       diagnostics.resolution[0] = cloudsEnabled ? this.cloudscape.width : 0;
       diagnostics.resolution[1] = cloudsEnabled ? this.cloudscape.height : 0;
-      diagnostics.samples = cloudsEnabled ? QUALITIES[this.quality].cloud.samples : 0;
+      diagnostics.samples = cloudsEnabled && diagnostics.mode === "sdf" ? this.cloudscape.sdfSteps(this.quality) : 0;
+      const mesh = cloudsEnabled && diagnostics.mode === "mesh" ? this.cloudscape.meshStats : undefined;
+      diagnostics.groups = mesh?.groups ?? 0;
+      diagnostics.triangles = mesh?.triangles ?? 0;
+      diagnostics.wakeSegments = mesh?.wakeSegments ?? 0;
       diagnostics.cameraDensity = this.cloudscape.cameraDensity;
+      diagnostics.playerDensity = this.cloudscape.playerDensity;
       const flow = this.cloudscape.flow;
       diagnostics.windDirection = [flow.x, flow.z];
       diagnostics.windSpeed = flow.speed;
       diagnostics.drift = flow.drift;
       diagnostics.morphTime = flow.selfTime;
-      diagnostics.rayMarchCpuMs = cloudMarchMs;
+      diagnostics.cloudPassCpuMs = cloudPassCpuMs;
+      diagnostics.rayMarchCpuMs = diagnostics.mode === "sdf" ? cloudPassCpuMs : 0;
       diagnostics.cpuMs = cloudsEnabled ? performance.now() - cloudStart : 0;
     }
     this.renderer.clearDepth();
@@ -596,7 +736,7 @@ export class Renderer {
       this.fpsFrames = 0;
     }
   }
-  private updateBattle(world: World, dt: number) {
+  private updateBattle(world: World, dt: number, cloudWrap: number) {
     const p = world.player;
     let gi = 0;
     const living = new Set(world.enemies.map((e) => e.id));
@@ -607,7 +747,11 @@ export class Renderer {
     }
     for (const e of world.enemies) {
       const actor = this.enemies.get(e.id) ?? this.createEnemy(e);
-      if (actor instanceof ProceduralAircraft) actor.update(this.time, dt);
+      if (actor instanceof ProceduralAircraft) {
+        actor.update(this.time, dt);
+        actor.setSceneLighting(this.viewSun, Math.max(.55, this.landscapeLight.ambientAmount.value), this.landscapeLight.sunlightAmount.value);
+        actor.setCloudAtmosphere(cloudWrap, this.activeCloudTint);
+      }
       const mesh = actor.group;
       const route = world.routes.find((candidate) => candidate.id === e.routeId);
       const surface = route ? routeHeight(route, e.x, e.z) : world.surfaceHeight(e.x, e.z);
@@ -747,13 +891,38 @@ export class Renderer {
     this.spawnBounds.radius = radius;
     return this.viewFrustum.intersectsSphere(this.spawnBounds);
   }
+  missionSpawnVisibility(world: World) {
+    const cruise = new THREE.PerspectiveCamera(RULES.camera.fov, this.camera.aspect, RULES.camera.near, RULES.camera.far);
+    const bombing = cruise.clone();
+    const projection = new THREE.Matrix4();
+    const cruiseFrustum = new THREE.Frustum(), bombingFrustum = new THREE.Frustum();
+    const bounds = new THREE.Sphere();
+    let lastStep = -1;
+    return (x: number, y: number, z: number, radius: number) => {
+      if (lastStep !== world.elapsed) {
+        lastStep = world.elapsed;
+        const player = world.player;
+        frameBattleCamera(cruise, player.x, player.z, 0);
+        frameBattleCamera(bombing, player.x, player.z, 1);
+        cruiseFrustum.setFromProjectionMatrix(projection.multiplyMatrices(cruise.projectionMatrix, cruise.matrixWorldInverse));
+        bombingFrustum.setFromProjectionMatrix(projection.multiplyMatrices(bombing.projectionMatrix, bombing.matrixWorldInverse));
+      }
+      bounds.center.set(x, y, z);
+      bounds.radius = radius;
+      return cruiseFrustum.intersectsSphere(bounds) || bombingFrustum.intersectsSphere(bounds);
+    };
+  }
   project(x: number, y: number, z: number) {
-    this.projected.set(x, y, z).project(this.camera);
+    this.projected.set(x, y, z).applyMatrix4(this.camera.matrixWorldInverse);
+    const behind = this.projected.z >= 0;
+    this.projected.applyMatrix4(this.camera.projectionMatrix);
+    const screenX = this.projected.x * this.width * .5, screenY = this.projected.y * this.height * .5;
     return {
-      x: (this.projected.x * 0.5 + 0.5) * this.width,
-      y: (-this.projected.y * 0.5 + 0.5) * this.height,
+      x: this.width * .5 + screenX,
+      y: this.height * .5 - screenY,
+      bearing: behind ? Math.atan2(-screenX, -screenY) : Math.atan2(screenX, screenY),
       visible:
-        this.projected.z < 1 &&
+        !behind && this.projected.z < 1 && this.projected.z >= -1 &&
         Math.abs(this.projected.x) < 1 &&
         Math.abs(this.projected.y) < 1,
     };
@@ -775,15 +944,26 @@ export class Renderer {
         effects: this.effects.diagnostics,
         projectileBatches: this.bulletBatches.length,
       },
+      aircraft: {
+        liveryId: this.aircraft?.liveryId,
+        activeInstances: this.enemies.size + (this.aircraft ? 1 : 0) + (this.upgradeAircraft.preview ? 1 : 0),
+        instanceMaterials: (this.aircraft?.materialCount ?? 0) + (this.upgradeAircraft.preview?.materialCount ?? 0) + [...this.enemies.values()]
+          .filter((actor): actor is ProceduralAircraft => actor instanceof ProceduralAircraft)
+          .reduce((total, actor) => total + actor.materialCount, 0),
+        environmentLighting: Boolean(this.aircraft),
+        liveryDetail: this.aircraftQualityDetail,
+      },
     };
   }
   dispose() {
+    this.upgradeAircraft.clear();
     this.aircraft?.dispose();
     for (const actor of this.enemies.values()) actor.dispose();
     this.enemies.clear();
     this.projectileContent.dispose();
     this.bombContent.dispose();
     this.effects.dispose();
+    this.rain.dispose();
     this.showroomBackdrop.dispose();
     this.terrainChunks.dispose();
     this.terrainMat.dispose();

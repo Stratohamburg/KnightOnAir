@@ -104,6 +104,14 @@ Start from the variant's eligible cards and the behaviors used in the requested 
 
 For a configured damage or detachment effect, identify the owning game part, its separation seam, the surface exposed in the model, attachments that leave with it and any effect that follows or stops. For a light or engine effect, place the origin on the visible lens or outlet and record its facing. Inspect the two states from the same camera. Label game-authored damage boundaries and upgrade fittings as gameplay decisions. Cite period evidence for claims about the physical aircraft.
 
+## Effect landmarks on the plate
+
+Record a row for each applicable mount, outlet, propeller disk, aerodynamic point or wing-flow region. Include secondary flow from exposed protrusions on each fitted module. For damageable surfaces record the region and outward normal, including distinct fallback sites for unattributed contact positions. Keep these gameplay annotations separate from historical measurements.
+
+| Landmark ID / plate view | Owning part and side or layer | Local point, axis or region | Effect and strength relative to main tip | Moves or leaves with | Combat-view check |
+| --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |
+
 ## Module edge record
 
 Record one row per visible structural layer. Values are normalized to the chosen three-view drawing unless the implementation profile uses a documented gameplay unit.

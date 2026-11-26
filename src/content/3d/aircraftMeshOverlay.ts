@@ -4,13 +4,14 @@ import type { AircraftTraceStudy } from "../../data/aircraft-references/types";
 
 // Each panel is independently registered in source pixels. Photographs and
 // perspective sketches deliberately have no orthographic registration.
-export function addMeshOverlays(host: HTMLElement, study: AircraftTraceStudy, actor: ReferenceAircraft) {
+export type OverlayPanel = Pick<AircraftTraceStudy["panels"][number], "crop" | "projection">;
+export function addMeshOverlays(host: HTMLElement, panels: readonly OverlayPanel[], actor: ReferenceAircraft) {
   const model = new ProceduralAircraft(actor);
   try {
     if (model.contentError) throw new Error(model.contentError);
     model.group.updateMatrixWorld(true);
-    const figures = host.querySelectorAll<SVGSVGElement>(".trace-panels figure > svg");
-    for (const [i, panel] of study.panels.entries()) {
+    const figures = host.querySelectorAll<SVGSVGElement>("figure > svg");
+    for (const [i, panel] of panels.entries()) {
       if (!panel.projection) continue;
       const { origin, view, scale, angle = 0 } = panel.projection;
       const [cx, cy, w, h] = panel.crop;
@@ -54,7 +55,9 @@ export function addMeshOverlays(host: HTMLElement, study: AircraftTraceStudy, ac
         image.setAttribute(key, String(num));
       image.setAttribute("opacity", ".46");
       image.setAttribute("href", canvas.toDataURL());
-      figures[i].querySelector("image")?.after(image);
+      const svg = figures[i];
+      const original = [...svg.children].find(layer => layer.tagName === "image" || layer.querySelector("image"));
+      original?.after(image);
     }
   } finally {
     model.dispose();

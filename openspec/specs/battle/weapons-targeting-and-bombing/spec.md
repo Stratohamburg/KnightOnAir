@@ -39,19 +39,30 @@
 - **WHEN** 武器目标层不包含当前目标层
 - **THEN** 武器不会对该目标产生命中或锁定
 
+#### Scenario: Player automatic fire follows each mount's firing arc
+
+- **WHEN** 存活敌人进入某个有效挂点的射程和射击扇形，且属于武器允许的目标层
+- **THEN** 该挂点在冷却就绪时开火，其他挂点独立判断各自的开火条件
+- **WHEN** 挂点的射界内无合格敌人
+- **THEN** 该挂点停止发射新弹体
+
+### Requirement: Player aim assistance
+
+玩家武器 MUST 在开火时从自身射界内选择最接近挂点朝向的合格敌人，并根据其移动预估短时提前量。投射物 MUST 从当前姿态下的枪口位置发射，初始方向限制在该挂点的射击扇形内。玩家航向遵循飞行控制规则，武器瞄准 MUST NOT 将目标传给玩家飞行控制。
+
+#### Scenario: Aim within the mount's firing arc
+
+- **WHEN** 玩家武器对横穿射界的敌机开火
+- **THEN** 弹体初始方向向预测位置偏转；如果提前量或散射使发射方向超出射击扇形，发射方向限制在扇形边界
+
+#### Scenario: Weapon aim does not steer the aircraft
+
+- **WHEN** 敌机进入或离开玩家武器的射界
+- **THEN** 炮位独立响应，玩家的飞行轨迹由飞行控制决定
+
 ### Requirement: Locking and guided fire
 
-敌方锁定武器 MUST 按目标角度、距离和锁定时间积累锁定，并在失去条件时按规则衰减。敌方锁定武器完成锁定后 MUST 记录目标和发射时的预测方向。玩家控制循环 MUST NOT 自动选择目标、自动修正武器朝向或自动积累锁定。玩家武器沿其实体挂点和当前姿态发射，玩家通过转向、滚转和提前量把目标带入火线。
-
-#### Scenario: Player weapon does not auto-acquire
-
-- **WHEN** 敌机进入玩家武器的射程或扇形
-- **THEN** 玩家武器不会写入目标 ID、积累锁定进度或把发射方向改成预测目标方向
-
-#### Scenario: Player weapon follows flight pose
-
-- **WHEN** 玩家飞机正在滚转或转弯
-- **THEN** 玩家武器沿当前实体姿态和局部挂点方向发射，命中由玩家的飞行意图和弹道决定
+敌方锁定武器 MUST 按目标角度、距离和锁定时间积累锁定，并在失去条件时按规则衰减。敌方锁定武器完成锁定后 MUST 记录目标和发射时的预测方向。玩家辅助瞄准只作用于初始发射方向，MUST NOT 积累锁定或向弹体赋予制导目标。
 
 #### Scenario: Lost lock decay
 

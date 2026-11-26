@@ -51,7 +51,7 @@ A projection outline constrains visible extents. Use a section drawing, a locall
 4. Check the fitted axis against the housing over the span occupied by the body. Where the upper housing follows the engine, its local slope should roughly track the upper body edge with room for structure. Compare the gap near both ends and through the middle. A tapered fairing can change that gap. Keep the rigid body straight through the taper.
 5. Show visible contours as solid lines, hidden estimates as dashed lines and the axis as a centerline. If the question is where the engine itself sits, place a translucent rectangle along its axis, leaving the inlet duct and tailpipe their own lengths. Use the same diameter for the rectangle and the inferred body edges so they coincide after a revision. Label its ends as estimated while the internal joints are concealed. Paired engines that coincide in side view can share one marker when the other views establish both positions.
 
-The [Ho 229 V2 profile](../../../../docs/reference/ho229-v2-profile.md) records the lip readings, housing allowance and estimated engine-body interval for this example.
+The [Ho 229 V2 profile](../../../../docs/aircraft-profiles/ho229-v2-profile.md) records the lip readings, housing allowance and estimated engine-body interval for this example.
 
 ## Boundary decisions
 
@@ -70,7 +70,7 @@ The [Ho 229 V2 profile](../../../../docs/reference/ho229-v2-profile.md) records 
 - A twin-boom aircraft needs a separate edge and parent record for each boom and for the connecting tailplane.
 - Landing gear is a module when the source shows a visible leg, axle, wheel, or fairing. Record its attachment edge and ground clearance.
 
-For a worked stacked-wing example, see the [Dr.I variant record](../../../../docs/reference/fokker-dr1-profile.md).
+For a worked stacked-wing example, see the [Dr.I variant record](../../../../docs/aircraft-profiles/fokker-dr1-profile.md).
 
 ## Acceptance
 

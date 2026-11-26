@@ -1,11 +1,13 @@
 import "./style.css";
-import { GameApp } from "./app/GameApp";
-import { ReferenceApp } from "./app/ReferenceApp";
+import { referenceRequested } from "./app/debugVisibility";
 const root = document.querySelector<HTMLElement>("#app")!;
 if (import.meta.env.DEV && new URLSearchParams(location.search).has("environmentTest")) {
   void import("./rendering/EnvironmentAcceptance").then(({ mountEnvironmentAcceptance }) => mountEnvironmentAcceptance(root));
-} else if (new URLSearchParams(location.search).has("reference") || location.hash === "#reference") {
-  new ReferenceApp(root);
+} else if (referenceRequested(location.search, location.hash)) {
+  void import("./app/DebugWorkbench").then(({ DebugWorkbench }) => {
+    const workbench = new DebugWorkbench(root);
+    if (import.meta.env.DEV) Object.assign(window, { __koaWorkbench: workbench });
+  });
 } else {
-  new GameApp(root);
+  void import("./app/GameApp").then(({ GameApp }) => new GameApp(root));
 }

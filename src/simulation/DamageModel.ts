@@ -107,6 +107,7 @@ export function evaluateDamage(parts: readonly Part[]): ControlDamage {
 
 export interface PartDamageResult {
   appliedDamage: number;
+  damagedParts: { id: string; amount: number }[];
   transitions: { part: Part; state: PartDamageState }[];
   destroyed: boolean;
 }
@@ -161,10 +162,12 @@ export function applyPartDamage(
   const previousHealth = totalPartHealth(entity.parts);
   const appliedDamage = Math.min(previousHealth, Math.max(0, amount));
   const transitions: PartDamageResult["transitions"] = [];
-  if (!(appliedDamage > 0)) return { appliedDamage: 0, transitions, destroyed: false };
+  const damagedParts: PartDamageResult["damagedParts"] = [];
+  if (!(appliedDamage > 0)) return { appliedDamage: 0, damagedParts, transitions, destroyed: false };
   let remaining = appliedDamage;
   const spend = (target: Part, share: number) => {
     const damage = Math.min(target.health, share);
+    if (damage > 0) damagedParts.push({ id: target.id, amount: damage });
     target.health = Math.max(0, target.health - damage);
     const previous = target.state ?? "intact";
     target.state = stateFor(target);
@@ -188,5 +191,5 @@ export function applyPartDamage(
   if (transitions.length) entity.partRevision++;
   entity.damageRevision++;
   entity.damage = evaluateDamage(entity.parts);
-  return { appliedDamage, transitions, destroyed: entity.health === 0 };
+  return { appliedDamage, damagedParts, transitions, destroyed: entity.health === 0 };
 }

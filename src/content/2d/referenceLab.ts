@@ -34,13 +34,13 @@ function roleLabel(part: ReferencePart) {
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
-export function referenceCatalog() {
-  const entries = AIRCRAFT_REFERENCES.map(item =>
+export function referenceCatalog(references = AIRCRAFT_REFERENCES) {
+  const entries = references.map(item =>
     `<li><button type="button" class="reference-roster-item" data-frame="${item.id}">
       <span>${item.prototype}</span><small class="reference-era" data-era="${item.era}">${REFERENCE_ERAS[item.era]}</small>
     </button></li>`,
   ).join("");
-  return `<nav class="reference-roster" aria-label="机型目录"><ul>${entries}</ul></nav>`;
+  return `<nav class="reference-roster" aria-label="机型目录"><ul>${entries || "<li>暂无原型档案</li>"}</ul></nav>`;
 }
 
 export function referenceHeading(reference: AircraftReference, showMatch: boolean) {

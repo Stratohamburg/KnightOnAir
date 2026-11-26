@@ -19,7 +19,7 @@ export const META_TABS: readonly MetaTabDef[] = [
   { id: "equipment", name: "装备", icon: "wrench" },
   { id: "sortie", name: "出击", icon: "plane" },
   { id: "reservedA", name: "预留", icon: "compass", placeholder: true },
-  { id: "showroom", name: "展厅", icon: "plane" },
+  { id: "showroom", name: "展台", icon: "plane" },
 ];
 
 export const PART_SLOTS: readonly [string, string][] = [
@@ -60,8 +60,8 @@ export function renderTopBar(playerLevel: number, currency: number) {
   </header>`;
 }
 
-export function renderBottomNav(activeTab: MetaTab) {
-  return `<nav class="bottom-nav" aria-label="主导航">${META_TABS.map(
+export function renderBottomNav(activeTab: MetaTab, showDebug = false) {
+  return `<nav class="bottom-nav" aria-label="主导航">${META_TABS.filter(tab => showDebug || tab.id !== "showroom").map(
     (tab) =>
       `<button type="button" data-tab="${tab.id}"${tab.id === "showroom" ? ' data-reserved-slot="reservedB"' : ""} class="nav-item${tab.placeholder ? " placeholder-slot" : ""}${activeTab === tab.id ? " selected" : ""}"${activeTab === tab.id ? ' aria-current="page"' : ""}>${icon(tab.icon)}<span>${tab.name}</span></button>`,
   ).join("")}</nav>`;
@@ -102,30 +102,21 @@ export interface SortieViewModel {
   bestScore: number;
   canLaunch: boolean;
   modelError?: string;
+  briefing?: { objective: string; equipment: string; environment: string; preset: boolean };
 }
 
 export function renderSortieBody(model: SortieViewModel) {
-  const { frame, sortieEra, missionNumber, missionName, eraLabel, bestScore, canLaunch, modelError } = model;
+  const { frame, missionNumber, missionName, eraLabel, bestScore, canLaunch, modelError, briefing } = model;
   const switchButton =
-    sortieEra === "pioneer"
+    briefing?.preset
       ? ""
       : `<button type="button" class="btn btn-xs btn-secondary" data-tab="equipment">更换 ${icon("arrow")}</button>`;
   return `<section class="home-card panel-surface">
-    <div class="card-heading">
-      <div class="card-title-group">
-        <span class="eyebrow">SORTIE AIRFRAME · ${frame.role}</span>
-        <h2>${frame.name}</h2>
-      </div>
-      ${switchButton}
-    </div>
-    <p class="frame-description">${frame.description}</p>
-    ${renderStats(frame)}
-    ${renderWeapons(frame)}
     <div class="mission-strip">
-      <span class="mission-number">${missionNumber}</span>
+      ${missionNumber ? `<span class="mission-number">${missionNumber}</span>` : ""}
       <div class="mission-meta">
         <strong>${missionName}</strong>
-        <small>${eraLabel} · 无尽巡航</small>
+        <small>${eraLabel} · ${missionNumber ? "战役" : "自由巡航"}</small>
       </div>
       ${actionButton("missions", `选关 ${icon("chevron")}`, {
         size: "sm",
@@ -133,6 +124,14 @@ export function renderSortieBody(model: SortieViewModel) {
         extraClass: "mission-select",
         attributes: 'aria-haspopup="dialog"',
       })}
+    </div>
+    <div class="sortie-brief">
+      <p>${briefing?.objective ?? "应对不断抵达的遭遇，收集补给并积累积分。"}</p>
+      <small>环境 · ${briefing?.environment ?? "晴朗 · 白天"}</small>
+    </div>
+    <div class="sortie-airframe">
+      <span>${briefing?.preset ? "任务机体" : "当前装备"} · <b>${frame.name}</b>${briefing?.equipment ? ` · ${briefing.equipment}` : ""}</span>
+      ${switchButton}
     </div>
     <div class="sortie-actions">
       ${actionButton("help", icon("help"), {
@@ -152,7 +151,7 @@ export function renderSortieBody(model: SortieViewModel) {
       )}
     </div>
     <div class="home-footer">
-      <span>${modelError ?? "ALL SYSTEMS NOMINAL"}</span>
+      ${modelError ? `<span>${modelError}</span>` : ""}
       <span>最高积分<b>${formatCount(bestScore)}</b></span>
     </div>
   </section>`;
@@ -175,9 +174,9 @@ export function renderEquipmentBody(model: EquipmentViewModel) {
   const isEquipped = equippedId === frame.id;
 
   const eraButtons = (Object.entries(ERAS) as [EraId, (typeof ERAS)[EraId]][])
-    .map(([id, group]) => {
+    .flatMap(([id, group]) => {
       const first = AIRFRAMES.findIndex((candidate) => eraOf(candidate) === id);
-      return `<button type="button" data-preview="${first}" aria-pressed="${id === era}">${group.label}</button>`;
+      return first < 0 ? [] : [`<button type="button" data-preview="${first}" aria-pressed="${id === era}">${group.label}</button>`];
     })
     .join("");
 

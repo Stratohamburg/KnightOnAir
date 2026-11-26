@@ -1,6 +1,6 @@
 import type { EraId, Airframe } from "../data/aircrafts";
 import { WEAPONS, type WeaponConfig } from "../data/weapons";
-import type { Upgrade } from "../data/upgrades";
+import { upgradeById, type Upgrade } from "../data/upgrades";
 import type { Part, RuntimeWeapon } from "./types";
 
 export interface RefitContext {
@@ -22,19 +22,12 @@ export function refitWeaponForEra(id: string, era: EraId): WeaponConfig {
 }
 
 export function refitLimit(context: RefitContext, upgrade: Upgrade) {
-  if (context.frame.geometryProfile === "fokkerDr1") return 1;
-  const headroom = context.frame.refit?.headroom ??
-    (context.frame.hardpoints >= 8 ? .8 : context.era === "ww1" ? .55 : .35);
-  if (headroom >= .5 && upgrade.parts.some((part) =>
-    ["wing", "engine", "gun", "cannon", "turret", "tailGun"].includes(part.kind)))
-    return Math.max(2, Math.floor(context.frame.hardpoints * headroom / 3));
-  return 1;
+  return upgrade.unique ? 1 : context.frame.upgradeStackLimits?.[upgrade.id] ?? upgrade.stackLimit ?? 10;
 }
 
 export function weaponCapacity(context: RefitContext) {
-  const extra = context.parts.filter((part) => part.id.startsWith("giant_wing_") && part.health > 0).length;
-  return context.frame.hardpoints + extra +
-    (context.upgrades.includes("modular_frame") ? 3 : 0);
+  return context.upgrades.reduce((capacity, id) =>
+    capacity + (upgradeById(id)?.capacityContribution ?? 0), context.frame.hardpoints);
 }
 
 export function isUpgradeEligible(context: RefitContext, upgrade: Upgrade) {
@@ -52,8 +45,8 @@ export function isUpgradeEligible(context: RefitContext, upgrade: Upgrade) {
     (id === "top_turret" && context.weapons.some((weapon) => weapon.config.category === "turret"))
   ) ?? true;
   const fits = !upgrade.weapons?.length ||
-    context.weapons.length + upgrade.weapons.length <= weaponCapacity(context);
-  const limit = upgrade.max ?? (upgrade.repeatable ? Number.POSITIVE_INFINITY : refitLimit(context, upgrade));
+    context.weapons.length + upgrade.weapons.length <= weaponCapacity(context) + (upgrade.capacityContribution ?? 0);
+  const limit = refitLimit(context, upgrade);
   return uses < limit &&
     weaponEraCompatible && eraCompatible && !conflicts && prerequisites && fits;
 }

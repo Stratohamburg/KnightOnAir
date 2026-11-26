@@ -54,6 +54,18 @@
 
 ### Requirement: Era content selection
 
+玩家名录 MUST 只收录有可用专属三维装配器的机型，并沿用校验台的历史时代分组。已有可用校验模型的早期机型可以沿用该模型出击，校验台继续显示其几何近似与待核对项。
+
+#### Scenario: Reference aircraft enter the playable roster
+
+- **WHEN** 玩家在机库预览、装备或驾驶一架已接入的机型
+- **THEN** 游戏使用校验台同一机型的专属基础装配器，战斗部件、挂点和解锁条件来自该机型配置
+
+#### Scenario: A mission era has no playable aircraft of its own
+
+- **WHEN** 某个关卡时代没有可装备机型
+- **THEN** 该时代不出现在装备筛选中，关卡仍按已有规则使用指定或已装备的机型
+
 时代 MUST 定义标签、任务、颜色、敌人池、阶段和层级上限，生成和局外展示必须使用同一时代上下文。
 
 #### Scenario: Era enemy pool

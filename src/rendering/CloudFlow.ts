@@ -18,20 +18,20 @@ export function smoothCloudFlow(current: number, target: number, delta: number, 
 const horizontalFrequency = .009;
 const verticalFrequency = .012;
 const edgeAmplitude = .22;
-export const distantVerticalMorph = .45;
-export const distantRoofMorph = 3.8;
-export const distantCoverageMorph = .1;
-export const billowRiseRate = 1.15;
-export const billowLocalShiftAmplitude = 1.35;
+export const distantVerticalMorph = .65;
+export const distantRoofMorph = 4.8;
+export const distantCoverageMorph = .13;
+export const billowRiseRate = 2.6;
+export const billowLocalShiftAmplitude = 1.95;
 
 export function localBillowShift(x: number, y: number, z: number, time: number, strength: number) {
   // Zero-texture analytic local oscillation: gives clouds continuous slow deformation
   // and subtle bounded local shift in place without ever adding net horizontal drift.
   const amp = billowLocalShiftAmplitude * strength;
-  const t = time * .72;
-  const dx = (Math.sin(z * .047 + t) * .62 + Math.cos(y * .061 - t * .73) * .38) * amp;
-  const dy = (Math.cos(x * .053 + z * .041 + t * .85) * .65 + Math.sin(y * .048 + t * .57) * .35) * amp * .8;
-  const dz = (Math.cos(x * .049 - t * .81) * .62 + Math.sin(y * .059 + t * .67) * .38) * amp;
+  const t = time * 1.15;
+  const dx = (Math.sin(z * .055 + t) * .62 + Math.cos(y * .068 - t * .77) * .38) * amp;
+  const dy = (Math.cos(x * .061 + z * .048 + t * .92) * .65 + Math.sin(y * .054 + t * .63) * .35) * amp * .85;
+  const dz = (Math.cos(x * .057 - t * .86) * .62 + Math.sin(y * .065 + t * .71) * .38) * amp;
   return { dx, dy, dz };
 }
 
@@ -80,18 +80,18 @@ export const cloudFlowGLSL = `
   // bounded local movement while keeping macro horizontal motion strictly wind-driven.
   vec3 localBillowShift(vec3 at) {
     float amp = ${billowLocalShiftAmplitude} * selfStrength;
-    float t = selfTime * .72;
-    float dx = (sin(at.z * .047 + t) * .62 + cos(at.y * .061 - t * .73) * .38) * amp;
-    float dy = (cos(at.x * .053 + at.z * .041 + t * .85) * .65 + sin(at.y * .048 + t * .57) * .35) * amp * .8;
-    float dz = (cos(at.x * .049 - t * .81) * .62 + sin(at.y * .059 + t * .67) * .38) * amp;
+    float t = selfTime * 1.15;
+    float dx = (sin(at.z * .055 + t) * .62 + cos(at.y * .068 - t * .77) * .38) * amp;
+    float dy = (cos(at.x * .061 + at.z * .048 + t * .92) * .65 + sin(at.y * .054 + t * .63) * .35) * amp * .85;
+    float dz = (cos(at.x * .057 - t * .86) * .62 + sin(at.y * .065 + t * .71) * .38) * amp;
     return vec3(dx, dy, dz);
   }
 
   // Analytic lobe phase pulse (zero extra 3D texture tap in empty sky).
   vec2 analyticMorph(vec3 at) {
-    float phase = selfTime * .92 + sin(at.x * .038) * 2.1 + cos(at.z * .041) * 2.1 + sin(at.y * .055) * 1.4;
-    float lift = cos(phase) * 1.35;
-    float pulse = sin(phase) * .72 + sin(selfTime * .58 + (at.x - at.z) * .045) * .28;
+    float phase = selfTime * 1.25 + sin(at.x * .046) * 2.3 + cos(at.z * .049) * 2.3 + sin(at.y * .062) * 1.6;
+    float lift = cos(phase) * 1.85;
+    float pulse = sin(phase) * .72 + sin(selfTime * .78 + (at.x - at.z) * .052) * .28;
     return vec2(lift, pulse) * selfStrength;
   }
 

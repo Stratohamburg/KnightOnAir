@@ -4,7 +4,7 @@ import { pioneerReviewModel } from "./pioneerReviewModels";
 import { AIRFRAMES, type Airframe } from "../../data/aircrafts";
 import type { Part, Player, Enemy } from "../../simulation/types";
 import { aircraftGeometryProfile } from "./airframeShape";
-import { AIRCRAFT_REFERENCES, aircraftReferenceByFrameId } from "../../data/aircraftReferences";
+import { AIRCRAFT_REFERENCES, aircraftReferenceByFrameId, type AircraftReference } from "../../data/aircraftReferences";
 import { aircraftTracePlate } from "../2d/aircraftTracePlate";
 import { fokkerReviewPlate } from "../2d/fokkerReviewPlate";
 import { buildHo229Model } from "./ho229Model";
@@ -12,18 +12,24 @@ import { ho229ReviewPlate } from "../2d/ho229ReviewPlate";
 import { pistonFighterReviewPlate } from "../2d/pistonFighterReviewPlate";
 import { buildPistonFighter, createFighterPreview, fighterFrame } from "./pistonFighterModel";
 import { spitfireVbSheet, zero21Sheet, type FighterSheet } from "../../data/pistonFighterSheets";
-import { meteorF3ReviewPlate } from "../2d/meteorF3ReviewPlate";
+import { meteorF3ReviewPlate, meteorOverlayPanels } from "../2d/meteorF3ReviewPlate";
+import type { OverlayPanel } from "./aircraftMeshOverlay";
 import { meteorF3Id } from "../../data/meteorF3Sheet";
 import { meteorF3Frame } from "../../data/meteorF3ModelSheet";
 import { buildMeteorF3Model, createMeteorF3Preview } from "./meteorF3Model";
+import vampire from "../../data/aircraft-references/vampire";
+import { fb5Frame } from "../../data/vampireFb5Sheet";
+import { buildVampireFb5Model, createVampireFb5Preview } from "./vampireFb5Model";
 import type { ReferenceAircraft } from "./AircraftFactory";
 import { muzzleAnchor, partAnchor } from "./anchors";
+import { outlineVertex, type AircraftEffectSites } from "./aircraftEffectSites";
 
 export type AircraftVisualFrame = Omit<Pick<Airframe,
-  "id" | "name" | "role" | "color" | "accent" | "length" | "wingspan" | "shape" | "era" | "missionEra" | "geometryProfile" | "liftCenterY" | "liftCenterZ"
->, "geometryProfile"> & { geometryProfile?: Airframe["geometryProfile"] | "meteorF3" | "pioneerReview" | FighterSheet["assembly"]["profile"] };
+  "id" | "liveryId" | "name" | "role" | "color" | "accent" | "length" | "wingspan" | "shape" | "era" | "missionEra" | "geometryProfile" | "liftCenterY" | "liftCenterZ" | "airflowEffects"
+>, "geometryProfile"> & { geometryProfile?: Airframe["geometryProfile"] | "meteorF3" | "vampireFb5" };
 
 export interface AircraftModelContext {
+  effectSites: AircraftEffectSites;
   actor: Player | Enemy | ReferenceAircraft;
   frame: AircraftVisualFrame;
   handledParts: Set<string>;
@@ -179,7 +185,9 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
     aft: tinted("#d3bfac", .22), tailpost: center.material };
   for (const bay of hullBays) {
     const geometry = cached("hull:" + bay.id, () => hullGeometry(bay.start, bay.end));
-    context.mesh(geometry, bayMaterials[bay.id], shell).name = "dr1-hull-" + bay.id;
+    const skin = context.mesh(geometry, bayMaterials[bay.id], shell);
+    skin.name = "dr1-hull-" + bay.id;
+    context.effectSites.surfaces.push({partId: bay.id === "cowling" ? enginePart.id : centerPart.id, mesh: skin});
   }
   const controlFabric = tinted("#d3ad84", .38);
   const cockpit = context.mesh(cached("cockpit", () => new THREE.SphereGeometry(1, 16, 8)),
@@ -195,7 +203,10 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
       const side = part.slot === "leftWing" ? -1 : 1;
       const outline: Point[] = [[0, 50], [1.2 / unit, 79], [1.2 / unit, 94], [0, 98]];
       const geometry = cached("giant-wing:" + side, () => wingSkin(outline, wings[0], side * unit));
-      context.mesh(geometry, material, root, part.x, part.y ?? 0, part.z - stationZ(74));
+      const mesh = context.mesh(geometry, material, root, part.x, part.y ?? 0, part.z - stationZ(74));
+      context.effectSites.surfaces.push({partId: part.id, mesh});
+      context.effectSites.add(part.id, "tip", "wingTip", mesh, outlineVertex(mesh, "x", side));
+      context.effectSites.addWingFlow(part.id, "surface", mesh);
       mark(context, part.id);
       continue;
     }
@@ -212,8 +223,10 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
       const outline: Point[] = [[0,wing.leading],[width/unit,wing.leading],[width/unit,wing.trailing],[0,wing.trailing]];
       const geometry = cached(["extension", wing.id, width, terminal.side].join(":"),
         () => wingSkin(outline, wing, terminal.side*unit));
-      context.mesh(geometry, material, root, part.x-terminal.side*width/2, wing.height*unit)
-        .name = "dr1-wing-extension";
+      const extension = context.mesh(geometry, material, root, part.x-terminal.side*width/2, wing.height*unit);
+      extension.name = "dr1-wing-extension";
+      context.effectSites.surfaces.push({partId: part.id, mesh: extension});
+      context.effectSites.addWingFlow(part.id, "surface", extension);
       const weapon = context.actor.weapons.find(candidate => candidate.partId === part.id);
       if (weapon) {
         const muzzle = muzzleAnchor(part, weapon, context.actor.heading, 0);
@@ -223,6 +236,8 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
           metal, root, muzzle.x, muzzle.y, muzzle.z - .24);
         barrel.name = "dr1-wing-gun";
         barrel.rotation.x = Math.PI / 2;
+        context.effectSites.add(part.id, "wing-gun-casing", "casing", root, [muzzle.x, muzzle.y-.08, muzzle.z-.37],
+          {direction: [0,-1,0], basis: "configuredFallback"});
       }
       mark(context, part.id);
       continue;
@@ -245,14 +260,21 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
       // Tint the part's own finish so highlight and damage still affect every fixed bay.
       if (panel.id === "fixed" && segment.role !== "main")
         material.uniforms.baseColor.value.multiplyScalar(segment.role === "root" ? .75 : .91);
-      context.mesh(geometry, panel.id === "fixed" ? material : controlFabric, group).name =
+      const mesh = context.mesh(geometry, panel.id === "fixed" ? material : controlFabric, group);
+      mesh.name =
         panel.id === "aileron" ? "dr1-aileron-" + (side < 0 ? "left" : "right") : "dr1-wing-" + segment.role;
+      context.effectSites.surfaces.push({partId: part.id, mesh});
+      if (panel.id === "fixed") {
+        if (segment.role === "main") context.effectSites.addWingFlow(part.id, "surface", mesh);
+        if (segment.role === "tip") context.effectSites.add(part.id, "tip", "wingTip", mesh, outlineVertex(mesh,"x",side));
+      }
     }
     mark(context, part.id);
   }
 
   const point = (x: number, h: number, s: number) => new THREE.Vector3(x * unit, h * unit, stationZ(s));
   for (const side of [-1, 1]) {
+    context.effectSites.add(centerPart.id, "interplane-" + side, "protrusion", center.root, point(side*109,63,50).toArray());
     cylinderBetween(context, center.root, wood, "dr1-interplane",
       point(side * 109, -21, 74), point(side * 109, 63, 50), 1.3 * unit);
     for (const s of [37, 65]) {
@@ -268,11 +290,15 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
   tail.root.add(tailplane);
   const tailSkin = (outline: readonly Point[]) => plateGeometry(outline.map(([x,s]) =>
     new THREE.Vector2(x * unit, (s - 175) * unit)), 1.6 * unit).rotateX(-Math.PI / 2);
-  context.mesh(cached("stabilizer", () => tailSkin(mirroredOutline(stabilizerHalf))),
-    tail.material, tailplane, 0, 5.2 * unit).name = "dr1-stabilizer";
+  const stabilizer = context.mesh(cached("stabilizer", () => tailSkin(mirroredOutline(stabilizerHalf))), tail.material, tailplane, 0, 5.2 * unit);
+  stabilizer.name = "dr1-stabilizer";
+  context.effectSites.surfaces.push({partId: tailPart.id, mesh: stabilizer});
   for (const side of [-1, 1]) {
     const elevator = cached("elevator:" + side, () => tailSkin(elevatorHalf.map(([x,s]) => [side*x,s])));
-    context.mesh(elevator, controlFabric, tailplane, 0, 5.2 * unit).name =
+    const surface = context.mesh(elevator, controlFabric, tailplane, 0, 5.2 * unit);
+    context.effectSites.surfaces.push({partId: tailPart.id, mesh: surface});
+    context.effectSites.add(tailPart.id, "tip-" + side, "tailTip", surface, outlineVertex(surface,"x",side));
+    surface.name =
       "dr1-elevator-" + (side < 0 ? "left" : "right");
   }
   const fin = cached("fin", () => plateGeometry(finOutline.map(([s,h]) =>
@@ -281,7 +307,9 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
   rudder.name = "dr1-rudder";
   rudder.position.set(0, rudderPivot.foot * unit, (175 - rudderPivot.station) * unit);
   tail.root.add(rudder);
-  context.mesh(fin, controlFabric, rudder, -.8 * unit, -rudder.position.y, -rudder.position.z).name = "dr1-fin";
+  const finMesh = context.mesh(fin, controlFabric, rudder, -.8 * unit, -rudder.position.y, -rudder.position.z);
+  finMesh.name = "dr1-fin";
+  context.effectSites.surfaces.push({partId: tailPart.id, mesh: finMesh});
   cylinderBetween(context, tail.root, metal, "dr1-rudder-pin",
     rudder.position.clone().add(new THREE.Vector3(0,-3*unit,0)),
     rudder.position.clone().add(new THREE.Vector3(0,5*unit,0)), 1.6*unit);
@@ -340,6 +368,8 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
       const barrel = context.mesh(cached("nose-gun", () => new THREE.CylinderGeometry(.025, .025, .7, 6)),
         metal, nose.root, muzzle.x - nosePart.x, muzzle.y - (nosePart.y ?? 0), muzzle.z - nosePart.z - .35);
       barrel.rotation.x = Math.PI / 2;
+      context.effectSites.add(nosePart.id, "casing-" + i, "casing", barrel, [0,-.35,.025],
+        {direction: [0,0,1], basis: "configuredFallback"});
     }
     mark(context, "nose");
   }
@@ -390,11 +420,14 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
 }
 
 interface AircraftModelRegistration {
-  reviewPlate: (blockedReason?: string) => string;
+  reviewPlate?: (blockedReason?: string) => string;
+  overlayPanels?: readonly OverlayPanel[];
   preview?: { frame: AircraftVisualFrame; create: () => ReferenceAircraft };
   model?: {
     profileId: NonNullable<AircraftVisualFrame["geometryProfile"]>;
     build: AircraftModelBuilder;
+    buildFittings?: boolean;
+    approval?: NonNullable<AircraftReference["pipeline"]>;
   };
 }
 
@@ -402,18 +435,24 @@ function fighterRegistration(sheet: FighterSheet): AircraftModelRegistration {
   return {
     reviewPlate: reason => pistonFighterReviewPlate(sheet, reason),
     preview: { frame: fighterFrame(sheet), create: () => createFighterPreview(sheet) },
-    model: { profileId: sheet.assembly.profile, build: context => buildPistonFighter(context, sheet) },
+    model: { profileId: sheet.assembly.profile, build: context => buildPistonFighter(context, sheet), buildFittings: true },
   };
 }
 
 // A plate may be reviewed before its variant has an approved mesh builder.
 const aircraftModels = new Map<string, AircraftModelRegistration>([
+  [fb5Frame.id, {
+    reviewPlate: () => aircraftTracePlate(vampire.study),
+    preview: { frame: fb5Frame, create: createVampireFb5Preview },
+    model: { profileId: "vampireFb5", build: buildVampireFb5Model },
+  }],
   [spitfireVbSheet.assembly.frameId, fighterRegistration(spitfireVbSheet)],
   [zero21Sheet.assembly.frameId, fighterRegistration(zero21Sheet)],
   ["stingray_16", { reviewPlate: ho229ReviewPlate, model: { profileId: "ho229V2", build: buildHo229Model } }],
   ["heron_09", { reviewPlate: fokkerReviewPlate, model: { profileId: "fokkerDr1", build: buildFokkerDr1Model } }],
   [meteorF3Id, {
     reviewPlate: meteorF3ReviewPlate,
+    overlayPanels: meteorOverlayPanels,
     preview: { frame: meteorF3Frame, create: createMeteorF3Preview },
     model: { profileId: "meteorF3", build: buildMeteorF3Model },
   }],
@@ -429,6 +468,7 @@ for (const { frameId, study } of AIRCRAFT_REFERENCES) {
 
 export const aircraftReviewPlate = (frameId: string) => aircraftModels.get(frameId)?.reviewPlate;
 export const aircraftReferencePreview = (frameId: string) => aircraftModels.get(frameId)?.preview;
+export const aircraftOverlayPanels = (frameId: string) => aircraftModels.get(frameId)?.overlayPanels;
 
 export function resolveAircraftModel(frame: AircraftVisualFrame) {
   const registration = aircraftModels.get(frame.id);
@@ -438,7 +478,7 @@ export function resolveAircraftModel(frame: AircraftVisualFrame) {
       registration.model?.profileId === frame.geometryProfile && registration.preview?.frame.id === frame.id)
     return { model: registration.model };
   if (reference?.study?.pending) return { error: reference.study.pending };
-  const pipeline = reference?.pipeline;
+  const pipeline = reference?.pipeline ?? registration.model?.approval;
   if (!pipeline?.evidenceMatrix?.length) return { error: "缺少该机型的几何证据记录" };
   const pending = pipeline.evidenceMatrix.filter(({ status }) => status === "unresolved" || status === "estimate");
   if (pending.length) {

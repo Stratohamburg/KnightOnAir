@@ -9,6 +9,7 @@ import { ContentCatalog } from "./ContentCatalog";
 
 export interface SceneActor {
   group: THREE.Group;
+  cloudContactSites?: readonly THREE.Vector3[];
   dispose(): void;
 }
 
@@ -94,8 +95,17 @@ export function createSurfaceActor(e: Enemy, catalog: ContentCatalog): SceneActo
     return merged;
   });
   group.add(new THREE.Mesh(model.value, [material, dark, cargo.value]));
+  if (!model.value.boundingBox) model.value.computeBoundingBox();
+  const hull = model.value.boundingBox!;
+  const center = hull.getCenter(new THREE.Vector3());
+  const roof = (center.y + hull.max.y) * .5;
   return {
     group,
+    cloudContactSites: config.frame.maxSpeed > 0 ? [
+      new THREE.Vector3(center.x, roof, (hull.min.z + center.z) * .5),
+      new THREE.Vector3(center.x, roof, (hull.max.z + center.z) * .5),
+      new THREE.Vector3(center.x, roof, center.z),
+    ] : [],
     dispose() {
       group.removeFromParent();
       group.clear();

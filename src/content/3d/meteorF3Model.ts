@@ -7,15 +7,28 @@ import { partFromRecipe } from "../../simulation/parts";
 import type { AircraftModelContext } from "./aircraftModels";
 import type { ReferenceAircraft } from "./AircraftFactory";
 import { partAnchor } from "./anchors";
+import { outlineVertex } from "./aircraftEffectSites";
 
 import { loft, type Vertex } from "./sectionLoft";
 const vertex = (x: number, y: number, station: number): Vertex => [x * meteorUnit, y * meteorUnit, meteorZ(station)];
 
 type WingRow = (typeof meteorInboardWing)[number];
 type ChordSection = readonly (readonly [number, number, number])[];
-function liftingSurface(rows: readonly WingRow[], section: ChordSection) {
-  return loft(rows.map(({ span, fore, aft, high, low }) => {
-    const at = (chord: number, height: number) => vertex(span, low + (high - low) * height, fore + (aft - fore) * chord);
+function nacelleSkin(station: number, height: number, side: number) {
+  const i = meteorNacelle.findIndex(row => row[0] >= station);
+  const b = meteorNacelle[i < 0 ? meteorNacelle.length - 1 : i];
+  const a = meteorNacelle[Math.max(0, meteorNacelle.indexOf(b) - 1)];
+  const f = Math.max(0, Math.min(1, (station - a[0]) / (b[0] - a[0] || 1)));
+  const mix = (k: number) => a[k] + f * (b[k] - a[k]);
+  return mix(1) + side * mix(3) * Math.sqrt(Math.max(0, 1 - ((height - mix(2)) / mix(4)) ** 2));
+}
+function liftingSurface(rows: readonly WingRow[], section: ChordSection, join?: "inner" | "outer") {
+  return loft(rows.map(({ span, fore, aft, high, low }, index) => {
+    const seam = join === "inner" && index === rows.length - 1 || join === "outer" && index === 0;
+    const at = (chord: number, height: number) => {
+      const y = low + (high - low) * height, station = fore + (aft - fore) * chord;
+      return vertex(seam ? nacelleSkin(station, y, join === "inner" ? -1 : 1) : span, y, station);
+    };
     const upper = section.map(([chord, top]) => at(chord, top));
     const lower = section.slice(1).reverse().map(([chord, , bottom]) => at(chord, bottom));
     return [...upper, ...lower];
@@ -27,14 +40,13 @@ function liftingSurface(rows: readonly WingRow[], section: ChordSection) {
 const [frontStation, engineX] = meteorNacelle[0];
 const [outletStation, outletX, outletY, outletRadius] = meteorNacelle[meteorNacelle.length - 1];
 
-// Nacelle vertices are local to the inlet anchor. A measured circle is used in
-// both axes at every station. Mirroring preserves the section and lip geometry.
-function engineRing(station: number, centerX: number, height: number, radius: number) {
+// Nacelle vertices are local to the inlet anchor.
+function engineRing(station: number, centerX: number, height: number, radius: number, verticalRadius = radius) {
   return Array.from({ length: 24 }, (_, i): Vertex => {
     const angle = i * Math.PI / 12;
     return [
       (centerX - engineX + radius * Math.cos(angle)) * meteorUnit,
-      (height + radius * Math.sin(angle)) * meteorUnit,
+      (height + verticalRadius * Math.sin(angle)) * meteorUnit,
       (frontStation - station) * meteorUnit,
     ];
   });
@@ -56,8 +68,8 @@ export function buildMeteorF3Model(context: AircraftModelContext) {
     })))), paintGlass, bodyRoot.root).name = "meteor-f3-canopy";
 
   const wingPanels = [
-    geometry("meteor-f3:inner-wing", () => liftingSurface(meteorInboardWing, meteorWingSection)),
-    geometry("meteor-f3:outer-wing", () => liftingSurface(meteorOutboardWing, meteorWingSection)),
+    geometry("meteor-f3:inner-wing", () => liftingSurface(meteorInboardWing, meteorWingSection, "inner")),
+    geometry("meteor-f3:outer-wing", () => liftingSurface(meteorOutboardWing, meteorWingSection, "outer")),
   ];
   const tail = partRoot(actor.parts.find(part => part.id === "tail")!);
   const stabilizer = geometry("meteor-f3:stabilizer", () => liftingSurface(meteorTailplane, meteorTailSection));
@@ -74,7 +86,7 @@ export function buildMeteorF3Model(context: AircraftModelContext) {
     })))), tail.material, tail.root).name = "meteor-f3-fin";
 
   const [, , inletY, inletRadius] = meteorNacelle[0];
-  const nacelle = geometry("meteor-f3:nacelle", () => loft(meteorNacelle.map(([station, x, y, radius]) => engineRing(station, x, y, radius)), false, false));
+  const nacelle = geometry("meteor-f3:nacelle", () => loft(meteorNacelle.map(row => engineRing(...row)), false, false));
   const lip = geometry("meteor-f3:inlet-lip", () => loft([
     engineRing(frontStation, engineX, inletY, meteorInlet.radius),
     engineRing(frontStation, engineX, inletY, inletRadius),
@@ -108,6 +120,22 @@ export function buildMeteorF3Model(context: AircraftModelContext) {
     mesh(inlet, dark, engine.root).name = "meteor-f3-inlet";
     mesh(outletLip, metal, engine.root).name = "meteor-f3-outlet-lip";
     mesh(outlet, dark, engine.root).name = "meteor-f3-outlet";
+    context.effectSites.add(engineId, "nozzle", "jetOutlet", engine.root,
+      [(outletX - engineX) * meteorUnit, outletY * meteorUnit, (frontStation - outletStation) * meteorUnit],
+      {radius: meteorOutlet.radius * meteorUnit});
+    const tip = wing.root.children[1] as import("three").Mesh;
+    context.effectSites.add(wingId, "tip", "wingTip", tip, outlineVertex(tip, "x", 1));
+    context.effectSites.addWingFlow(wingId, "outer-wing", tip);
+  }
+  for (const part of actor.parts) {
+    const {root} = partRoot(part);
+    for (const child of root.children) {
+      const skin = child as import("three").Mesh;
+      if (!skin.isMesh || /lip|shadow|inlet$|outlet$/.test(skin.name)) continue;
+      context.effectSites.surfaces.push({partId: part.id, mesh: skin});
+      if (skin.name.endsWith("stabilizer"))
+        context.effectSites.add(part.id, skin.name, "tailTip", skin, outlineVertex(skin, "x", 1));
+    }
   }
 }
 

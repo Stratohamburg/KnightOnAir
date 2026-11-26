@@ -44,6 +44,11 @@
 - **WHEN** 新机型缺少专属装配器、已审核的 H5 生成数据，或任一必需的几何字段仍为估算或未解决
 - **THEN** 校验台预览与正式工厂均阻止生成并报告待核对项。生成字段须来自该机型证据或明确审核约束
 
+#### Scenario: Reuse an existing operational inspection model
+
+- **WHEN** 机型已在校验台提供有明确近似记录的早期飞机模型，且已录入可玩名录
+- **THEN** 游戏沿用该校验模型的基础网格与部件归属，校验台保留原有近似和待核对记录
+
 ### Requirement: Configuration-driven aircraft shape
 
 飞机和主要空中载具 MUST 根据该机型已审核的机体配置生成可辨识的机身、机翼、发动机、尾翼、炮塔、浮筒或飞艇结构。玩家和敌人的轮廓 MUST 能表达时代、角色和机体大小差异。机体配置 MUST 为影响轮廓、拓扑、锚点和部件归属的字段提供机型专属值。
@@ -86,6 +91,34 @@
 - **WHEN** 飞机在转向中产生 bank
 - **THEN** 武器挂点和发动机烟雾发射器跟随同一个根节点姿态。命中爆点和碎屑使用事件发生时的接触点或部件姿态
 
+### Requirement: Independent surface damage sites
+
+每个新增破损位置 MUST 在所属部件的可见表面留下独立的小块黑色低多边形破洞。各洞口 MUST 使用各自的局部位置与表面朝向发出对应档位的烟或火，同一部件支持同时存在多个洞口。
+
+#### Scenario: Two holes on one banking wing
+
+- **WHEN** 同一翼段在相隔可辨的两处受损且能将接触位置映射到翼面，随后飞机滚转
+- **THEN** 两个洞口 MUST 分别使用各自的表面命中点，洞痕与各自烟火的根部随翼面滚转，已离开的烟团沿世界轨迹消散
+
+#### Scenario: Damage without a usable surface contact
+
+- **WHEN** 损伤缺少可定位到部件表面的接触点
+- **THEN** 创建破洞时 MUST 在已知受损部件的可损表面随机取点一次。若无部件归因则从本次承伤且仍附着的部件表面随机选点，洞痕与持续烟火共用选定的部件局部位置
+
+#### Scenario: Damaged tip separates
+
+- **WHEN** 带有破洞和气流挂点的翼尖脱落
+- **THEN** 翼尖气流停止续发，脱落件携带自己的洞口并可拖淡烟，母机其余部件的洞口继续独立表现
+
+### Requirement: Aircraft airflow landmarks
+
+机型装配 MUST 标注主翼尖、实际安装的尾翼尖、翼面气流区域及机体各处向来流突出的轮廓顶点。每个挂点 MUST 登记所属部件、局部位置、流向及相对强度，随实际构型和姿态变换。
+
+#### Scenario: Visible secondary streams during flight
+
+- **WHEN** 带有短舱、支柱或外挂突出端点的机型巡航、加速并进入急转
+- **THEN** 在战斗视角可辨认每处已标注突出点的短气流及其起点，强度低于主翼尖涡，加速与急转时两者均增强并保持主次
+
 ### Requirement: Damage presentation without hit flash
 
 玩家和敌人 MUST 根据部件损伤显示局部受损材质、外发光火花、烟雾、火焰或结构碎裂。开火和命中爆点 MUST 使用外发光核心与柔和光晕形成局部亮度对比。开火和命中 MUST 将发光限制在爆点及粒子范围内，受击时整架飞机的材质不得闪白。
@@ -93,7 +126,7 @@
 #### Scenario: Damaged engine
 
 - **WHEN** 发动机部件进入严重损伤
-- **THEN** 对应发动机出口附近显示黑烟或火焰，烟雾从部件锚点开始并受风场影响
+- **THEN** 损伤烟火由该发动机表面的相应破洞发出，火焰接续浓烟并受风场影响。正常推进效果仍由发动机出口状态控制
 
 #### Scenario: Damaged wing
 

@@ -28,7 +28,7 @@ export const meteorSpan = 311 * meteorUnit;
 export const meteorZ = (station: number) => (150.5 - station) * meteorUnit;
 
 export const meteorF3Frame = {
-  id: meteorF3Id, geometryProfile: "meteorF3", era: "ww2", shape: "plane",
+  id: meteorF3Id, geometryProfile: "meteorF3", era: "jet", shape: "plane",
   name: "Gloster Meteor F.3", role: "双发喷气机", color: "#9ca8aa", accent: "#bec6c5",
   length: meteorLength, wingspan: meteorSpan, liftCenterY: .08, liftCenterZ: .35,
 } as const;
@@ -91,9 +91,8 @@ const wingOutboard: WingRow[] = [...new Set(wingPlanOuter.map(([span]) => span))
   return { span, fore, aft, high: -top, low: -bottom };
 });
 
-export const meteorInboardWing = [...wingInboard, { span: 54, fore: 83, aft: 161, high: 4.7, low: -2.6 }];
+export const meteorInboardWing = wingInboard;
 export const meteorOutboardWing = [
-  { span: 60, fore: 83, aft: 160, high: 5.5, low: -2.1 },
   ...wingOutboard,
 ];
 
@@ -104,15 +103,20 @@ export const meteorWingSection = [
   [.47, 1, 0], [.60, .90, .05], [.70, .72, .07], [.84, .50, .10], [1, .23, .23],
 ] as const;
 
-// Short-nacelle exterior sections. Circular radii reconcile the registered
-// plan width and side height while the lip is fixed by the front projection.
-// Row format is [station, half spacing, center height, radius].
-export const meteorNacelle = [
-  [73, 54.9, 0, 13.55], [75, 54.95, .1, 14], [81, 55.6, .6, 13.15],
-  [88, 56.6, .8, 13.6], [101, 57.2, 1, 14.35], [115, 57.2, 1.5, 14],
-  [131, 56.9, 1.4, 12.4], [145, 56, .8, 10.1], [156, 55.6, .3, 7.7],
-  [164, 56.1, .4, 5.45], [169, 56.35, 1, 3.9], [173, 56.375, 1.55, 3.25],
-] as const;
+// Plan sets the accepted fore/aft stations. The side view supplies heights;
+// its upper edge is concealed by the wing between the two exposed chains.
+const nacellePlan = outline("plan", "右短舱").points;
+const nacelleSide = outline("side", "短舱外轮廓可见段").points;
+const nacelleUpperBridge: Point[] = [nacelleSide.at(-1)!, nacelleSide[0]];
+const shellStations = [77, 82, 85, 88, 100, 115, 120, 131, 138, 145, 156, 165, 169, 173];
+export const meteorNacelle = shellStations.map((station): [number, number, number, number, number] => {
+  const [left, right] = cut(nacellePlan, station, 1, true);
+  if (station === 77) return [station, (left + right) / 2, 0, 13.55, 13.55];
+  if (station === 173) return [station, (left + right) / 2, 1.55, (right - left) / 2, 3.25];
+  const [top, bottom] = cut(nacelleSide, station, 0);
+  const high = Math.min(top, cut(nacelleUpperBridge, station, 0)[0]);
+  return [station, (left + right) / 2, -(high + bottom) / 2, (right - left) / 2, (bottom - high) / 2];
+});
 export const meteorInlet = { radius: 7.55, depth: 5.5 };
 export const meteorOutlet = { radius: 2.4, depth: 3.5 };
 

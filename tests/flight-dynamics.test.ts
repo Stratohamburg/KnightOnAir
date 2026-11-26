@@ -1,7 +1,7 @@
+import { simulationFrames } from "./fixtures/simulationFrames";
 import { describe, expect, it, vi } from "vitest";
 import { Euler, Vector3 } from "three";
 import { engineOutlet, localToWorld, muzzleAnchor } from "../src/content/3d/anchors";
-import { AIRFRAMES } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { ENEMIES } from "../src/data/enemies";
 import { combatantById, npcProfileById } from "../src/data/combatants";
@@ -17,7 +17,7 @@ import { World } from "../src/simulation/World";
 import type { ContinuousTurn, Intent } from "../src/simulation/types";
 
 function aircraft(index = 0) {
-  const w = new World(AIRFRAMES[index], 42, { director: false });
+  const w = new World(simulationFrames[index], 42, { director: false });
   w.enemies = [];
   w.player.invulnerable = 10000;
   return w;
@@ -237,6 +237,30 @@ describe("aerodynamic banking and enemy handling", () => {
     }
   });
 
+  it("reenters after a broken tail instead of snapping back to the player", () => {
+    const w = aircraft();
+    w.player.weapons = [];
+    const hunter = w.spawnEnemy("hunter", 0, -12)!;
+    const states = new Set<string>();
+    let breakingPosition = 0;
+    for (let i = 0; i < 900; i++) {
+      const turning = i > 95 && i < 260;
+      w.frame(RULES.step, {
+        x: turning ? 1 : 0,
+        z: turning ? 0 : 1,
+        active: turning,
+        magnitude: turning ? 1 : 0,
+      });
+      states.add(hunter.state);
+      if (hunter.state === "breaking" && breakingPosition === 0) breakingPosition = hunter.z;
+      if (hunter.state === "reentering") break;
+    }
+    expect(states.has("attacking")).toBe(true);
+    expect(states.has("breaking")).toBe(true);
+    expect(states.has("reentering")).toBe(true);
+    expect(Math.abs(hunter.z - breakingPosition)).toBeGreaterThan(1);
+  });
+
   it("gives an interceptor the speed to pass the player and hold its breakaway", () => {
     const w = aircraft();
     w.player.weapons = [];
@@ -255,8 +279,67 @@ describe("aerodynamic banking and enemy handling", () => {
     expect(passedWhileBreaking).toBe(true);
   });
 
+  it("keeps a chase aircraft on a predicted tail point and exposes relative geometry", () => {
+    const w = aircraft();
+    w.player.weapons = [];
+    const hunter = w.spawnEnemy("hunter", 0, -24)!;
+    const profile = npcProfileById("hunter", w.era)!;
+    const motion = combatantById(hunter.configId!)!.frame;
+    if (motion.model !== "air") throw new Error("Expected air envelope");
+    const intent = npcIntent(profile, hunter, w.player, 0, undefined, motion, RULES.step);
+    expect(hunter.combatGeometry?.distance).toBeGreaterThan(20);
+    expect(hunter.combatGeometry?.closingSpeed).toBeLessThan(0);
+    expect(hunter.combatGeometry?.lateralOffset).toBeCloseTo(0, 5);
+    expect(intent.targetPoint?.z).toBeLessThan(w.player.z);
+    expect(intent.attackPoint?.z).toBeGreaterThan(intent.targetPoint?.z ?? 0);
+  });
+
+  it("requires a solved weapon geometry before an enemy opens fire", () => {
+    const w = aircraft();
+    const hunter = w.spawnEnemy("hunter", 0, -10)!;
+    const profile = npcProfileById("hunter", w.era)!;
+    const motion = combatantById(hunter.configId!)!.frame;
+    if (motion.model !== "air") throw new Error("Expected air envelope");
+    hunter.heading = Math.PI / 2;
+    const intent = npcIntent(profile, hunter, w.player, 0, undefined, motion, RULES.step);
+    expect(hunter.combatGeometry?.weaponSolution).toBe(false);
+    expect(intent.fire).toBe(false);
+  });
+
+  it("keeps dive and crossing roles on their attack axes", () => {
+    const w = aircraft(simulationFrames.findIndex((frame) => frame.era === "ww1"));
+    w.player.weapons = [];
+    const striker = w.spawnEnemy("striker", -18, 24)!;
+    const bomber = w.spawnEnemy("bomber", 18, 24)!;
+    const strikerProfile = npcProfileById("striker", w.era)!;
+    const bomberProfile = npcProfileById("bomber", w.era)!;
+    const strikerMotion = combatantById(striker.configId!)!.frame;
+    const bomberMotion = combatantById(bomber.configId!)!.frame;
+    if (strikerMotion.model !== "air" || bomberMotion.model !== "air") throw new Error("Expected air envelope");
+    const strikerIntent = npcIntent(strikerProfile, striker, w.player, 0, undefined, strikerMotion, RULES.step);
+    const bomberIntent = npcIntent(bomberProfile, bomber, w.player, 0, undefined, bomberMotion, RULES.step);
+    expect(strikerProfile.airAttack?.attackBoost).toBeGreaterThan(0);
+    expect(strikerMotion.maxSpeed).toBeGreaterThan(strikerMotion.cruiseSpeed);
+    expect(strikerIntent.throttle).toBeGreaterThan(0);
+    expect(Math.abs(bomberIntent.targetHeading! - bomber.heading)).toBeLessThan(Math.PI / 2);
+  });
+
+  it("spawns the first available chase role from a safe rear bearing", () => {
+    const w = new World(simulationFrames[0], 42, { supply: false });
+    w.isSpawnVisible = () => false;
+    w.player.weapons = [];
+    for (let i = 0; i < 720; i++) w.frame(RULES.step);
+    const rear = w.enemies.some((enemy) => {
+      if (enemy.layer !== "air") return false;
+      const along = (enemy.x - w.player.x) * Math.sin(w.player.heading) +
+        (enemy.z - w.player.z) * Math.cos(w.player.heading);
+      return along < -30;
+    });
+    expect(rear).toBe(true);
+  });
+
   it("sets light, formation, crossing and buoyant aircraft apart in the WWI pool", () => {
-    const w = aircraft(AIRFRAMES.findIndex((frame) => frame.era === "ww1"));
+    const w = aircraft(simulationFrames.findIndex((frame) => frame.era === "ww1"));
     w.player.weapons = [];
     const scout = w.spawnEnemy("scout", -16, 28)!;
     const striker = w.spawnEnemy("striker", 16, 28)!;
@@ -306,7 +389,7 @@ describe("aerodynamic banking and enemy handling", () => {
     expect(w.weaponMuzzle(p, weapon, 0)).toBeUndefined();
   });
   it("banks light powerful aircraft near knife-edge and keeps a heavy aircraft shallower", () => {
-    const banks = AIRFRAMES.map((_, index) => circling(aircraft(index), 4));
+    const banks = simulationFrames.map((_, index) => circling(aircraft(index), 4));
     expect(banks[3]).toBeGreaterThan(84);
     expect(banks[3]).toBeLessThan(88);
     expect(banks[0]).toBeGreaterThan(80);
@@ -381,7 +464,7 @@ describe("aerodynamic banking and enemy handling", () => {
       expect(Math.abs(e.turnVelocity)).toBeLessThanOrEqual(
         ENEMIES[kind].turnRate * RAD + 1e-8,
       );
-      expect(ENEMIES[kind].turnRate).toBeLessThan(AIRFRAMES[0].turnRate / 2);
+      expect(ENEMIES[kind].turnRate).toBeLessThan(simulationFrames[0].turnRate / 2);
       expect(Number.isFinite(e.bank + e.heading + e.speed)).toBe(true);
     },
   );

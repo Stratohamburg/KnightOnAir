@@ -71,6 +71,56 @@
   background: var(--amber);
 }
 
+.enemy-label.mission-marker,
+.edge-indicator.mission-marker {
+  color: var(--amber-bright);
+  padding: 3px 5px;
+  background: rgba(12, 20, 18, 0.88);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  text-shadow: none;
+}
+
+.radar-contact.mission-marker {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 2px solid var(--amber-bright);
+  border-radius: 50%;
+}
+
+.mission-marker.friendly {
+  color: var(--signal);
+  border-color: var(--signal);
+}
+
+.mission-objective {
+  color: var(--amber-bright);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.mission-objective:empty,
+.mission-prompt:empty {
+  display: none;
+}
+
+.mission-prompt {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 90vw;
+  font-size: var(--text-xs);
+  text-align: center;
+  color: var(--amber-bright);
+  background: rgba(12, 20, 18, 0.88);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
 .lock-label,
 .aim-label {
   font-family: var(--font-mono);
@@ -408,6 +458,13 @@
 
 .battle-status span:nth-child(3) {
   color: var(--ink-muted);
+}
+
+#environment-notice:not(:empty) {
+  color: var(--amber-bright);
+  padding: 2px 5px;
+  background: rgba(12, 20, 18, 0.84);
+  border-radius: 4px;
 }
 
 /* Transparent floating single-thumb control deck */

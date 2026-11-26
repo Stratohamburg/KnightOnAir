@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { type Route, routeHeading, routePosition } from "../simulation/Routes";
 import { terrainHeight } from "../simulation/Terrain";
 import { aircraftShadowGLSL } from "./AircraftShadows";
-import { cloudShadowGLSL } from "./Cloudscape";
+import { cloudShadowGLSL } from "./CloudShadowShader";
 
 export function routeBridges(routes: Route[], lighting: THREE.ShaderMaterial["uniforms"]) {
   const positions: number[] = [], colors: number[] = [], indices: number[] = [];

@@ -1,14 +1,18 @@
 import { hoEngines, hoEngineMount, hoGear, hoUnit, hoX, hoZ } from "./ho229V2Sheet";
 import { stationZ, unit, wingSegments } from "./fokkerDr1Sheet";
-import { AIRFRAMES, eraOf, type EraId } from "./aircrafts";
+import { AIRFRAMES, eraOf, type Airframe, type EraId } from "./aircrafts";
+import { fighterStationZ, fighterUnit, spitfireVbSheet, zero21Sheet } from "./pistonFighterSheets";
 import { ENEMIES } from "./enemies";
 import { ERA_ENEMIES } from "./eraEnemies";
 import { ERAS } from "./eras";
 import { WEAPONS } from "./weapons";
+import { upgradeConfigDiagnostics } from "./upgrades";
+import { RAD } from "../services/Random";
 import type { PartRole, Slot, ControllerIntent } from "../simulation/types";
 import type { Point3 } from "../content/3d/anchors";
 import { aircraftGeometryProfile } from "../content/3d/airframeShape";
 import { defaultTopology, mountForPart, type AircraftTopology, type CenterlineMount } from "../simulation/CenterlineLayout";
+import { validateAircraftLivery } from "./aircraftLiveries";
 
 export type { EraId } from "./aircrafts";
 export type Layer = "air" | "ground" | "water";
@@ -34,7 +38,7 @@ export type AirframeMotionConfig = {
 };
 export type MotionConfig = AirframeMotionConfig | { model: "ground" | "water"; mass: number; length: number; radius: number; maxSpeed: number; acceleration: number; turnRate: number; routeKinds: ("road" | "rail" | "water")[] };
 export interface MountRecipe { id: string; partId: string; weaponId: string; count: number; arc: number; baseAngle: number; targetLayers: Layer[]; offset?: Point3; barrelSpacing?: number; overrides?: Partial<Record<string, number>>; centerline?: CenterlineMount; }
-export interface CombatantConfig { id: string; name?: string; era: EraId; layer: Layer; tags: string[]; frame: MotionConfig; parts: CombatPartRecipe[]; mounts: MountRecipe[]; topology?: AircraftTopology; capabilities: { bombing: boolean; lock: boolean; boost: boolean; routeKinds: ("road" | "rail" | "water")[] }; visual: { modelKey: string; eraSkin: EraId; color: string; accent: string; scale: number }; combat: { collisionRadius: number; weaponDamage: number; fireInterval: number }; }
+export interface CombatantConfig { id: string; name?: string; era: EraId; layer: Layer; tags: string[]; frame: MotionConfig; parts: CombatPartRecipe[]; mounts: MountRecipe[]; topology?: AircraftTopology; capabilities: { bombing: boolean; lock: boolean; boost: boolean; routeKinds: ("road" | "rail" | "water")[] }; visual: { modelKey: string; eraSkin: EraId; color: string; accent: string; liveryId?: string; scale: number }; combat: { collisionRadius: number; weaponDamage: number; fireInterval: number }; }
 export interface AirAttackProfile {
   attackWindow: number;
   attackAngle: number;
@@ -44,11 +48,21 @@ export interface AirAttackProfile {
   breakDistance: number;
   reentryDistance: number;
   fleeHealth: number;
+  tailDistance?: [number, number];
+  tailHoldTime?: number;
+  lostAngle?: number;
+  breakOffset?: number;
+  actionCooldown?: number;
+  aimTolerance?: number;
 }
 export interface NpcProfile { id: string; kind?: string; elite?: boolean; reinforcement?: string; spread?: number; radial?: boolean; combatantId: string; airAttack?: AirAttackProfile; behavior: { kind: BehaviorKind; targetPolicy: "player" | "route" | "intercept" | "escort" | "groundTarget" | "none"; preferredRange: [number, number]; engageRadius: number; disengageRange: number; leadTime: number; breakChance: number; patrolRoute?: string; escortAnchorTag?: string }; spawn: { phases: ("intro" | "skirmish" | "pressure" | "mixed")[]; weight: number; maxAlive: number; slotCost: number; formation?: "line" | "v" | "orbit" | "escort" | "crossing" }; rewards: { xp: number; coins: number; score: number; drops?: string[] }; }
 export interface ConfigDiagnostic { id: string; errors: string[]; }
 
-const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
+const fighterSheetFor = (frame: Airframe) =>
+  frame.geometryProfile === "spitfireVb" ? spitfireVbSheet :
+    frame.geometryProfile === "zero21" ? zero21Sheet : undefined;
+
+const partsFor = (frame: Airframe): CombatPartRecipe[] => {
   const parts: CombatPartRecipe[] = [
     { id: "center_body", role: "body", slot: "center", side: 0, x: 0, z: 0, health: frame.health * .45, damageTransfer: 1, detachable: false },
     { id: "left_wing", role: "wing", slot: "leftWing", side: -1, x: -frame.wingspan * .23, z: -.1, health: frame.health * .10, damageTransfer: .5, detachable: false, lift: .85 },
@@ -63,6 +77,52 @@ const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
     const bay = parts.findIndex((part) => part.id === "bay");
     parts[0].health += parts[bay].health;
     parts.splice(bay, 1);
+  }
+  const layout = frame.pioneerLayout;
+  const fighter = fighterSheetFor(frame);
+  if (layout || fighter) {
+    // Both meshes assign the complete wing to its main part, with no separate damageable tip.
+    for (const side of [-1, 1]) {
+      const id = side < 0 ? "left_wing" : "right_wing";
+      const wing = parts.find(part => part.id === id)!;
+      const tip = parts.findIndex(part => part.id === id + "_tip");
+      wing.health += parts[tip].health;
+      wing.lift = 1;
+      wing.parentId = "center_body";
+      parts.splice(tip, 1);
+      if (layout) wing.z = layout.wingZ;
+      if (fighter) {
+        const [sheetX, leftFore, , rightFore] = fighter.readings.plan.at(-1)!;
+        const [, leftHigh, , rightHigh] = fighter.readings.front.at(-1)!;
+        Object.assign(wing, {
+          x: side * (250 - sheetX) * fighterUnit,
+          y: (95 - (leftHigh + rightHigh) / 2) * fighterUnit,
+          z: fighterStationZ(fighter, (leftFore + rightFore) / 2 - 14),
+        });
+      }
+    }
+    const tail = parts.find(part => part.id === "tail")!;
+    const nose = parts.find(part => part.id === "nose")!;
+    if (fighter) {
+      tail.z = fighterStationZ(fighter, fighter.assembly.fin[0][0]);
+      parts[0].health += nose.health;
+      parts.splice(parts.indexOf(nose), 1);
+    } else if (layout) {
+      const gunPosition = { x: 0, y: 1, z: layout.wingZ + .25 };
+      Object.assign(nose, { id: "service_gun", parentId: "center_body", ...gunPosition,
+        centerline: { lineId: "fuselage", station: gunPosition.z, offset: { x: 0, y: gunPosition.y, z: 0 } } });
+      if (layout.tailZ !== undefined) tail.z = layout.tailZ;
+      else {
+        parts[0].health += tail.health;
+        parts.splice(parts.indexOf(tail), 1);
+      }
+      if (layout.canardZ !== undefined) {
+        const health = frame.health * .08;
+        parts[0].health -= health;
+        parts.push({ id: "nose", role: "body", slot: "nose", parentId: "center_body", side: 0,
+          x: 0, z: layout.canardZ, health, detachable: false, damageTransfer: 1 });
+      }
+    }
   }
   if (frame.geometryProfile === "ho229V2") {
     const tail = parts.find(part => part.id === "tail")!;
@@ -119,13 +179,21 @@ const partsFor = (frame: (typeof AIRFRAMES)[number]): CombatPartRecipe[] => {
         health: frame.health * .05, damageTransfer: .35, detachable: false, thrust: 1 });
       continue;
     }
-    const x = frame.engines === 1
+    const installed = layout?.engines[i];
+    const x = installed?.[0] ?? (frame.engines === 1
       ? 0
-      : (i - (frame.engines - 1) / 2) * frame.wingspan * .2;
+      : (i - (frame.engines - 1) / 2) * frame.wingspan * .2);
     const side = x < 0 ? -1 : x > 0 ? 1 : 0;
-    const slot: Slot = side < 0 ? "leftWing" : side > 0 ? "rightWing" : "nose";
-    const z = frame.geometryProfile === "fokkerDr1" ? stationZ(12) : frame.length * .38;
-    parts.push({ id: `engine_${i}`, role: "engine", slot, side, x, z, health: frame.health * .1 / Math.max(1, frame.engines), damageTransfer: .35, detachable: false, thrust: 1, engineInstallation: "tractor" });
+    const slot: Slot = frame.engines > 1 ? side < 0 ? "leftWing" : "rightWing" : layout?.pusher ? "tail" : "nose";
+    const y = installed?.[1] ?? 0;
+    const z = installed?.[2] ?? (fighter ? fighterStationZ(fighter, fighter.assembly.propStation) :
+      frame.geometryProfile === "fokkerDr1" ? stationZ(12) : frame.length * .38);
+    const modelAnchor: CenterlineMount | undefined = installed || fighter
+      ? { lineId: "fuselage", layer: "engine", station: z, offset: { x, y, z: 0 }, axis: layout?.pusher ? "pusher" : "tractor" }
+      : undefined;
+    parts.push({ id: `engine_${i}`, role: "engine", slot, side, x, y, z, health: frame.health * .1 / Math.max(1, frame.engines),
+      parentId: modelAnchor ? "center_body" : undefined, centerline: modelAnchor,
+      damageTransfer: .35, detachable: false, thrust: 1, engineInstallation: layout?.pusher ? "pusher" : "tractor" });
   }
   if (frame.turret) parts.push({ id: "top_turret", role: "turret", slot: "top", side: 0, health: frame.health * .08, damageTransfer: 1, detachable: false });
   const wingProfile = aircraftGeometryProfile(frame.geometryProfile)?.wing;
@@ -160,8 +228,23 @@ function primaryMounts(weaponId?: string): MountRecipe[] {
     : [{ id: "primary", partId: "nose", weaponId, count: mainCount, arc: gun.arc, baseAngle: 0, targetLayers: layers }];
 }
 
-const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
+const mountsFor = (frame: Airframe, parts: readonly CombatPartRecipe[]): MountRecipe[] => {
   const mounts = primaryMounts(frame.gun);
+  const fighter = fighterSheetFor(frame);
+  if (fighter) {
+    const [primary] = mounts.splice(0, 1);
+    for (const partId of ["left_wing", "right_wing"]) {
+      const wing = parts.find(part => part.id === partId)!;
+      const muzzleZ = fighterStationZ(fighter, fighter === spitfireVbSheet ? 49 : 86);
+      const muzzleY = (95 - (fighter === spitfireVbSheet ? 118 : 106)) * fighterUnit;
+      mounts.push({ ...primary, id: "primary_" + partId, partId, count: 1,
+        offset: { x: wing.side * 85 * fighterUnit - wing.x!, y: muzzleY - wing.y!, z: muzzleZ - wing.z! } });
+    }
+  }
+  if (frame.pioneerLayout) {
+    mounts[0].partId = "service_gun";
+    mounts[0].offset = { x: 0, y: 0, z: .43 };
+  }
   if (frame.missile) mounts.push({ id: "lock", partId: "nose", weaponId: "lock_missile", count: 1, arc: 26, baseAngle: 0, targetLayers: ["air"] });
   if (frame.turret) mounts.push({ id: "turret", partId: "top_turret", weaponId: "top_turret", count: 1, arc: WEAPONS.top_turret.arc, baseAngle: 0, targetLayers: ["air"] });
   if (frame.bomb) mounts.push({ id: "bomb", partId: "bay", weaponId: frame.bomb, count: 1, arc: 360, baseAngle: 0, targetLayers: WEAPONS[frame.bomb].targetLayers ?? ["ground", "water"] });
@@ -173,7 +256,7 @@ const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
     ...(frame.geometryProfile === "fokkerDr1" && mount.id === "primary"
       ? { offset: { x: 0, y: .2, z: .9 }, barrelSpacing: .2 }
       : {}),
-    centerline: mountForPart(
+    centerline: ((fighter || frame.pioneerLayout) ? parts.find(part => part.id === mount.partId)?.centerline : undefined) ?? mountForPart(
       {
         id: mount.partId,
         kind: mount.partId === "top_turret" ? "turret" : mount.partId === "bay" ? "bombBay" : "gun",
@@ -189,11 +272,18 @@ const mountsFor = (frame: (typeof AIRFRAMES)[number]): MountRecipe[] => {
   }));
 };
 
-export const COMBATANT_CONFIGS: Record<string, CombatantConfig> = Object.fromEntries(AIRFRAMES.map((frame) => [frame.id, {
-  id: frame.id, name: frame.name, era: eraOf(frame), layer: "air" as Layer, tags: [frame.role],
-  frame: { model: "air" as const, mass: frame.mass, length: frame.length, wingspan: frame.wingspan, wingArea: frame.wingArea, maxSpeed: frame.maxSpeed, cruiseSpeed: frame.cruiseSpeed, acceleration: frame.acceleration, turnRate: frame.turnRate, energyMax: frame.energyMax, energyDrain: frame.energyDrain, energyRecover: frame.energyRecover, liftCenterY: frame.liftCenterY, liftCenterZ: frame.liftCenterZ },
-  parts: partsFor(frame), mounts: mountsFor(frame), topology: defaultTopology(frame), capabilities: { bombing: Boolean(frame.bomb), lock: frame.missile, boost: true, routeKinds: [] }, visual: { modelKey: frame.id, eraSkin: eraOf(frame), color: frame.color, accent: frame.accent, scale: 1 }, combat: { collisionRadius: frame.footprint, weaponDamage: 0, fireInterval: 2 },
-}]));
+export function playerCombatant(frame: Airframe): CombatantConfig {
+  const parts = partsFor(frame);
+  return {
+    id: frame.id, name: frame.name, era: eraOf(frame), layer: "air", tags: [frame.role],
+    frame: { model: "air", mass: frame.mass, length: frame.length, wingspan: frame.wingspan, wingArea: frame.wingArea, maxSpeed: frame.maxSpeed, cruiseSpeed: frame.cruiseSpeed, acceleration: frame.acceleration, turnRate: frame.turnRate, energyMax: frame.energyMax, energyDrain: frame.energyDrain, energyRecover: frame.energyRecover, liftCenterY: frame.liftCenterY, liftCenterZ: frame.liftCenterZ },
+    parts, mounts: mountsFor(frame, parts), topology: defaultTopology(frame), capabilities: { bombing: Boolean(frame.bomb), lock: frame.missile, boost: true, routeKinds: [] }, visual: { modelKey: frame.id, eraSkin: eraOf(frame), color: frame.color, accent: frame.accent, liveryId: frame.liveryId, scale: 1 }, combat: { collisionRadius: frame.footprint, weaponDamage: 0, fireInterval: 2 },
+  };
+}
+
+export const COMBATANT_CONFIGS: Record<string, CombatantConfig> = Object.fromEntries(
+  AIRFRAMES.map(frame => [frame.id, playerCombatant(frame)]),
+);
 
 for (const [id, enemy] of Object.entries(ENEMIES)) {
   const air = enemy.layer === "air";
@@ -220,22 +310,30 @@ for (const [id, enemy] of Object.entries(ENEMIES)) {
     ],
     mounts: enemy.damage > 0 ? [{ id: "primary", partId: air ? "center_body" : "weapon", weaponId: "light_cannon", count: id === "elite" ? 12 : id === "aa_truck" ? 5 : 1, arc: 24, baseAngle: 0, targetLayers: ["air"], overrides: { damage: enemy.damage, speed: id === "missile_truck" ? 10 : 12, range: 45, homing: id === "missile_truck" ? 35 : 0, homingLife: id === "missile_truck" ? 4 : 0 } }] : [],
     capabilities: { bombing: false, lock: false, boost: false, routeKinds: air ? [] : [enemy.layer === "water" ? "water" : id === "armored_train" ? "rail" : "road"] },
-    visual: { modelKey: id, eraSkin: "jet", color: enemy.color, accent: enemy.color, scale: enemy.scale },
+    visual: { modelKey: id, eraSkin: "jet", color: enemy.color, accent: enemy.color, liveryId: `legacy:${id}`, scale: enemy.scale },
     combat: { collisionRadius: enemy.radius, weaponDamage: enemy.damage, fireInterval: enemy.fireInterval },
   };
 }
 
 function airAttackFor(kind: BehaviorKind): AirAttackProfile {
   const fast = kind === "intercept" || kind === "dive" || kind === "strafe";
+  const tail = kind === "chase";
+  const route = kind === "crossing" || kind === "escort" || kind === "standoff" || kind === "patrol";
   return {
-    attackWindow: fast ? .85 : 1.3,
-    attackAngle: fast ? 22 : 32,
-    attackThrottle: fast ? 1 : .76,
+    attackWindow: fast ? .85 : tail ? 1.35 : route ? 1.1 : 1.3,
+    attackAngle: fast ? 22 : tail ? 28 : 32,
+    attackThrottle: fast ? 1 : tail ? .74 : route ? .65 : .76,
     attackBoost: fast ? 1 : 0,
-    breakTime: fast ? 2.1 : 1.3,
-    breakDistance: fast ? 18 : 10,
-    reentryDistance: fast ? 30 : 19,
+    breakTime: fast ? 2.1 : tail ? 1.6 : 1.3,
+    breakDistance: fast ? 18 : tail ? 12 : 10,
+    reentryDistance: fast ? 30 : tail ? 23 : 19,
     fleeHealth: .2,
+    tailDistance: tail ? [7, 12] : [10, 18],
+    tailHoldTime: tail ? 1.1 : .65,
+    lostAngle: tail ? .82 : 1.05,
+    breakOffset: fast ? .34 : tail ? .52 : .26,
+    actionCooldown: fast ? .45 : tail ? .3 : .25,
+    aimTolerance: fast ? 8 * RAD : tail ? 11 * RAD : 14 * RAD,
   };
 }
 
@@ -282,7 +380,7 @@ export const NPC_PROFILES: Record<string, NpcProfile> = Object.fromEntries(Objec
   } satisfies NpcProfile];
 }));
 const phases: NpcProfile["spawn"]["phases"] = ["intro", "skirmish", "pressure", "mixed"];
-for (const [era, kind, name, template, behavior, availableFrom, health, speed, turnRate, xp, coins, weaponId] of ERA_ENEMIES) {
+for (const [era, kind, name, template, behavior, availableFrom, health, speed, turnRate, xp, coins, weaponId, modelKey] of ERA_ENEMIES) {
   const base = COMBATANT_CONFIGS[template];
   const original = NPC_PROFILES[template];
   const id = era === "jet" ? kind : era + ":" + kind;
@@ -311,7 +409,7 @@ for (const [era, kind, name, template, behavior, availableFrom, health, speed, t
       : { ...base.frame, maxSpeed: speed, turnRate: turnRate ?? base.frame.turnRate },
     capabilities: { ...base.capabilities, boost: base.layer === "air" && airAttackFor(behavior).attackBoost > 0 },
     mounts: mounted ? [mounted] : [],
-    visual: { ...base.visual, modelKey: kind, eraSkin: era },
+    visual: { ...base.visual, modelKey: modelKey ?? kind, eraSkin: era },
     combat: { ...base.combat, weaponDamage: damage },
   };
   NPC_PROFILES[id] = {
@@ -424,12 +522,17 @@ export function validateNpcProfile(profile: NpcProfile, combatants: ReadonlyMap<
         .some((value) => !Number.isFinite(value) || value <= 0) ||
         [attack.attackThrottle, attack.attackBoost, attack.fleeHealth].some((value) => !Number.isFinite(value) || value < 0 || value > 1) ||
         attack.attackAngle > 180 || attack.reentryDistance < attack.breakDistance ||
+        (attack.tailDistance !== undefined && (attack.tailDistance.length !== 2 || attack.tailDistance.some((value) => !Number.isFinite(value) || value <= 0) || attack.tailDistance[0] > attack.tailDistance[1])) ||
+        [attack.tailHoldTime, attack.lostAngle, attack.breakOffset, attack.actionCooldown, attack.aimTolerance]
+          .some((value) => value !== undefined && (!Number.isFinite(value) || value <= 0)) ||
         (attack.attackBoost > 0 && !config.capabilities.boost))
       errors.push("invalid air attack, breakaway or reentry profile");
   }
   return errors.length ? { id: profile.id, errors } : undefined;
 }
 export const CONFIG_DIAGNOSTICS: ConfigDiagnostic[] = [
+  ...upgradeConfigDiagnostics(AIRFRAMES),
+  ...AIRFRAMES.flatMap((frame) => { const diagnostic = validateAircraftLivery(frame); return diagnostic ? [diagnostic] : []; }),
   ...Object.values(COMBATANT_CONFIGS).flatMap((config) => { const diagnostic = validateCombatantConfig(config); return diagnostic ? [diagnostic] : []; }),
   ...Object.entries(ERAS).flatMap(([era, plan]) =>
     [...new Set([...plan.opening, ...plan.air, ...plan.surface, ...plan.elite])]

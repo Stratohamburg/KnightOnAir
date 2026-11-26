@@ -11,6 +11,7 @@ export const RULES = {
   maxProjectiles: 140,
   maxPickups: 56,
   maxEffects: 80,
+  playerAimAssist: { travelTimeFraction: 0.65, maxLeadTime: 0.5 },
   invulnerability: 0.65,
   bombThreshold: 0.82,
   bombSettleRate: 0.64,
@@ -52,7 +53,7 @@ export type Quality = "low" | "standard" | "high";
 export const QUALITIES = {
   low: {
     label: "省电", scale: 0.7, particles: 24, shadows: false,
-    cloud: { resolution: 0.4, samples: 12, detail: 0.38 },
+    cloud: { resolution: 0.55, samples: 12, detail: 0.38 },
     vegetation: { tufts: 0, waveDetail: 0, waveStrength: 0.12, bendFrequency: 0.65, flutter: 0 },
   },
   standard: {
@@ -60,12 +61,12 @@ export const QUALITIES = {
     scale: 0.85,
     particles: 48,
     shadows: true,
-    cloud: { resolution: 0.5, samples: 18, detail: 0.72 },
+    cloud: { resolution: 0.75, samples: 18, detail: 0.72 },
     vegetation: { tufts: 12, waveDetail: 0.55, waveStrength: 0.15, bendFrequency: 1, flutter: 0 },
   },
   high: {
     label: "高", scale: 1, particles: 80, shadows: true,
-    cloud: { resolution: 0.65, samples: 24, detail: 1 },
+    cloud: { resolution: 1, samples: 24, detail: 1 },
     vegetation: { tufts: 24, waveDetail: 1, waveStrength: 0.17, bendFrequency: 1, flutter: 0.14 },
   },
 } as const;

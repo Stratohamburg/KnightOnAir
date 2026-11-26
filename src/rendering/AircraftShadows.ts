@@ -1,4 +1,4 @@
-import { Vector4 } from "three";
+import { Vector3, Vector4 } from "three";
 import { RULES } from "../data/config";
 import { cloudSun } from "./CloudscapeLayout";
 
@@ -7,6 +7,8 @@ const maxCasters = 1 + RULES.maxEnemies + RULES.maxElite;
 export class AircraftShadows {
   readonly uniforms = {
     aircraftShadowCount: { value: 0 },
+    aircraftShadowSun: { value: new Vector3(...cloudSun).normalize() },
+    aircraftShadowStrength: { value: 1 },
     aircraftShadowPose: { value: Array.from({ length: maxCasters }, () => new Vector4()) },
     aircraftShadowShape: { value: Array.from({ length: maxCasters }, () => new Vector4()) },
   };
@@ -26,6 +28,8 @@ export class AircraftShadows {
 
 export const aircraftShadowGLSL = `
   uniform int aircraftShadowCount;
+  uniform vec3 aircraftShadowSun;
+  uniform float aircraftShadowStrength;
   uniform vec4 aircraftShadowPose[${maxCasters}];
   uniform vec4 aircraftShadowShape[${maxCasters}];
 
@@ -34,7 +38,8 @@ export const aircraftShadowGLSL = `
   }
 
   float aircraftSunlightAt(vec3 world) {
-    const vec3 direction = vec3(${cloudSun.join(", ")});
+    vec3 direction = aircraftShadowSun;
+    if (aircraftShadowStrength <= 0.) return 1.;
     float shade = 0.;
     for (int i = 0; i < ${maxCasters}; i++) {
       if (i >= aircraftShadowCount) break;
@@ -42,7 +47,7 @@ export const aircraftShadowGLSL = `
       vec4 shape = aircraftShadowShape[i];
       float height = pose.y - world.y;
       if (height < .08) continue;
-      vec2 offset = world.xz + direction.xz * (height / direction.y) - pose.xz;
+      vec2 offset = world.xz + direction.xz * (height / max(.17, direction.y)) - pose.xz;
       float softness = .14 + height * .022;
       if (max(abs(offset.x), abs(offset.y)) > max(shape.x, shape.y) * 1.5 + softness) continue;
       float c = cos(pose.w), s = sin(pose.w);
@@ -58,6 +63,6 @@ export const aircraftShadowGLSL = `
       }
       shade = max(shade, (1. - smoothstep(-softness * .45, softness, body)) * shape.z);
     }
-    return 1. - shade;
+    return 1. - shade * aircraftShadowStrength;
   }
 `;

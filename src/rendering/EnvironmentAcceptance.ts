@@ -178,6 +178,10 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       fixture.clouds = visible;
       return draw();
     },
+    cloudMode(mode: "sdf" | "mesh") {
+      renderer.setCloudMode(mode);
+      return draw();
+    },
     flight(x: number, z: number, bombing: boolean, dt = 1 / 60, velocityX = 0, velocityZ = 0) {
       fixture.camera = fixture.lookAt = undefined;
       world.player.x = world.player.prevX = x;

@@ -8,7 +8,7 @@
 
 ### Requirement: Starter sortie
 
-出击页默认选择第 01 关「黎明草甸」，该关座机为福克 Dr.I（`heron_09`）。新档案默认装备并解锁福克 Dr.I。
+出击页 MUST 默认选择第 01 关「黎明草甸」，该关座机为福克 Dr.I（`heron_09`）。新档案 MUST 默认装备并解锁福克 Dr.I。
 
 #### Scenario: Launch the first sortie
 

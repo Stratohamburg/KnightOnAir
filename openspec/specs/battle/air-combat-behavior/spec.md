@@ -54,6 +54,25 @@
 - **WHEN** 敌人生命或关键机动部件低于 profile 定义的逃逸阈值
 - **THEN** 敌人进入 fleeing，提高脱离油门并停止不必要的贴身追击
 
+### Requirement: Pilot decision loop
+
+空中 NPC MUST 根据相对距离、相对方位、闭合速度、目标航向差、横向偏差、能量状态、受损状态和武器解算结果选择短时飞行动作。NPC MUST 通过状态承诺和进入、离开阈值保持动作连续，不能每个固定步只把目标航向指向玩家预测位置。
+
+#### Scenario: Pilot chooses an approach action
+
+- **WHEN** 敌人尚未进入有效攻击几何，且目标处于可追踪范围
+- **THEN** 飞行员根据角色选择尾后接近、交会切入、侧向穿越、护航锚定或路线攻击动作
+
+#### Scenario: Pilot keeps an attack commitment
+
+- **WHEN** 敌人进入有效攻击几何并开始攻击动作
+- **THEN** 飞行员在动作承诺时间内保持目标点、速度策略和开火决策，除非目标失去、关键部件损坏或逃逸条件满足
+
+#### Scenario: Pilot reacts to player maneuver
+
+- **WHEN** 玩家改变航向或速度导致闭合速度、攻击角或能量优势发生变化
+- **THEN** 飞行员根据新的相对几何选择继续追击、重新占位、脱离、超越或逃逸
+
 ### Requirement: Role-based flight envelopes
 
 空中敌人的速度、加速度、转向响应、最大 bank、攻击速度和脱离距离 MUST 由角色数据配置。角色差异 MUST 同时体现在运动和攻击阶段，不能只通过生命或伤害数值表达。
@@ -92,6 +111,31 @@
 - **WHEN** 追猎机从同向后方接近以同代常用巡航速度直飞的玩家
 - **THEN** 它可凭相对速度进入并短暂保持尾后有效射击窗口，窗口结束后主动脱离
 - **AND** 玩家通过转弯或加力可以破坏当前射击机会
+
+#### Scenario: Hunter approaches from behind
+
+- **WHEN** 追猎机从玩家后方或侧后方进入，且玩家保持同向巡航
+- **THEN** 它选择玩家速度方向后的尾后目标点，逐步缩短距离并保持在 profile 定义的尾后距离带内
+
+#### Scenario: Hunter loses the tail
+
+- **WHEN** 玩家持续转弯使追猎机超过 profile 定义的失位角度或距离阈值
+- **THEN** 追猎机进入 breaking，沿横向脱离航向拉开距离，不在同一帧重新指向玩家当前位置
+- **AND** 追猎机达到脱离距离后从预测位置重新切入
+
+### Requirement: Tail pursuit role
+
+普通追猎机 MUST 通过后方接近、尾后保持和失位脱离形成连续的空间关系。尾后保持时间、距离带、失位角度和脱离偏移 MUST 由敌人 profile 配置，玩家的转弯或加力 MUST 能够逐步破坏这段关系。
+
+#### Scenario: Tail pursuit creates pressure
+
+- **WHEN** 玩家以同代常用巡航速度直线飞行，追猎机从同向后方接近
+- **THEN** 追猎机在有效武器距离内保持尾后位置一段可读时间，并产生至少一次有效攻击窗口
+
+#### Scenario: Tail pursuit becomes a counterattack window
+
+- **WHEN** 玩家持续转向或加力，追猎机失去尾后角度并进入脱离
+- **THEN** 追猎机沿横向或超越航线拉开距离，玩家能够在其重新切入前建立反向追击窗口
 
 ### Requirement: Air separation
 

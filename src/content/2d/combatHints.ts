@@ -12,6 +12,10 @@ export interface ThreatView {
   elite?: boolean;
   onScreen?: boolean;
   kind?: string;
+  missionName?: string;
+  friendly?: boolean;
+  urgency?: number;
+  edgeBearing?: number;
   count?: number;
 }
 
@@ -58,6 +62,8 @@ export interface EdgeAnchor {
   count: number;
   distance: number;
   kind: string;
+  missionName?: string;
+  friendly?: boolean;
   breaking?: boolean;
 }
 
@@ -75,7 +81,8 @@ export function mergeSameBearing(threats: readonly ThreatView[], threshold = (8 
   const result: ThreatView[] = [];
   for (const threat of threats) {
     const found = result.find(
-      (value) => value.kind === threat.kind && Math.abs(normalizeAngle(value.bearing - threat.bearing)) < threshold,
+      (value) => !threat.missionName && !value.missionName && value.kind === threat.kind &&
+        Math.abs(normalizeAngle(value.bearing - threat.bearing)) < threshold,
     );
     if (!found) result.push({ ...threat, count: threat.count ?? 1 });
     else {
@@ -89,15 +96,16 @@ export function mergeSameBearing(threats: readonly ThreatView[], threshold = (8 
 }
 
 export function edgeAnchors(threats: readonly ThreatView[], rect: EdgeRect, max = 4): EdgeAnchor[] {
-  const selected = mergeSameBearing(
-    threats
-      .filter((threat) => threat.layer === "air" && !threat.onScreen && threat.distance <= 80)
-      .sort((a, b) => rank(b) - rank(a) || a.distance - b.distance),
-  ).slice(0, max);
+  const mission = threats.filter((threat) => !threat.onScreen && threat.missionName)
+    .sort((a, b) => (b.urgency ?? 0) - (a.urgency ?? 0) || a.distance - b.distance)[0];
+  const combat = mergeSameBearing(threats
+    .filter((threat) => !threat.onScreen && threat.distance <= 80 && (threat.layer === "air" || threat.firing) && threat !== mission)
+    .sort((a, b) => rank(b) - rank(a) || a.distance - b.distance));
+  const selected = (mission ? [mission, ...combat] : combat).slice(0, max);
   const centerX = (rect.left + rect.right) * 0.5;
   const centerY = (rect.top + rect.bottom) * 0.5;
   return selected.map((threat) => {
-    const angle = threat.bearing;
+    const angle = threat.edgeBearing ?? threat.bearing;
     const dx = Math.sin(angle);
     const dy = -Math.cos(angle);
     const tx = Math.abs(dx) > 0.0001 ? (dx > 0 ? rect.right - centerX : rect.left - centerX) / dx : Number.POSITIVE_INFINITY;
@@ -111,6 +119,8 @@ export function edgeAnchors(threats: readonly ThreatView[], rect: EdgeRect, max 
       count: threat.count ?? 1,
       distance: threat.distance,
       kind: threat.kind ?? "plane",
+      missionName: threat.missionName,
+      friendly: threat.friendly,
       breaking: threat.breaking,
     };
   });

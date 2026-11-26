@@ -1,5 +1,5 @@
+import { heavyJet } from "./fixtures/simulationFrames";
 import { describe, expect, it } from "vitest";
-import { airframeById } from "../src/data/aircrafts";
 import { upgradeById } from "../src/data/upgrades";
 import { World } from "../src/simulation/World";
 
@@ -11,7 +11,7 @@ const upgrade = (id: string) => {
 
 describe("showroom refit builds", () => {
   it("replays an asymmetric six-station Mastodon build from ordered cards", () => {
-    const world = new World(airframeById("mastodon_03"), 7, {
+    const world = new World(heavyJet, 7, {
       director: false,
       supply: false,
       showroom: true,
@@ -30,11 +30,11 @@ describe("showroom refit builds", () => {
     expect(world.player.parts.filter((part) => part.id.startsWith("tail_side_bay_")).length).toBe(1);
     expect(world.player.parts.find((part) => part.id.startsWith("left_wing_segment_2_"))?.parentId).toContain("left_wing_segment_1_");
     expect(rightWing.x).toBe(rightWingX);
-    expect(world.legalUpgradeOptions.some((candidate) => candidate.id === "left_wing_segment")).toBe(false);
+    expect(world.legalUpgradeOptions).toContain(upgrade("left_wing_segment"));
   });
 
   it("keeps the battle rate multiplier on mounts added after the card", () => {
-    const world = new World(airframeById("mastodon_03"), 8, { director: false, supply: false, showroom: true });
+    const world = new World(heavyJet, 8, { director: false, supply: false, showroom: true });
     world.installUpgrade(upgrade("quick_feed"));
     world.installUpgrade(upgrade("left_wing_segment"));
     expect(world.player.stats.fireRate).toBeCloseTo(1.15);
@@ -43,7 +43,7 @@ describe("showroom refit builds", () => {
   });
 
   it("keeps showroom fire as a mount preview without battle actors", () => {
-    const world = new World(airframeById("mastodon_03"), 9, { director: false, supply: false, showroom: true });
+    const world = new World(heavyJet, 9, { director: false, supply: false, showroom: true });
     world.previewFire();
     const events = world.consumeEvents();
     expect(world.enemies).toHaveLength(0);

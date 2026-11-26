@@ -1,6 +1,7 @@
 import { AIRFRAMES, STARTER_FRAME_ID, airframeById } from "../data/aircrafts";
 import type { Quality } from "../data/config";
 import type { World } from "../simulation/World";
+import { campaignMissionById } from "../data/campaignMissions";
 export interface SaveData {
   version: 2;
   equipped: string;
@@ -13,6 +14,8 @@ export interface SaveData {
   quality: Quality;
   sound: boolean;
   vibration: boolean;
+  clearedMissions: string[];
+  missionBestScores: Record<string, number>;
 }
 const defaults = (): SaveData => ({
   version: 2,
@@ -26,8 +29,11 @@ const defaults = (): SaveData => ({
   quality: "standard",
   sound: true,
   vibration: true,
+  clearedMissions: [],
+  missionBestScores: {},
 });
 export class SaveStore {
+  private readonly recorded = new WeakSet<World>();
   data = defaults();
   available = true;
   constructor(
@@ -68,6 +74,15 @@ export class SaveStore {
       if (typeof saved.sound === "boolean") base.sound = saved.sound;
       if (typeof saved.vibration === "boolean")
         base.vibration = saved.vibration;
+      if (Array.isArray(saved.clearedMissions))
+        base.clearedMissions = [...new Set<string>(saved.clearedMissions.filter(
+          (id: unknown): id is string => typeof id === "string" && !!campaignMissionById(id),
+        ))];
+      if (saved.missionBestScores && typeof saved.missionBestScores === "object") {
+        for (const [id, score] of Object.entries(saved.missionBestScores))
+          if (campaignMissionById(id) && typeof score === "number" && Number.isFinite(score) && score >= 0)
+            base.missionBestScores[id] = score;
+      }
       this.data = base;
     } catch {
       this.available = false;
@@ -89,7 +104,14 @@ export class SaveStore {
     return false;
   }
   record(world: World) {
+    if (this.recorded.has(world)) return [];
+    this.recorded.add(world);
     const s = this.data;
+    const result = world.mission?.result;
+    if (result && campaignMissionById(result.missionId))
+      s.missionBestScores[result.missionId] = Math.max(s.missionBestScores[result.missionId] ?? 0, world.score);
+    if (result?.outcome === "victory" && campaignMissionById(result.missionId) && !s.clearedMissions.includes(result.missionId))
+      s.clearedMissions.push(result.missionId);
     s.bestScore = Math.max(s.bestScore, world.score);
     s.bestTime = Math.max(s.bestTime, world.elapsed);
     s.currency += world.coins;

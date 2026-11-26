@@ -1,3 +1,4 @@
+import { heavyJet } from "./fixtures/simulationFrames";
 import { describe, expect, it, vi } from "vitest";
 import { AIRFRAMES, airframeById, eraOf } from "../src/data/aircrafts";
 import { upgradeById } from "../src/data/upgrades";
@@ -10,6 +11,7 @@ import {
   updateEquipmentPartHighlight,
 } from "../src/content/2d/HangarView";
 import { patchShowroomPanel, renderShowroomBody } from "../src/content/2d/ShowroomView";
+import { renderUpgradeModal, updateUpgradeSelection } from "../src/content/2d/ModalViews";
 
 class FakeElement {
   tagName: string;
@@ -98,9 +100,56 @@ class FakeElement {
 }
 
 describe("mobile retro aviation UI views", () => {
+  it("renders the upgrade sheet with ordered actions and accessible prices", () => {
+    const world = new World(airframeById("heron_09"), 7, { showroom: true });
+    world.upgradesAvailable = 1;
+    world.openUpgrades();
+    const markup = renderUpgradeModal(world);
+    expect([...markup.matchAll(/data-upgrade="([^"]+)"/g)].map(match => match[1]))
+      .toEqual(world.choices.map(choice => choice.id));
+    expect(markup).toContain('data-action="return-from-upgrade"');
+    expect(markup).toContain('data-action="confirm-upgrade" class="upgrade-confirm" hidden disabled');
+    expect(markup).toContain('aria-label="快速供弹，4 金币"');
+    expect(markup).toMatch(/<p class="upgrade-payment" id="upgrade-payment" role="status">/);
+  });
+
+  it("updates the selected refit in place and gates the inline confirmation action", () => {
+    const world = new World(airframeById("heron_09"), 7, { showroom: true });
+    world.upgradesAvailable = 1;
+    world.openUpgrades();
+    const sheet = new FakeElement();
+    const payment = new FakeElement("p");
+    sheet.registerQuery("#upgrade-payment", payment);
+    const rows = world.choices.map(({ id }) => {
+      const option = new FakeElement();
+      const select = new FakeElement("button");
+      const confirm = new FakeElement("button");
+      option.dataset.upgradeOption = id;
+      option.registerQuery("[data-upgrade]", select);
+      option.registerQuery(".upgrade-confirm", confirm);
+      return { option, select, confirm };
+    });
+    sheet.registerQueryAll("[data-upgrade-option]", rows.map(({ option }) => option));
+    const update = () => updateUpgradeSelection(sheet as unknown as ParentNode, world);
+    world.selectUpgrade(world.choices[2].id);
+    update();
+    expect(rows[2].select.getAttribute("aria-pressed")).toBe("true");
+    expect(rows[2].confirm).toMatchObject({ hidden: false, disabled: true });
+    expect(payment.textContent).toBe("还需 8 金币");
+    world.coins = 4;
+    world.selectUpgrade(world.choices[0].id);
+    update();
+    expect(rows[2].select.getAttribute("aria-pressed")).toBe("false");
+    expect(rows[2].confirm).toMatchObject({ hidden: true, disabled: true });
+    expect(rows[0].confirm).toMatchObject({ hidden: false, disabled: false });
+    expect(payment.textContent).toBe("将支付 4 金币");
+    expect(world.confirmUpgrade()).toBe(true);
+    expect(renderUpgradeModal(world)).toContain("已支付 · 正在安装 快速供弹");
+  });
+
   it("renders same-era direct-select roster chips in equipment view without altering equipped state", () => {
-    const equippedId = "sparrow_05";
-    const preview = airframeById("kestrel_08");
+    const equippedId = "reference_wright_flyer_1903";
+    const preview = airframeById("reference_bleriot_xi");
     const html = renderEquipmentBody({
       frame: preview,
       unlocked: [equippedId, preview.id],
@@ -113,6 +162,7 @@ describe("mobile retro aviation UI views", () => {
       expect(html).toContain(`data-preview="${AIRFRAMES.indexOf(candidate)}"`);
     }
     expect(html).toContain("装备此机体");
+    expect(html).not.toContain('data-preview="-1"');
     expect(html).not.toContain("当前已装备");
 
     const sortieHtml = renderSortieBody({
@@ -138,7 +188,7 @@ describe("mobile retro aviation UI views", () => {
     host.registerQueryAll(".part-selector button[data-part]", [nose, tail]);
     host.registerQuery("#equipment-part-hint", hint);
 
-    const frame = airframeById("sparrow_05");
+    const frame = airframeById("reference_wright_flyer_1903");
     updateEquipmentPartHighlight(host as unknown as HTMLElement, frame, "tail");
     expect(tail.classList.contains("selected")).toBe(true);
     expect(tail.getAttribute("aria-pressed")).toBe("true");
@@ -147,7 +197,7 @@ describe("mobile retro aviation UI views", () => {
   });
 
   it("patches showroom panel locally, preserves card list scrollTop, and reflects reset state", () => {
-    const world = new World(airframeById("mastodon_03"), 11, {
+    const world = new World(heavyJet, 11, {
       director: false,
       supply: false,
       showroom: true,
@@ -179,7 +229,7 @@ describe("mobile retro aviation UI views", () => {
     expect(reset.disabled).toBe(false);
     expect(activeList.innerHTML).toContain(card.name);
 
-    const freshWorld = new World(airframeById("mastodon_03"), 11, {
+    const freshWorld = new World(heavyJet, 11, {
       director: false,
       supply: false,
       showroom: true,

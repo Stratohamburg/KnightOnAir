@@ -1,6 +1,7 @@
+import { lightJet, simulationFrame } from "./fixtures/simulationFrames";
 import { describe, expect, it } from "vitest";
 import { NetworkController, playerIntent } from "../src/simulation/Controllers";
-import { AIRFRAMES, airframeById } from "../src/data/aircrafts";
+import { airframeById } from "../src/data/aircrafts";
 import { hitEntity } from "../src/simulation/HitTest";
 import { applyPartDamage, repairPartsWithOverflow, totalPartHealth } from "../src/simulation/DamageModel";
 import { World } from "../src/simulation/World";
@@ -13,7 +14,7 @@ import { upgradeById } from "../src/data/upgrades";
 import { WEAPONS } from "../src/data/weapons";
 
 function run(seed: number) {
-  const world = new World(AIRFRAMES[0], seed, { director: false, supply: false });
+  const world = new World(lightJet, seed, { director: false, supply: false });
   for (let i = 0; i < 60; i++)
     world.frame(1 / 60, { x: 0.3, z: 1, magnitude: 0.8, active: true, travel: 0.8, boost: 0 });
   return world;
@@ -56,7 +57,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("finds relative motion contacts at the first world-space point", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     const entity = world.player;
     entity.prevX = -10;
     entity.x = 10;
@@ -68,7 +69,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("covers the visible tip, preserves outline gaps, and excludes detached tips", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     const p = world.player;
     const wing = p.parts.find(({ id }) => id === "right_wing")!;
     const tip = p.parts.find(({ id }) => id === "right_wing_tip")!;
@@ -83,7 +84,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("sweeps the edge of a heavy aircraft's expanded wing", () => {
-    const w = new World(airframeById("behemoth_17"), 42, { director: false, supply: false });
+    const w = new World(simulationFrame("behemoth_17"), 42, { director: false, supply: false });
     for (const id of ["giant_wing", "wing_turret", "right_engine", "left_engine"]) w.installUpgrade(upgradeById(id)!);
     const tip = w.player.parts.find(({ id }) => id === "right_wing_tip")!;
     const x = Math.max(...tip.silhouette![0].map((point) => point.x)) - .1;
@@ -91,8 +92,27 @@ describe("0.4 fixed-seed baseline", () => {
     expect(hitEntity(w.player, { prevX: x, prevZ: 2, x, z: -5 })?.part).toBe(tip);
   });
 
+  it("publishes only actual damage recipients and distinguishes area coordinates", () => {
+    const world = new World(lightJet, 42, { director: false, supply: false });
+    const enemy = world.spawnEnemy("hunter", 0, 8)!;
+    const before = enemy.parts.map(part => part.health);
+    world.damageEnemy(enemy, 4);
+    const hit = world.consumeEvents().find(event => event.type === "enemy_hit")!;
+    expect(hit.snapshot.contact).toBeFalsy();
+    expect(hit.snapshot.actorPose).toMatchObject({ x: 0, z: 8 });
+    for (const {id, amount} of hit.snapshot.damagedParts!) {
+      const i = enemy.parts.findIndex(part => part.id === id);
+      expect(before[i] - enemy.parts[i].health).toBeCloseTo(amount);
+    }
+    expect(hit.snapshot.damagedParts!.reduce((sum, part) => sum + part.amount, 0)).toBeCloseTo(4);
+    world.frame(1 / 60, { x: 0, z: 1, magnitude: 1, active: true });
+    expect(world.player.effectiveThrottle).toBeGreaterThan(0);
+    expect(world.player.acceleration).toBeGreaterThan(0);
+    expect(Number.isFinite(world.player.turnLoad)).toBe(true);
+  });
+
   it("resolves penetrating hits by contact time regardless of spawn order", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     world.enemies = [];
     world.player.weapons = [];
     const far = world.spawnEnemy("hunter", 0, 15)!;
@@ -104,7 +124,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("retains successful rolled-mount and destruction snapshots across fixed steps", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     world.enemies = [];
     const p = world.player;
     p.bank = .65;
@@ -128,7 +148,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("repairs body segments by deterministic priority", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     const body = world.player.parts.find((part) => part.id === "center_body")!;
     const engine = world.player.parts.find((part) => part.kind === "engine")!;
     body.health = 0;
@@ -142,7 +162,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("spends overflow evenly, preserves detached parts during repair, and emits destruction once", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     const p = world.player;
     const tip = p.parts.find(({ id }) => id === "right_wing_tip")!;
     const body = p.parts.find(({ id }) => id === "center_body")!;
@@ -173,7 +193,7 @@ describe("0.4 fixed-seed baseline", () => {
   });
 
   it("keeps player and NPC actors in one combat collection with mounted weapons", () => {
-    const world = new World(AIRFRAMES[0], 42, { director: false, supply: false });
+    const world = new World(lightJet, 42, { director: false, supply: false });
     world.enemies = [];
     world.player.weapons = [];
     const enemy = world.spawnEnemy("hunter", 0, 15)!;
@@ -193,7 +213,7 @@ describe("0.4 fixed-seed baseline", () => {
 
 describe("0.4 era and combat rules", () => {
   it("creates the correct era variant and shares the surface budget across all layers", () => {
-    const pioneer = new World(airframeById("sparrow_05"), 42, { director: false });
+    const pioneer = new World(simulationFrame("sparrow_05"), 42, { director: false });
     const hunter = pioneer.enemies.find((enemy) => enemy.kind === "hunter")!;
     expect(hunter.health).toBeCloseTo(39);
     expect(hunter.weapons[0].config.id).toBe("ww1_twin_mg");
@@ -209,7 +229,7 @@ describe("0.4 era and combat rules", () => {
   });
 
   it("retries an opening wave when the viewport clears and respects the era caps", () => {
-    const world = new World(airframeById("sparrow_05"), 43, { supply: false });
+    const world = new World(simulationFrame("sparrow_05"), 43, { supply: false });
     world.player.invulnerable = 200;
     world.isSpawnVisible = () => true;
     for (let i = 0; i < 90; i++) world.frame(1 / 60);
@@ -228,7 +248,7 @@ describe("0.4 era and combat rules", () => {
   });
 
   it("keeps a faster following vehicle behind the slower lead vehicle on the shared road", () => {
-    const world = new World(airframeById("swift_01"), 42, { director: false });
+    const world = new World(lightJet, 42, { director: false });
     world.enemies = [];
     world.player.weapons = [];
     world.player.invulnerable = 100;
@@ -246,7 +266,7 @@ describe("0.4 era and combat rules", () => {
   });
 
   it("keeps all three fallback choices eligible after more than 999 uses and preserves damaged health", () => {
-    const world = new World(airframeById("sparrow_05"), 42, { director: false });
+    const world = new World(simulationFrame("sparrow_05"), 42, { director: false });
     const body = world.player.parts.find((part) => part.id === "center_body")!;
     body.health -= 10;
     const before = body.health, capacity = body.maxHealth;
@@ -260,7 +280,7 @@ describe("0.4 era and combat rules", () => {
   });
 
   it("disables bombing until a compatible bay is fitted and excludes other target layers", () => {
-    const world = new World(airframeById("kestrel_08"), 42, { director: false });
+    const world = new World(simulationFrame("kestrel_08"), 42, { director: false });
     world.toggleBombing();
     expect(world.phase).toBe("battle");
     expect(world.dropBomb()).toBe(false);
@@ -278,7 +298,7 @@ describe("0.4 era and combat rules", () => {
   });
 
   it("releases air weapons at the same altitude over different terrain", () => {
-    const world = new World(airframeById("sparrow_05"), 42, { director: false, supply: false });
+    const world = new World(simulationFrame("sparrow_05"), 42, { director: false, supply: false });
     world.enemies = [];
     world.player.weapons = [];
     expect(world.surfaceHeight(0, 0)).not.toBe(world.surfaceHeight(25, 40));
@@ -294,7 +314,7 @@ describe("0.4 era and combat rules", () => {
   });
 
   it("offers an opening pair of repair kits and keeps the field cap", () => {
-    const world = new World(airframeById("sparrow_05"), 42, { director: false, supply: true });
+    const world = new World(simulationFrame("sparrow_05"), 42, { director: false, supply: true });
     world.enemies = [];
     const repairs = () => world.pickups.items.filter((item) => item.active && item.kind !== "coin");
     for (let i = 0; i < 60 * 5; i++) world.frame(1 / 60);
@@ -306,13 +326,13 @@ describe("0.4 era and combat rules", () => {
 
   it("replays timestamped remote controls deterministically at different render rates", () => {
     function run(hz: number) {
-      const world = new World(airframeById("swift_01"), 42, { director: false });
+      const world = new World(lightJet, 42, { director: false });
       world.enemies = [];
       world.player.weapons = [];
       const controller = new NetworkController();
       controller.push({ time: 1.5, intent: playerIntent({ heading: Math.PI / 2, throttle: .8 }) });
       controller.push({ time: 0, intent: playerIntent({ heading: Math.PI, throttle: .4, fire: true }) });
-      const enemy = world.spawnReplayOpponent(airframeById("swift_01"), controller, 0, 24);
+      const enemy = world.spawnReplayOpponent(lightJet, controller, 0, 24);
       for (let i = 0; i < 3 * hz; i++) world.frame(1 / hz);
       expect(world.actors.some((actor) => actor.id === enemy.id)).toBe(true);
       expect(enemy.bank).not.toBe(0);

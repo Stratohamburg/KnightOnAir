@@ -89,7 +89,7 @@
 #### Scenario: Emissive muzzle effect
 
 - **WHEN** 武器从真实挂点开火
-- **THEN** 特效系统根据武器 profile 生成外发光爆点、外发光粒子和发射烟雾
+- **THEN** 枪弹每次成功发射均从对应枪管生成低多边形发光球芯、外发光粒子和一股独立枪烟。配置外抛壳的武器从自己的抛壳口抛壳
 
 #### Scenario: Persistent impact smoke
 
@@ -99,7 +99,26 @@
 #### Scenario: Attached damage smoke
 
 - **WHEN** 发动机或机翼持续损伤
-- **THEN** 特效系统通过部件局部锚点生成跟随机体移动的烟雾或火花
+- **THEN** 每个活跃破洞从自己的局部锚点发烟或喷火。同一部件的多股烟火可以并存，滚转、维修和脱落后仍对应各自洞口
+
+### Requirement: Aircraft propulsion and flight effects
+
+特效库 MUST 依据机型、实际油门、生效加力、加速度及转弯载荷驱动 3D low-poly 推进与气动效果。喷口焰芯和桨盘滑流起点跟随各自部件，已发出的尾烟和气流段保留世界轨迹。
+
+#### Scenario: Piston and jet boost transitions
+
+- **WHEN** 活塞或喷气飞机从巡航加大油门、进入加力再退出
+- **THEN** 活塞机依次增强排气脉冲与桨流，并在加力时增加短促亮焰。喷气机依次增强喷流与机型配置的加力焰形，喷口后续尾烟随风消散
+
+#### Scenario: Aircraft accelerates and banks
+
+- **WHEN** 飞机直线加速后进入急转
+- **THEN** 加速强化尾流和突出点气流，达到机型配置门限时出现机头冲击波。急转强化翼面气流、主翼尖涡和适用的尾翼尖涡，突出点气流仍较弱且清晰可辨
+
+#### Scenario: Bullet flight and impact
+
+- **WHEN** 枪弹离开枪口、飞行并命中目标
+- **THEN** 弹头的薄冲击波随弹体前进，命中时在接触位置产生发光爆点和对应的碎屑与残烟
 
 ### Requirement: Simulation and rendering separation
 

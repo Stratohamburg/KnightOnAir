@@ -25,7 +25,10 @@ it("starts a fresh pilot in Dawn Meadow and installs a first-level refit through
     expect(world.choices.map(card => card.id)).toEqual([
       "quick_feed", "radiator", expect.stringMatching(/^(left|right)_wing_segment$/),
     ]);
-    expect(world.chooseUpgrade(world.choices[2].id)).toBe(true);
+    world.coins = 20;
+    expect(world.selectUpgrade(world.choices[2].id)).toBe(true);
+    expect(world.confirmUpgrade()).toBe(true);
+    expect(world.finishUpgradeInstallation()).toBe(true);
     expect(world.phase).toBe("battle");
     expect(world.upgradesAvailable).toBe(0);
     model.update(0, 0);
@@ -175,7 +178,7 @@ it.each(["left","right"])("inserts two bays before the %s lower tip and reflows 
     for (const p of inserts) {
       const [start,end] = bounds(p.id);
       expect(start).toBeCloseTo(edge, 5);
-      expect(end-start).toBeCloseTo(.7, 5);
+      expect(end-start).toBeCloseTo(1, 5);
       expect(Math.abs(p.x)).toBeCloseTo((start+end)/2, 5);
       expect(p.parentId).toBe(parent);
       const hitXs = p.silhouette![0].map(point => point.x * side);
@@ -191,7 +194,7 @@ it.each(["left","right"])("inserts two bays before the %s lower tip and reflows 
     for (let i = 1; i <= 2; i++) {
       world.installUpgrade(upgradeById(hand + "_wing_segment")!);
       check();
-      expect(bounds(tip)[1]).toBeCloseTo(original[1] + i*.7, 5);
+      expect(bounds(tip)[1]).toBeCloseTo(original[1] + i, 5);
       expect(fixed.map(bounds)).toEqual(before);
     }
     world.installUpgrade(upgradeById("giant_wing")!);

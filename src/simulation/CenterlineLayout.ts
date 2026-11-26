@@ -222,21 +222,14 @@ export function defaultTopology(frame: Airframe): AircraftTopology {
     profile: "straight",
     nodes: fuselageNodes,
   });
-  const profileByFrame: Record<string, CenterlineProfile> = {
-    sparrow_05: "straight",
-    dragonfly_06: "up",
-    moth_07: "down",
-    kestrel_08: "gull",
-    heron_09: "inverted-gull",
-  };
-  const profile: CenterlineProfile = geometry?.wing.profile ?? profileByFrame[frame.id] ?? (frame.id.includes("gull") ? "gull" : frame.id.includes("inverted") ? "inverted-gull" : frame.id.includes("pelican") ? "down" : "straight");
+  const profile = geometry?.wing.profile ?? "straight";
   const wingLayers = Math.max(1, frame.wingCount ?? 1);
   for (const side of [-1, 1] as const) {
     for (let layer = 0; layer < wingLayers; layer++) {
       const layerProfile = geometry?.wing.layers?.[layer];
       const id = `${side < 0 ? "left" : "right"}-wing-${layer}`;
       const layerY = layerProfile?.y ?? (layer * (geometry?.wing.tierGap ?? .8) - .02);
-      const layerZ = layerProfile?.z ?? ((geometry?.wing.rootZ ?? -.1) - layer * .12);
+      const layerZ = layerProfile?.z ?? ((frame.pioneerLayout?.wingZ ?? geometry?.wing.rootZ ?? -.1) - layer * .12);
       const rootOffset = layerProfile?.rootOffset ?? frame.wingspan * .06;
       const spanScale = layerProfile?.spanScale ?? geometry?.wing.spanScale ?? 1;
       const rootSpan = Math.max(.1, frame.wingspan * .5 - rootOffset);
@@ -304,30 +297,6 @@ export function defaultTopology(frame: Airframe): AircraftTopology {
       connections.push({ id: `${id}:bridge`, from: "fuselage", to: id, relation: "parallel", offset: { x: side * frame.wingspan * .22, y: 0, z: -frame.length * .2 } });
     }
   }
-  if (frame.id === "condor_10" || frame.id === "behemoth_17") {
-    for (const side of [-1, 1] as const) {
-      const id = `fuselage-${side < 0 ? "left" : "right"}`;
-      centerlines.push({
-        id,
-        kind: "fuselage",
-        side,
-        layer: 0,
-        origin: { x: side * frame.wingspan * .12, y: 0, z: 0 },
-        direction: { x: 0, y: 0, z: 1 },
-        length: frame.length * .9,
-        profile: "straight",
-        nodes: fuselageNodes,
-        relation: "parallel",
-        parentId: "fuselage",
-      });
-      connections.push({ id: `${id}:bridge`, from: "fuselage", to: id, relation: "parallel", offset: { x: side * frame.wingspan * .12, y: 0, z: 0 } });
-    }
-  }
-  // The pioneer box-kite profile uses a separate longitudinal relation for
-  // its forward wing group. Reference-validated stacked-wing profiles already
-  // have one measured vertical connection per layer and do not use this path.
-  if (frame.id === "sparrow_05")
-    connections.push({ id: "front-wing-group", from: "fuselage", to: "right-wing-0", relation: "longitudinal", offset: { z: frame.length * .18, y: 0, x: 0 } });
   return { version: 1, centerlines, connections };
 }
 
@@ -346,21 +315,15 @@ export function mountForPart(
     : part.slot === "nose"
       ? { x: 0, y: 0, z: frame.length * .31 }
       : part.slot === "leftWing" || part.slot === "rightWing"
-        ? { x: side * frame.wingspan * wingRootFactor, y: -.02, z: -.1 }
+        ? { x: side * frame.wingspan * wingRootFactor, y: -.02, z: frame.pioneerLayout?.wingZ ?? -.1 }
         : { x: 0, y: 0, z: 0 };
   const offset = options.offset ?? (
     part.x !== undefined || part.y !== undefined || part.z !== undefined
       ? { x: (part.x ?? base.x) - base.x, y: (part.y ?? base.y) - base.y, z: (part.z ?? base.z) - base.z }
       : undefined
   );
-  const profileByFrame: Record<string, CenterlineProfile> = {
-    sparrow_05: "straight",
-    dragonfly_06: "up",
-    moth_07: "down",
-    kestrel_08: "gull",
-    heron_09: "inverted-gull",
-  };
-  return { ...options, lineId, station, layer: options.layer ?? layerForPart({ role: part.role, kind: part.kind ?? part.role }), offset, profile: options.profile ?? profileByFrame[frame.id] ?? "straight" };
+  return { ...options, lineId, station, layer: options.layer ?? layerForPart({ role: part.role, kind: part.kind ?? part.role }),
+    offset, profile: options.profile ?? (frame.geometryProfile === "fokkerDr1" ? "inverted-gull" : "straight") };
 }
 
 export function mountForUpgrade(
@@ -368,6 +331,7 @@ export function mountForUpgrade(
   part: Pick<Part, "slot" | "side" | "kind" | "role">,
   frame: Airframe,
   existing: readonly Part[],
+  structureLength?: number,
 ): CenterlineMount {
   const side = part.side ?? (part.slot === "leftWing" ? -1 : part.slot === "rightWing" ? 1 : 0);
   if (frame.geometryProfile === "ho229V2" && part.slot === "tail") {
@@ -392,13 +356,13 @@ export function mountForUpgrade(
   const lineId = part.slot === "leftWing" || part.slot === "rightWing" ? `${side < 0 ? "left" : "right"}-wing-0` : part.slot === "tail" ? "tail" : "fuselage";
   const count = existing.filter((candidate) => candidate.centerline?.lineId === lineId && candidate.centerline.segmentRole === "insert").length;
   const insertion = id.endsWith("wing_segment") ? "tip-before" : "station";
-  const station = id.endsWith("wing_segment") ? frame.wingspan * .46 + count * .65 : id === "tail_side_bay" ? count * .7 : id === "serial_bomb_bay" ? -.2 - count * .7 : part.slot === "tail" ? 0 : part.slot === "nose" ? frame.length * .31 : 0;
+  const station = id.endsWith("wing_segment") ? frame.wingspan * .46 + count * (structureLength ?? 0) : id === "tail_side_bay" ? count * (structureLength ?? 0) : id === "serial_bomb_bay" ? -.2 - count * (structureLength ?? 0) : part.slot === "tail" ? 0 : part.slot === "nose" ? frame.length * .31 : 0;
   return {
     lineId,
     station,
     layer: layerForPart(part),
-    segmentLength: id.endsWith("wing_segment") || id === "tail_side_bay" || id === "serial_bomb_bay" ? .7 : undefined,
-    segmentRole: id.endsWith("wing_segment") || id === "tail_side_bay" || id === "serial_bomb_bay" ? "insert" : "mount",
+    segmentLength: structureLength,
+    segmentRole: structureLength === undefined ? "mount" : "insert",
     insertion,
   };
 }

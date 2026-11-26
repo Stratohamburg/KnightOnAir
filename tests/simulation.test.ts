@@ -1,8 +1,11 @@
+import { lightJet } from "./fixtures/simulationFrames";
 import { describe, expect, it } from "vitest";
 import { AIRFRAMES, STARTER_FRAME_ID } from "../src/data/aircrafts";
 import { RULES } from "../src/data/config";
 import { UPGRADES, upgradeById } from "../src/data/upgrades";
 import { WEAPONS } from "../src/data/weapons";
+import { RAD } from "../src/services/Random";
+import { NetworkController, playerIntent } from "../src/simulation/Controllers";
 import { World, requiredXp } from "../src/simulation/World";
 import { NO_INPUT, type Intent } from "../src/simulation/types";
 import { SaveStore } from "../src/services/Save";
@@ -17,7 +20,7 @@ function advance(
     world.frame(1 / fps, input);
 }
 function fresh(seed = 42) {
-  const w = new World(AIRFRAMES[0], seed, { director: false });
+  const w = new World(lightJet, seed, { director: false });
   w.player.invulnerable = 10000;
   return w;
 }
@@ -78,9 +81,12 @@ describe("flight and clock", () => {
         aim: w.aim,
       }),
     ).toBe(before);
-    expect(w.chooseUpgrade("not-a-choice")).toBe(false);
+    expect(w.selectUpgrade("not-a-choice")).toBe(false);
     const chosen = w.choices[0].id;
-    expect(w.chooseUpgrade(chosen)).toBe(true);
+    w.coins = 20;
+    expect(w.selectUpgrade(chosen)).toBe(true);
+    expect(w.confirmUpgrade()).toBe(true);
+    expect(w.finishUpgradeInstallation()).toBe(true);
     expect(w.phase).toBe("bombing");
     expect(w.player.upgrades).toContain(chosen);
     expect(w.clock.timeScale).toBe(1);
@@ -99,17 +105,95 @@ describe("flight and clock", () => {
 });
 
 describe("weapons, damage and bombing", () => {
-  it("keeps player weapons on their configured mount direction without auto-targeting", () => {
+  it("fires only while a hostile target occupies the mount's range, arc and target layer", () => {
     const w = fresh();
-    w.enemies = [w.spawnEnemy("bomber", 0, 17)!];
+    w.enemies = [];
     const p = w.player;
+    const playerShots = () => w.consumeEvents().filter((event) => event.type === "weapon_fired" && event.owner === "player");
+
     advance(w, 0.5);
-    expect(p.weapons.every((weapon) => weapon.targetId === 0)).toBe(true);
-    expect(p.weapons.every((weapon) => weapon.lockProgress === 0)).toBe(true);
-    const shots = w.projectiles.items.filter((projectile) => projectile.active && projectile.team === "player");
-    expect(shots.length).toBeGreaterThan(0);
-    expect(shots.every((projectile) => projectile.targetId === 0)).toBe(true);
-    expect(w.telemetry.events.some((event) => event.type === "lock_start")).toBe(false);
+    expect(playerShots()).toHaveLength(0);
+
+    const enemy = w.spawnEnemy("hunter", p.x, p.z + 50)!;
+    w.frame(RULES.step);
+    expect(playerShots()).toHaveLength(0);
+
+    Object.assign(enemy, { x: p.x + 10, z: p.z + 10 });
+    w.frame(RULES.step);
+    expect(playerShots()).toHaveLength(0);
+
+    Object.assign(enemy, { x: p.x, z: p.z + 10, factionId: p.factionId });
+    w.frame(RULES.step);
+    expect(playerShots()).toHaveLength(0);
+
+    enemy.factionId = "enemy";
+    enemy.layer = "ground";
+    w.frame(RULES.step);
+    expect(playerShots()).toHaveLength(0);
+
+    enemy.layer = "air";
+    w.frame(RULES.step);
+    expect(playerShots().length).toBeGreaterThan(0);
+
+    Object.assign(enemy, { x: p.x, z: p.z - 12 });
+    advance(w, 0.5);
+    expect(playerShots()).toHaveLength(0);
+
+    Object.assign(enemy, { x: p.x, z: p.z + 10 });
+    w.frame(RULES.step);
+    expect(playerShots().length).toBeGreaterThan(0);
+  });
+
+  it("fires rear mounts independently from forward mounts", () => {
+    const w = fresh();
+    w.enemies = [];
+    w.installUpgrade(upgradeById("twin_tail")!);
+    const rear = w.player.weapons.find(({ baseAngle }) => baseAngle === Math.PI)!;
+    w.spawnEnemy("hunter", 0, -12);
+
+    w.frame(RULES.step);
+
+    const anchors = w.consumeEvents().flatMap((event) =>
+      event.type === "weapon_fired" && event.owner === "player" ? [event.anchorId] : [],
+    );
+    expect(anchors).toEqual(Array(rear.config.count).fill(rear.anchorId));
+  });
+
+  it.each([
+    { offset: -1, reachesArcEdge: false },
+    { offset: 1.75, reachesArcEdge: true },
+  ])("assists the initial shot without turning the aircraft (target offset $offset)", ({ offset, reachesArcEdge }) => {
+    const w = fresh();
+    const control = fresh();
+    w.enemies = [];
+    control.enemies = [];
+    const p = w.player;
+    const weapon = w.mainLock!;
+    weapon.config = { ...weapon.config, lockTime: 0, homing: 0 };
+    p.weapons = [weapon];
+    const nose = w.weaponMuzzle(p, weapon, 0)!;
+    const opponent = new NetworkController();
+    opponent.push({ time: 0, intent: playerIntent({ heading: Math.PI / 2, throttle: 0 }) });
+    const target = w.spawnReplayOpponent(lightJet, opponent, nose.x + offset, nose.z + 12);
+    target.heading = Math.PI / 2;
+
+    w.frame(RULES.step);
+
+    const muzzle = w.weaponMuzzle(p, weapon, 0)!;
+    const bearing = Math.atan2(target.x - muzzle.x, target.z - muzzle.z);
+    const halfArc = weapon.config.arc * RAD / 2;
+    const shot = w.projectiles.items.find((projectile) => projectile.active && projectile.team === "player")!;
+    expect(shot.heading).toBeGreaterThan(Math.max(0, bearing));
+    if (reachesArcEdge) expect(shot.heading).toBeCloseTo(halfArc, 8);
+    else expect(shot.heading).toBeLessThan(halfArc);
+    expect(shot.targetId).toBe(0);
+    expect(weapon.lockProgress).toBe(0);
+
+    advance(w, 0.5);
+    advance(control, 0.5 + RULES.step);
+    expect([p.x, p.z, p.heading, p.bank]).toEqual([
+      control.player.x, control.player.z, control.player.heading, control.player.bank,
+    ]);
   });
   it("uses swept projectile collision to prevent fast bullets passing through enemies", () => {
     const w = fresh();
@@ -168,7 +252,7 @@ describe("weapons, damage and bombing", () => {
     ).toHaveLength(0);
   });
   it("enters a 1.2-second crash then a result state", () => {
-    const w = new World(AIRFRAMES[0], 1);
+    const w = new World(lightJet, 1);
     for (const part of w.player.parts) {
       w.player.invulnerable = 0;
       w.damagePlayer(part.maxHealth, w.player.x + part.x, w.player.z + part.z);
@@ -195,18 +279,21 @@ describe("progression and saves", () => {
     w.openUpgrades();
     expect(new Set(w.choices.map((u) => u.id)).size).toBe(3);
     expect(
-      w.choices.some((u) => ["right_engine", "dual_engine"].includes(u.id)),
+      w.choices.some((u) => u.id === "dual_engine"),
     ).toBe(false);
-    expect(w.chooseUpgrade(w.choices[0].id)).toBe(true);
+    w.coins = 20;
+    expect(w.selectUpgrade(w.choices[0].id)).toBe(true);
+    expect(w.confirmUpgrade()).toBe(true);
+    w.finishUpgradeInstallation();
     expect(w.upgradesAvailable).toBe(1);
   });
   it("keeps legal choices available after unique upgrades are exhausted", () => {
     const w = fresh();
-    for (const u of UPGRADES.filter((u) => !u.max)) w.installUpgrade(u);
+    for (const u of UPGRADES.filter((u) => u.unique)) w.installUpgrade(u);
     w.upgradesAvailable = 1;
     w.openUpgrades();
     expect(w.choices).toHaveLength(3);
-    expect(w.choices.every((u) => u.repeatable)).toBe(true);
+    expect(w.choices.every((u) => !u.unique)).toBe(true);
   });
   it("makes heavy, light and asymmetric builds differ in stats, geometry recipes and collision zones", () => {
     const heavy = fresh(),
@@ -246,7 +333,7 @@ describe("progression and saves", () => {
     expect(body.health).toBeGreaterThan(0);
     expect(engine.health).toBe(0);
     expect(w.player.health).toBeGreaterThan(0);
-    expect(AIRFRAMES[0].health).toBe(100);
+    expect(lightJet.health).toBe(100);
   });
   it("saves unlocks, protects locked equipment, validates malformed data and tolerates unavailable storage", () => {
     let raw = "";
@@ -257,17 +344,22 @@ describe("progression and saves", () => {
       },
     };
     const save = new SaveStore(storage);
-    expect(save.equip("mastodon_03")).toBe(false);
+    expect(save.equip("stingray_16")).toBe(false);
     const w = fresh();
     w.score = 7600;
     w.coins = 23;
     advance(w, 1);
     w.end();
     save.record(w);
-    expect(save.equip("mastodon_03")).toBe(true);
+    expect(save.equip("stingray_16")).toBe(true);
     const restored = new SaveStore(storage);
-    expect(restored.data.equipped).toBe("mastodon_03");
+    expect(restored.data.equipped).toBe("stingray_16");
     expect(restored.data.currency).toBe(w.coins);
+    raw = JSON.stringify({ ...restored.data, equipped: "mastodon_03", unlocked: [...restored.data.unlocked, "mastodon_03"] });
+    const migrated = new SaveStore(storage);
+    expect(migrated.data.equipped).toBe(STARTER_FRAME_ID);
+    expect(migrated.data.unlocked).not.toContain("mastodon_03");
+    expect(migrated.data.currency).toBe(w.coins);
     raw = "{bad json";
     expect(new SaveStore(storage).data.equipped).toBe(STARTER_FRAME_ID);
     raw =
@@ -304,8 +396,11 @@ describe("five-minute endurance", () => {
           active: i % 300 < 180,
           magnitude: 0.7,
         });
-        if (w.upgradesAvailable && w.openUpgrades())
-          w.chooseUpgrade(w.choices[0].id);
+        if (w.upgradesAvailable && w.openUpgrades()) {
+          w.selectUpgrade(w.choices[0].id);
+          if (w.confirmUpgrade()) w.finishUpgradeInstallation();
+          else w.returnFromUpgrade();
+        }
         if (i % 600 === 0 && w.phase === "battle") w.toggleBombing();
         if (w.canBomb) w.dropBomb();
         if (w.phase === "bombing" && i % 600 === 400) w.toggleBombing();

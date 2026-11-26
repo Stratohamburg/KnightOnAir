@@ -91,7 +91,7 @@ Apply each check only to the branches selected for the documented architecture a
 - [ ] For a directional opening, inspect the finished mesh along its axis and from the side or rear quarter. Verify the anchor at the lip and check clearance across the aperture, including its lower and lateral edges. A section cut or rays against the actual surrounding mesh can reveal a blocked exit. For a propeller, inspect clearance across the swept disk.
 - [ ] When review finds a repeatable failure, record the failing configuration, view and relationship. Correct the responsible sheet, part dimensions or placement rule, then compare the base and failing state again. Add a targeted regression when an existing check could pass the faulty assembly.
 
-The [Dr.I record](../../../../docs/reference/fokker-dr1-profile.md) illustrates independent layer stations, control surfaces and terminal bays. The [Ho 229 V2 record](../../../../docs/reference/ho229-v2-profile.md) illustrates a raised housing, a clear dorsal outlet and full-size repeated units staggered along a swept carrier. Use the current variant's evidence to choose its geometry and growth direction.
+The [Dr.I record](../../../../docs/aircraft-profiles/fokker-dr1-profile.md) illustrates independent layer stations, control surfaces and terminal bays. The [Ho 229 V2 record](../../../../docs/aircraft-profiles/ho229-v2-profile.md) illustrates a raised housing, a clear dorsal outlet and full-size repeated units staggered along a swept carrier. Use the current variant's evidence to choose its geometry and growth direction.
 
 ## Low-poly fidelity and readability
 

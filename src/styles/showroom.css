@@ -21,6 +21,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   pointer-events: none;
 }
@@ -63,7 +64,8 @@
   left: 10px;
   right: 10px;
   bottom: 8px;
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   align-items: center;
   justify-content: space-between;
   gap: 5px;
@@ -72,6 +74,31 @@
   background: var(--panel-bg);
   border: 1px solid var(--line-mid);
   backdrop-filter: blur(8px);
+}
+
+.showroom-livery-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0 .55rem;
+  color: var(--ink-muted);
+  font-size: .68rem;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+.showroom-livery-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.showroom-livery-actions .showroom-livery-step {
+  flex: 0 0 30px;
+  min-width: 30px;
 }
 
 .showroom-stage-actions .btn {
