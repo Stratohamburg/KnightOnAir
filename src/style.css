@@ -4,6 +4,7 @@
 @import "./styles/battle.css";
 @import "./styles/showroom.css";
 @import "./styles/modals.css";
+@import "./styles/ticket.css";
 @import "./styles/reference-lab.css";
 
 @media (prefers-reduced-motion: reduce) {

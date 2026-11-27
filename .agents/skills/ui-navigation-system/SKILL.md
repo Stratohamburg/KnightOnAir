@@ -40,7 +40,8 @@ Treat the OpenSpec as the behavioral contract, the UI navigation document as the
 3. Put cross-page destinations in first-level navigation. Put filters, eras, rosters, parts, shop modes, and build views in the current page.
 4. Do not make a tab change silently equip, purchase, claim, upgrade, or change the selected mission.
 5. Keep `reservedA` and `reservedB` compatibility aliases documented when they map to future activities or `showroom`.
-6. Gate debug-only entries by the existing development or explicit debug condition. Do not solve this by adding a player-facing placeholder that looks like a normal feature.
+6. Use a dedicated bottom navigation region with a visible icon and short accessible label per destination. Update its icon asset, active state and compact portrait layout together. See the ticket dimensions and source art in `docs/UI_NAVIGATION_SPEC.md`.
+7. Gate debug-only entries by the existing development or explicit debug condition. Do not solve this by adding a player-facing placeholder that looks like a normal feature.
 
 ## Second-level tab rules
 
@@ -78,7 +79,7 @@ After changing a menu or page, inspect every item in this list.
 | Product documentation | `docs/UI_NAVIGATION_SPEC.md`, `docs/README.md` |
 | Navigation and views | `src/content/2d/HangarView.ts`, `src/content/2d/ShowroomView.ts`, `src/content/2d/ModalViews.ts` |
 | Routing and actions | `src/app/GameApp.ts` |
-| Presentation | `src/styles/base.css`, `tokens.css`, `hangar.css`, `showroom.css`, `modals.css` |
+| Presentation | `src/styles/base.css`, `tokens.css`, `hangar.css`, `showroom.css`, `modals.css`, `src/styles/ticket.css`, `src/assets/ui/ticket/` |
 | Verification | `tests/mobile-ui.test.ts`, `tests/aircraft-showroom.test.ts`, mission and persistence tests, related browser acceptance steps |
 | Collaboration guidance | `AGENTS.md` and this skill |
 

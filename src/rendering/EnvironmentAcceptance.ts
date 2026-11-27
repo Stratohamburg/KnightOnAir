@@ -7,6 +7,7 @@ import { World } from "../simulation/World";
 import type { CombatSnapshot, WorldEvent } from "../simulation/types";
 import { frameBattleCamera } from "./BattleCamera";
 import { placeVegetation } from "./VegetationField";
+import { riverZ, sampleTerrain, terrainStructureMetrics } from "../simulation/Terrain";
 import { cloudDiagnostics, environmentFixture, environmentState, type EnvironmentFixture } from "./RenderDiagnostics";
 import { Renderer } from "./Renderer";
 
@@ -196,6 +197,19 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
       return draw(dt);
     },
     surface(x: number, z: number) { return world.surfaceHeight(x, z); },
+    terrainViews() {
+      const points = {
+        lowland: [0, 0],
+        valley: [-24, 34],
+        hill: [-39, 2],
+        highland: [61, 35],
+        shore: [-30, riverZ(-30, world.terrainSeed) + 7],
+      } as const;
+      return {
+        structure: terrainStructureMetrics(world.terrainSeed),
+        views: Object.fromEntries(Object.entries(points).map(([name, [x, z]]) => [name, { x, z, sample: sampleTerrain(x, z, world.terrainSeed) }])),
+      };
+    },
   };
   Object.assign(window, { __koa: { renderer, environment } });
   const params = new URLSearchParams(location.search);
@@ -210,7 +224,13 @@ export function mountEnvironmentAcceptance(root: HTMLElement) {
     fixture.clouds = params.get("clouds") !== "off";
     fixture.cloudShadows = params.get("cloudShadows") !== "off";
     const bombing = params.get("view") === "bombing";
-    environment.flight(0, bombing ? 7 : -4, bombing, .5);
+    const view = params.get("view");
+    const positions: Record<string, [number, number]> = {
+      lowland: [0, 0], valley: [-24, 34], hill: [-39, 2], highland: [61, 35],
+      shore: [-30, riverZ(-30, 491) + 7],
+    };
+    const [x, z] = positions[view ?? ""] ?? [0, bombing ? 7 : -4];
+    environment.flight(x, z, bombing, .5);
   } else {
     setup(initialScene);
     if (initialScene === "cloudscape" || initialScene === "terrain") {

@@ -8,7 +8,6 @@ import { AirflowLines } from "../src/content/fx/AirflowLines";
 import { AircraftEffectSites } from "../src/content/3d/aircraftEffectSites";
 import { AircraftFlightEffects } from "../src/content/fx/AircraftFlightEffects";
 import { CombatEffects } from "../src/content/fx/CombatEffects";
-import { EffectBatch } from "../src/content/fx/EffectBatch";
 import type { CombatSnapshot, WorldEvent } from "../src/simulation/types";
 import { hitEntity } from "../src/simulation/HitTest";
 import { World } from "../src/simulation/World";
@@ -146,13 +145,13 @@ describe("aircraft flight effects", () => {
     const world = new World(airframeById("stingray_16"), 491, {director:false});
     const p = world.player, model = new ProceduralAircraft(p);
     const scene = new Scene(), camera = new PerspectiveCamera();
-    const flight = new AircraftFlightEffects(scene), smoke = new EffectBatch(scene,96,"smoke");
+    const flight = new AircraftFlightEffects(scene);
     const draw = (dt: number) => {
       model.update(1,dt);
       flight.resetRoots();
       flight.lines.advance(dt);
       flight.bands.advance(dt);
-      flight.emit(model,1,dt,"low",smoke);
+      flight.emit(model,1,"low",camera);
       flight.lines.write();
       flight.bands.write();
       for (const batch of flight.batches) batch.write(camera);
@@ -182,9 +181,55 @@ describe("aircraft flight effects", () => {
     const matches = Array.from({length:flight.lines.active},(_,i) =>
       new Vector3().fromBufferAttribute(vertices,i*2).distanceTo(root) < .0001);
     expect(matches).toContain(true);
-    flight.lines.dispose();
-    flight.bands.dispose();
-    for (const batch of [...flight.batches,smoke]) batch.dispose();
+    for (const trail of flight.trails) trail.dispose();
+    for (const batch of flight.batches) batch.dispose();
+    model.dispose();
+    world.dispose();
+  });
+
+  it.each([
+    ["heron_09", "exhaust", "pistonSmoke", 0],
+    ["stingray_16", "jetOutlet", "jetSmoke", 1],
+  ] as const)("joins the %s smoke to its engine while banking", (frame, kind, smoke, flames) => {
+    const world = new World(airframeById(frame), 491, { director: false });
+    const model = new ProceduralAircraft(world.player);
+    const scene = new Scene();
+    const camera = new PerspectiveCamera();
+    camera.position.set(0, 10, -5);
+    camera.lookAt(0, 0, 0);
+    const flight = new AircraftFlightEffects(scene);
+    const trail = flight[smoke];
+    const outlet = model.effectSites.sources.find(site => site.kind === kind)!;
+    const draw = (time: number) => {
+      model.update(time, .05);
+      flight.resetRoots();
+      for (const track of flight.trails) track.advance(.06);
+      flight.emit(model, time, "low", camera, site => site === outlet);
+      trail.write();
+      flight.cones.write(camera);
+    };
+    draw(.06);
+    draw(.12);
+    world.player.heading = .45;
+    world.player.bank = .7;
+    model.group.position.z = .8;
+    draw(.18);
+    expect(flight.cones.mesh.count).toBe(flames);
+    expect(trail.active).toBeGreaterThanOrEqual(2);
+    const position = trail.mesh.geometry.getAttribute("position");
+    const vertex = (i: number) => new Vector3().fromBufferAttribute(position, i);
+    expect(vertex(2).distanceTo(vertex(4))).toBeLessThan(.00001);
+    expect(vertex(3).distanceTo(vertex(5))).toBeLessThan(.00001);
+    const root = new Vector3().fromArray(outlet.position).applyMatrix4(outlet.node.matrixWorld);
+    const smokeRoot = vertex(0).add(vertex(1)).multiplyScalar(.5);
+    if (kind === "exhaust") {
+      expect(smokeRoot.distanceTo(root)).toBeLessThan(.00001);
+    } else {
+      const direction = new Vector3().fromArray(outlet.direction).transformDirection(outlet.node.matrixWorld);
+      expect(smokeRoot.sub(root).normalize().distanceTo(direction)).toBeLessThan(.00001);
+    }
+    for (const track of flight.trails) track.dispose();
+    for (const batch of flight.batches) batch.dispose();
     model.dispose();
     world.dispose();
   });

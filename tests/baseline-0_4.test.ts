@@ -143,7 +143,8 @@ describe("0.4 fixed-seed baseline", () => {
     expect(world.enemies).not.toContain(enemy);
     const events = world.consumeEvents();
     expect(events.find((event) => event.type === "enemy_destroyed")?.snapshot.position.x).toBe(deathX);
-    expect(events.filter((event) => event.type === "part_detached")).toHaveLength(2);
+    expect(events.flatMap(event => event.type === "part_detached" ? [event.partId] : []).sort())
+      .toEqual(["engine_0", "engine_1", "left_wing", "right_wing", "tail"]);
     expect(world.consumeEvents()).toEqual([]);
   });
 

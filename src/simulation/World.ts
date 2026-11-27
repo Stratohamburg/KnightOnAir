@@ -1,6 +1,7 @@
 import { applyHoPanelLayout } from "./Ho229Layout";
 import { RULES } from "../data/config";
 import {
+  combatAircraftFrame,
   combatantById,
   type CombatantConfig,
   assertCombatantConfigIntegrity,
@@ -10,7 +11,7 @@ import {
 } from "../data/combatants";
 import { WEAPONS, type WeaponConfig, type TargetLayer } from "../data/weapons";
 import { FOKKER_UPGRADES, HO229_UPGRADES, UPGRADES, refitStructureLength, upgradePrice, type Upgrade } from "../data/upgrades";
-import { AIRFRAMES, type Airframe } from "../data/aircrafts";
+import type { Airframe } from "../data/aircrafts";
 import { ERAS, missionEraOf } from "../data/eras";
 import type { CampaignMission } from "../data/campaignMissions";
 import { resolveMissionFrame, validateCampaignMissions } from "./MissionValidation";
@@ -28,9 +29,8 @@ import { Telemetry } from "../services/Telemetry";
 import { WindField } from "./WindField";
 import { SortieEnvironment } from "./SortieEnvironment";
 import { configuredFlight, integrateAirActor } from "./FlightDynamics";
-import { addConfiguredWeapon, aircraftPreviewFire, configuredParts, createAirframeActor, weaponMuzzle } from "./AirframeActor";
+import { addConfiguredWeapon, aircraftPreviewFire, configuredParts, createAirframeActor, weaponMountActive, weaponMuzzle } from "./AirframeActor";
 import { localToWorld, mountOffset, partAnchor, type ActorPose } from "../content/3d/anchors";
-import { npcAirframeShape } from "../content/3d/airframeShape";
 import {
   applyPartDamage,
   evaluateDamage,
@@ -583,7 +583,9 @@ export class World {
         if (weaponId) {
           const weapon = WEAPONS[weaponId];
           const config = combatantById(actor.configId!)!;
-          const part = config.mounts[0]?.partId ?? "center_body";
+          const part = weapon.category === "area"
+            ? actor.parts.find(candidate => candidate.role === "bay")?.id ?? "center_body"
+            : config.mounts[0]?.partId ?? "center_body";
           actor.weapons.length = 0;
           this.addConfiguredWeapon(actor, {
             id: "mission-attack", partId: part, weaponId, count: 1, arc: 48, baseAngle: 0,
@@ -612,7 +614,7 @@ export class World {
       const pool = plan.air.filter((id) => npcProfileById(id, this.era)?.spawn.phases.includes(phase));
       const count = p.health / this.playerMaxHealth < .35 ? 1 : 2 + Math.min(2, Math.floor(t / 70));
       const bearing = p.heading + this.random.range(-1.1, 1.1);
-      const tailKind = pool.find((id) => npcProfileById(id, this.era)?.behavior.kind === "chase");
+      const tailKind = pool.includes("hunter") ? "hunter" : pool.find((id) => npcProfileById(id, this.era)?.behavior.kind === "chase");
       for (let index = 0; index < count && pool.length; index++) {
         const kind = index === 0 && tailKind ? tailKind : this.random.pick(pool);
         const profile = npcProfileById(kind, this.era);
@@ -745,14 +747,12 @@ export class World {
   }
 
   private createOpponent(profile: NpcProfile, config: CombatantConfig, kind: string, x: number, z: number) {
-    const parts = configuredParts(config, AIRFRAMES.find(({ id }) => id === config.id));
-    if (config.frame.model === "air") {
-      const frame = AIRFRAMES.find(({ id }) => id === config.id);
-      const shape = frame
-        ? { wingspan: frame.wingspan, length: frame.length, width: frame.engines === 4 ? .75 : .48, tiers: frame.wingCount ?? 1, wingLength: frame.length }
-        : npcAirframeShape(config.visual.modelKey, config.era);
-      refreshAirframeSilhouette(parts, shape.wingspan, shape.length, shape.width, shape.tiers, shape.wingLength, undefined, frame ?? config.id);
-      if (frame && config.topology) {
+    const frame = combatAircraftFrame(config.visual.modelKey);
+    const parts = configuredParts(config, frame);
+    if (frame) {
+      refreshAirframeSilhouette(parts, frame.wingspan, frame.length, frame.engines === 4 ? .75 : .48,
+        frame.wingCount ?? 1, frame.length, undefined, frame);
+      if (config.topology) {
         applyCenterlineLayout(config.topology, parts);
         if (frame.geometryProfile === "ho229V2") applyHoPanelLayout(parts, frame.wingspan);
       }
@@ -957,7 +957,7 @@ export class World {
       const aimZ = intent.attackPoint?.z ?? intent.targetPoint?.z ?? defender.z + defender.vz * .35;
       const angle = Math.abs(angleDelta(Math.atan2(aimX - e.x, aimZ - e.z), e.heading));
       const aimWithinWeapon = (weapon: RuntimeWeapon) =>
-        this.weaponMountActive(e, weapon) && this.isWeaponTarget(e.factionId ?? "enemy", defender, weapon.config.targetLayers) && d <= weapon.config.range &&
+        weaponMountActive(e.parts, weapon) && this.isWeaponTarget(e.factionId ?? "enemy", defender, weapon.config.targetLayers) && d <= weapon.config.range &&
         (e.layer !== "air" || profile.radial || angle <=
           (weapon.config.category === "turret" ? weapon.config.turretArc : weapon.config.arc) * RAD / 2);
       const canAttack = intent.fire && e.weapons.some(aimWithinWeapon);
@@ -1031,7 +1031,7 @@ export class World {
       const part = p.parts.find((v) => v.id === w.partId),
         c = w.config;
       w.cooldown = Math.max(0, w.cooldown - dt);
-      if (!part || !this.weaponMountActive(p, w)) {
+      if (!part || !weaponMountActive(p.parts, w)) {
         w.lockProgress = 0;
         w.targetId = 0;
         continue;
@@ -1151,17 +1151,6 @@ export class World {
     });
     v.hitIds.length = 0;
     return v;
-  }
-  private weaponMountActive(entity: Pick<CombatEntity, "parts">, weapon: RuntimeWeapon) {
-    const part = entity.parts.find((value) => value.id === weapon.partId);
-    if (!part || part.health <= 0 || part.state === "disabled" || part.destroyed) return false;
-    let parentId = part.parentId;
-    while (parentId) {
-      const parent = entity.parts.find((value) => value.id === parentId);
-      if (!parent || parent.health <= 0 || parent.state === "disabled" || parent.destroyed) return false;
-      parentId = parent.parentId;
-    }
-    return true;
   }
   actorPose(entity: Player | Enemy): ActorPose {
     const { x, z, heading, bank, vx, vz } = entity;
@@ -1403,6 +1392,7 @@ export class World {
   }
   private finishEnemy(e: Enemy, type: DamageType) {
     if (e.health > 0) return;
+    this.detachDestroyedParts(e, "enemy");
     this.mission?.destroyed(e.id);
     if (e.factionId === "player") return;
     const profile = this.replayControllers.get(e.id)?.profile ?? npcProfileById(e.kind, this.era);
@@ -2034,8 +2024,29 @@ export class World {
       coins: this.coins,
     });
     if (this.phase === "dying") {
+      this.detachDestroyedParts(this.player, "player");
       this.emit({ type: "player_destroyed", time: this.elapsed, snapshot: this.impactSnapshot(this.player, this.player.x, this.player.z, "explosive") });
     }
+  }
+
+  private detachDestroyedParts(entity: Player | Enemy, owner: "player" | "enemy") {
+    const pose = this.actorPose(entity);
+    for (const part of entity.parts) {
+      if (!part.visual?.detachable || part.destroyed) continue;
+      part.destroyed = true;
+      part.state = "destroyed";
+      part.disabled = true;
+      const anchor = localToWorld(pose, partAnchor(part));
+      this.emit({
+        type: "part_detached", time: this.elapsed, owner,
+        entityId: entity === this.player ? "player" : entity.id,
+        partId: part.id, partKind: part.kind,
+        color: combatantById(entity.configId ?? "")?.visual.color ?? "#899589",
+        snapshot: { ...this.impactSnapshot(entity, entity.x, entity.z, "explosive"),
+          position: { x: anchor.x, y: anchor.y, z: anchor.z } },
+      });
+    }
+    entity.partRevision++;
   }
   dispose() {
     this.projectiles.clear();

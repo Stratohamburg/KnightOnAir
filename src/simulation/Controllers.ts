@@ -1,6 +1,7 @@
 import type { AirAttackProfile, MotionConfig, NpcProfile } from "../data/combatants";
 import { angleDelta, clamp, RAD } from "../services/Random";
-import type { AirCombatGeometry, ContinuousTurn, ControllerIntent, Enemy } from "./types";
+import { weaponMountActive } from "./AirframeActor";
+import type { AirCombatGeometry, ContinuousTurn, ControllerIntent, Enemy, Part, RuntimeWeapon } from "./types";
 
 export interface ControllerSnapshot {
   x: number;
@@ -13,6 +14,9 @@ export interface ControllerSnapshot {
   energyMax?: number;
   health?: number;
   maxHealth?: number;
+  turnVelocity?: number;
+  weapons?: readonly RuntimeWeapon[];
+  parts?: readonly Part[];
 }
 
 export interface PlayerControllerInput {
@@ -123,28 +127,34 @@ function airCombatIntent(
   const distance = Math.hypot(dx, dz);
   const bearing = Math.atan2(dx, dz);
   const closing = ((actor.vx - player.vx) * dx + (actor.vz - player.vz) * dz) / Math.max(1, distance);
-  const lead = Math.min(1.25, Math.max(.1, behavior.leadTime + distance / Math.max(2, actor.speed + player.speed)));
+  const weapons = actor.weapons.filter(weapon => weaponMountActive(actor.parts, weapon));
+  const weaponSpeed = weapons[0]?.config.speed ?? 24;
+  const firstLead = distance / Math.max(1, weaponSpeed);
+  const lead = Math.min(1.25, Math.hypot(dx + player.vx * firstLead, dz + player.vz * firstLead) / weaponSpeed);
   const aimX = player.x + player.vx * lead;
   const aimZ = player.z + player.vz * lead;
   const aimHeading = Math.atan2(aimX - actor.x, aimZ - actor.z);
   const error = Math.abs(angleDelta(aimHeading, actor.heading));
   const routeAttack = ["crossing", "standoff", "patrol", "escort", "static"].includes(behavior.kind);
+  const hunter = behavior.kind === "chase";
   const fastPass = tactical.attackBoost > 0;
   const targetAlong = dx * Math.sin(player.heading) + dz * Math.cos(player.heading);
   const lateralOffset = dx * Math.cos(player.heading) - dz * Math.sin(player.heading);
-  const tail = !routeAttack && targetAlong > 0 &&
+  const tail = !routeAttack && targetAlong > Math.abs(lateralOffset) * .55 &&
     Math.abs(angleDelta(actor.heading, player.heading)) < tactical.lostAngle;
-  const weaponSolution = actor.weapons.length === 0 || actor.weapons.some((weapon) => {
+  const weaponSolution = weapons.some((weapon) => {
     const range = weapon.config.range;
     const arc = weapon.config.category === "turret" ? weapon.config.turretArc : weapon.config.arc;
     return distance <= range && error <= Math.min(tactical.attackAngle * RAD, arc * RAD / 2 + tactical.aimTolerance);
   });
   const geometry = (profile.radial || error <= tactical.attackAngle * RAD) &&
-    distance <= behavior.engageRadius && weaponSolution && (routeAttack || (distance > 2.6 && closing >= -1.15));
+    distance <= behavior.engageRadius && (profile.radial || weaponSolution) && (routeAttack || (distance > 2.6 && closing >= -1.15));
   const tailDistance = (tactical.tailDistance[0] + tactical.tailDistance[1]) * .5;
+  const trailHeading = player.heading + clamp((player.turnVelocity ?? 0) * .18, -.45, .45);
+  const pursuitLead = Math.min(.85, behavior.leadTime + distance * .012);
   const tailTarget = {
-    x: player.x - Math.sin(player.heading) * tailDistance,
-    z: player.z - Math.cos(player.heading) * tailDistance,
+    x: player.x + player.vx * pursuitLead - Math.sin(trailHeading) * tailDistance,
+    z: player.z + player.vz * pursuitLead - Math.cos(trailHeading) * tailDistance,
   };
   const geometrySnapshot: AirCombatGeometry = {
     distance,
@@ -167,7 +177,9 @@ function airCombatIntent(
   const transition = (state: Enemy["state"]) => {
     actor.state = state;
     actor.phaseTime = 0;
+    actor.lostAttackTime = 0;
   };
+  const side = actor.id % 2 ? 1 : -1;
 
   if (actor.state !== "fleeing" &&
       (behavior.kind === "flee" || actor.health < actor.maxHealth * tactical.fleeHealth)) {
@@ -179,11 +191,47 @@ function airCombatIntent(
     intent.boost = tactical.attackBoost;
     return intent;
   }
+  const threatBearing = angleDelta(bearing + Math.PI, player.heading);
+  const threatened = !routeAttack && actor.factionId !== "player" &&
+    Math.abs(angleDelta(bearing, actor.heading)) > 1.4 &&
+    player.weapons?.some(weapon => {
+      if (weapon.config.category === "area" || !(weapon.config.targetLayers ?? ["air"]).includes("air")) return false;
+      if (player.parts && !weaponMountActive(player.parts, weapon)) return false;
+      return distance <= Math.min(19, weapon.config.range) &&
+        Math.abs(angleDelta(threatBearing, weapon.baseAngle)) <= Math.max(.24, weapon.config.arc * RAD / 2);
+    });
+  if (threatened && actor.state !== "defending") {
+    actor.breakHeading = actor.heading + (Math.abs(lateralOffset) < .8 ? side : -Math.sign(lateralOffset)) * 1.12;
+    transition("defending");
+  }
+  if (actor.state === "defending") {
+    actor.attackWindow = actor.breakWindow = 0;
+    if (actor.phaseTime < .95 || threatened && actor.phaseTime < 1.4) {
+      intent.targetHeading = actor.breakHeading;
+      intent.throttle = actor.speed > frame.cruiseSpeed + 2 ? .32 : .65;
+      return intent;
+    }
+    if (threatened) {
+      const previousTurn = Math.sign(angleDelta(actor.breakHeading, actor.heading)) || side;
+      actor.breakHeading = actor.heading - previousTurn * 1.14;
+      transition("defending");
+      intent.targetHeading = actor.breakHeading;
+      intent.throttle = 1;
+      return intent;
+    }
+    transition("reentering");
+  }
   const evasiveTurn = actor.tailAttack && Math.abs(angleDelta(player.heading, actor.attackTargetHeading)) > tactical.lostAngle;
   const committed = actor.phaseTime >= tactical.actionCooldown;
+  const holdingTail = hunter && actor.state === "attacking" && actor.tailAttack;
+  const tailLost = !tail || distance > tactical.tailDistance[1] + 5 || distance < 3.1 ||
+    closing < -1.8 && distance > tailDistance;
+  const attackLost = holdingTail ? tailLost : !geometry || evasiveTurn;
+  if (actor.state === "attacking") actor.lostAttackTime = attackLost ? (actor.lostAttackTime ?? 0) + dt : 0;
+  const attackLimit = holdingTail ? tactical.tailHoldTime : hunter ? 1.15 : tactical.attackWindow;
   if (actor.state === "attacking" && committed &&
-      (!geometry || evasiveTurn || actor.phaseTime >= tactical.attackWindow || actor.phaseTime >= tactical.tailHoldTime && actor.tailAttack)) {
-    if (!routeAttack) actor.breakHeading = actor.heading + (actor.id % 2 ? tactical.breakOffset : -tactical.breakOffset);
+      ((holdingTail ? (actor.lostAttackTime ?? 0) >= .5 : attackLost) || actor.phaseTime >= attackLimit)) {
+    if (!routeAttack) actor.breakHeading = actor.heading + side * tactical.breakOffset;
     transition("breaking");
   }
   if (actor.state === "breaking" && actor.phaseTime >= tactical.breakTime &&
@@ -193,29 +241,24 @@ function airCombatIntent(
   if (actor.state === "reentering" && distance <= tactical.reentryDistance && actor.phaseTime >= .35) {
     transition("cruising");
   }
-  if ((actor.state === "entering" || actor.state === "cruising") && geometry && actor.weapons.length > 0) {
+  const readyToAttack = hunter && tail
+    ? distance <= tactical.tailDistance[1] + 2 && distance > 3.1 && closing > -1.8
+    : geometry;
+  if ((actor.state === "entering" || actor.state === "cruising") && readyToAttack && weapons.length > 0) {
     actor.tailAttack = tail && !routeAttack;
     actor.attackTargetHeading = player.heading;
     transition("attacking");
   }
-  actor.attackWindow = actor.state === "attacking" ? tactical.attackWindow - actor.phaseTime : 0;
+  actor.attackWindow = actor.state === "attacking" ? (hunter ? actor.tailAttack ? tactical.tailHoldTime : 1.15 : tactical.attackWindow) - actor.phaseTime : 0;
   actor.breakWindow = actor.state === "breaking" ? Math.max(0, tactical.breakTime - actor.phaseTime) : 0;
 
   if (actor.state === "breaking" && !routeAttack) {
     intent.targetHeading = actor.breakHeading;
     intent.boost = fastPass ? tactical.attackBoost : 0;
+    if (hunter && distance < tailDistance && closing > 1) intent.brake = true;
     return intent;
   }
 
-  if (behavior.kind === "chase" && tail) {
-    intent.targetPoint = tailTarget;
-    intent.targetHeading = Math.atan2(tailTarget.x - actor.x, tailTarget.z - actor.z);
-    intent.attackPoint = { x: aimX, z: aimZ };
-    const speedError = player.speed - actor.speed;
-    intent.throttle = clamp(.72 + speedError / Math.max(2, frame.maxSpeed - frame.cruiseSpeed), 0, 1);
-  }
-
-  const side = actor.id % 2 ? 1 : -1;
   if (behavior.kind === "escort" && anchor) {
     const x = anchor.x + Math.cos(anchor.heading) * side * 6 - Math.sin(anchor.heading) * 3;
     const z = anchor.z - Math.sin(anchor.heading) * side * 6 - Math.cos(anchor.heading) * 3;
@@ -234,26 +277,34 @@ function airCombatIntent(
   } else if (behavior.kind === "standoff") {
     intent.targetHeading = bearing + side * (distance < behavior.preferredRange[0] ? 1.8 : .75);
     intent.throttle = .45;
+  } else if (hunter && (tail || holdingTail)) {
+    const gap = targetAlong - tailDistance;
+    const closingTarget = gap > 0 ? Math.min(6, Math.sqrt(2.2 * gap)) : Math.max(-1.8, gap * .77);
+    const desiredSpeed = player.speed + closingTarget;
+    const speedSpan = Math.max(.1, frame.maxSpeed * actor.damage.engineFactor - frame.cruiseSpeed);
+    intent.throttle = clamp((desiredSpeed - frame.cruiseSpeed) / speedSpan);
+    intent.brake = distance < tactical.tailDistance[1] && closing > Math.max(2, closingTarget + 2);
+    if (distance > tactical.tailDistance[1] + 1 || holdingTail && tailLost) {
+      intent.targetPoint = tailTarget;
+      intent.targetHeading = Math.atan2(tailTarget.x - actor.x, tailTarget.z - actor.z);
+    }
   } else if (actor.state === "attacking") {
-    intent.throttle = tail && !fastPass
-      ? clamp((player.speed + clamp((distance - 7) * .4, -.4, 2) - frame.cruiseSpeed) /
-          Math.max(.1, frame.maxSpeed - frame.cruiseSpeed))
-      : tactical.attackThrottle;
+    intent.throttle = tactical.attackThrottle;
     intent.boost = tactical.attackBoost;
-  } else if (tail && !fastPass) {
-    intent.throttle = clamp(.8 + (player.speed - actor.speed) /
-      Math.max(2, frame.maxSpeed - frame.cruiseSpeed), .35, 1);
   } else {
     const lead = Math.min(2, distance / Math.max(2, frame.maxSpeed));
     const offset = side * Math.min(actor.state === "reentering" ? 12 : 8, distance * .35);
-    intent.targetHeading = Math.atan2(
-      dx + player.vx * lead + Math.cos(player.heading) * offset,
-      dz + player.vz * lead - Math.sin(player.heading) * offset,
-    );
+    if (hunter && distance > 6) {
+      intent.targetPoint = { x: tailTarget.x + Math.cos(player.heading) * offset * .5,
+        z: tailTarget.z - Math.sin(player.heading) * offset * .5 };
+      intent.targetHeading = Math.atan2(intent.targetPoint.x - actor.x, intent.targetPoint.z - actor.z);
+    } else {
+      intent.targetHeading = Math.atan2(dx + player.vx * lead + Math.cos(player.heading) * offset,
+        dz + player.vz * lead - Math.sin(player.heading) * offset);
+    }
   }
-  intent.fire = actor.state === "attacking" && geometrySnapshot.weaponSolution &&
-    geometrySnapshot.aimError <= tactical.aimTolerance &&
-    (routeAttack || geometrySnapshot.closingSpeed >= -1.15);
+  intent.fire = actor.state === "attacking" && (profile.radial || (geometrySnapshot.weaponSolution &&
+    geometrySnapshot.aimError <= tactical.aimTolerance && (routeAttack || geometrySnapshot.closingSpeed >= -1.15)));
   return intent;
 }
 

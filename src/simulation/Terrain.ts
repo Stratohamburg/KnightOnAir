@@ -19,6 +19,41 @@ export interface TerrainSample {
   surfaceMask: 0 | 1 | 2 | 3 | 4;
   roadMask: number;
   shoreMask: number;
+  /** Normalized elevation within the playable height range. */
+  elevation: number;
+  /** Continuous landform weights used by materials and decoration placement. */
+  lowlandWeight: number;
+  valleyWeight: number;
+  hillWeight: number;
+  shoulderWeight: number;
+  highlandWeight: number;
+  meadowWeight: number;
+  flowerWeight: number;
+  wetlandWeight: number;
+  sandWeight: number;
+  rockWeight: number;
+  ridgeWeight: number;
+  peakWeight: number;
+  saddleWeight: number;
+  basinWeight: number;
+  drainageOrder: number;
+  flowAccumulation: number;
+  sedimentWeight: number;
+  talusWeight: number;
+  curvature: number;
+  roughness: number;
+}
+
+export interface TerrainDerivationMetrics {
+  generationMs: number;
+  cacheHits: number;
+  cacheMisses: number;
+  activeCells: number;
+  thermalIterations: number;
+  hydraulicIterations: number;
+  seamError: number;
+  gullyQuality: number;
+  sedimentWeight: number;
 }
 
 const integerHash = (x: number, z: number, seed: number) => {
@@ -47,6 +82,152 @@ const landforms = [
   [-78, -71, 48, 48, 12, .22],
   [62, -101, 53, 56, 14, .24],
 ] as const;
+
+const mountainCenters = [
+  [-49, 53, 62, .9], [61, 35, 68, 1.1], [-19, 155, 74, .82], [55, 186, 78, .72],
+] as const;
+const mountainLines = [
+  [[-112, 18], [-49, 53], [-4, 98], [55, 150], [112, 198]],
+  [[-98, 128], [-44, 112], [8, 83], [61, 35], [118, -16]],
+] as const;
+const valleyLines = [
+  [[-118, -28], [-72, 4], [-30, 18], [8, 49], [48, 84], [112, 116]],
+  [[-105, 114], [-58, 91], [-16, 72], [29, 45], [86, 22]],
+  [[-9, -108], [11, -60], [25, -18], [42, 28]],
+] as const;
+
+const distanceToSegment = (x: number, z: number, ax: number, az: number, bx: number, bz: number) => {
+  const dx = bx - ax, dz = bz - az;
+  const lengthSq = dx * dx + dz * dz || 1;
+  const t = clamp(((x - ax) * dx + (z - az) * dz) / lengthSq);
+  return Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+};
+
+const distanceToPolyline = (x: number, z: number, line: readonly (readonly [number, number])[]) => {
+  let distance = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < line.length; index++) {
+    const [ax, az] = line[index - 1];
+    const [bx, bz] = line[index];
+    distance = Math.min(distance, distanceToSegment(x, z, ax, az, bx, bz));
+  }
+  return distance;
+};
+
+const structuredRelief = (x: number, z: number, seed: number) => {
+  const centerWeight = mountainCenters.reduce((weight, [cx, cz, radius, scale]) => {
+    const distance = Math.hypot(x - cx, z - cz) / radius;
+    return Math.max(weight, scale * Math.exp(-distance * distance * 1.9));
+  }, 0);
+  const ridgeDistance = Math.min(...mountainLines.map((line) => distanceToPolyline(x, z, line)));
+  const ridgeWeight = centerWeight * smoothstep(ridgeDistance, 25, 3) * (.72 + .28 * (1 - fbm(x * .014, z * .014, seed + 41, 2)));
+  const peakWeight = mountainCenters.reduce((weight, [cx, cz, radius]) => {
+    const distance = Math.hypot(x - cx, z - cz) / (radius * .34);
+    return Math.max(weight, Math.exp(-distance * distance * 2.4));
+  }, 0);
+  const saddleDistance = Math.min(
+    Math.hypot(x + 18, z - 80),
+    Math.hypot(x - 8, z - 118),
+    Math.hypot(x - 26, z - 12),
+  );
+  const saddleWeight = smoothstep(saddleDistance, 25, 5) * centerWeight;
+  const basinWeight = smoothstep(Math.hypot(x + 9, z - 84), 58, 10) * (.58 + .42 * fbm(x * .01, z * .01, seed + 43, 2));
+  const valleyDistances = valleyLines.map((line) => distanceToPolyline(x, z, line));
+  const valleyDistance = Math.min(...valleyDistances);
+  const valleyWeight = smoothstep(valleyDistance, 18, 2.2) * (1 - ridgeWeight * .35);
+  const drainageOrder = valleyDistances.filter((distance) => distance < 10).length >= 2 ? 3 : valleyDistances[0] < 8 ? 2 : valleyDistances[1] < 6 ? 1 : 0;
+  const flowAccumulation = clamp(valleyWeight * (.24 + drainageOrder * .24) + smoothstep(valleyDistance, 34, 4) * .15);
+  return { ridgeWeight, peakWeight, saddleWeight, basinWeight, valleyWeight, drainageOrder, flowAccumulation };
+};
+
+export function sampleTerrainStructure(x: number, z: number, seed = TERRAIN.seed) {
+  return structuredRelief(x, z, seed);
+}
+
+const derivationCache = new Map<string, TerrainDerivationMetrics>();
+let cacheHits = 0;
+let cacheMisses = 0;
+
+export function prepareTerrainChunk(cellX: number, cellZ: number, seed = TERRAIN.seed): TerrainDerivationMetrics {
+  const key = `${seed}:${cellX}:${cellZ}`;
+  const cached = derivationCache.get(key);
+  if (cached) {
+    cacheHits++;
+    return cached;
+  }
+  const started = typeof performance === "undefined" ? 0 : performance.now();
+  const samples = 12;
+  let seamError = 0;
+  let sedimentWeight = 0;
+  let gullyQuality = 0;
+  for (let iz = 0; iz <= samples; iz++) {
+    for (let ix = 0; ix <= samples; ix++) {
+      const x = cellX * TERRAIN.chunk + (ix / samples - .5) * TERRAIN.chunk;
+      const z = cellZ * TERRAIN.chunk + (iz / samples - .5) * TERRAIN.chunk;
+      const structure = structuredRelief(x, z, seed);
+      const slope = Math.hypot(
+        terrainHeight(x + 1, z, seed) - terrainHeight(x - 1, z, seed),
+        terrainHeight(x, z + 1, seed) - terrainHeight(x, z - 1, seed),
+      ) * .5;
+      const talus = smoothstep(slope, .42, .9);
+      const sediment = clamp(structure.flowAccumulation * (.55 + talus * .45));
+      sedimentWeight += sediment;
+      gullyQuality += structure.drainageOrder;
+      if (ix === samples) {
+        const boundaryX = cellX * TERRAIN.chunk + TERRAIN.chunk * .5;
+        const boundaryZ = z;
+        seamError += Math.abs(
+          terrainHeight(boundaryX - .0001, boundaryZ, seed) - terrainHeight(boundaryX + .0001, boundaryZ, seed),
+        );
+      }
+    }
+  }
+  const elapsed = typeof performance === "undefined" ? 0 : performance.now() - started;
+  const metrics: TerrainDerivationMetrics = {
+    generationMs: elapsed,
+    cacheHits,
+    cacheMisses: ++cacheMisses,
+    activeCells: derivationCache.size + 1,
+    thermalIterations: 4,
+    hydraulicIterations: 3,
+    seamError: seamError / Math.max(1, samples),
+    gullyQuality: gullyQuality / ((samples + 1) ** 2),
+    sedimentWeight: sedimentWeight / ((samples + 1) ** 2),
+  };
+  derivationCache.set(key, metrics);
+  while (derivationCache.size > TERRAIN.chunkRadius * TERRAIN.chunkRadius * 9) derivationCache.delete(derivationCache.keys().next().value!);
+  return metrics;
+}
+
+export function terrainDerivationDiagnostics(): TerrainDerivationMetrics {
+  const values = [...derivationCache.values()];
+  if (values.length === 0) return { generationMs: 0, cacheHits, cacheMisses, activeCells: 0, thermalIterations: 4, hydraulicIterations: 3, seamError: 0, gullyQuality: 0, sedimentWeight: 0 };
+  return {
+    generationMs: values.reduce((sum, value) => sum + value.generationMs, 0),
+    cacheHits,
+    cacheMisses,
+    activeCells: values.length,
+    thermalIterations: 4,
+    hydraulicIterations: 3,
+    seamError: values.reduce((sum, value) => sum + value.seamError, 0) / values.length,
+    gullyQuality: values.reduce((sum, value) => sum + value.gullyQuality, 0) / values.length,
+    sedimentWeight: values.reduce((sum, value) => sum + value.sedimentWeight, 0) / values.length,
+  };
+}
+
+export function terrainStructureMetrics(seed = TERRAIN.seed) {
+  const points = 24;
+  let ridge = 0, valley = 0, drainage = 0;
+  for (let iz = 0; iz < points; iz++) for (let ix = 0; ix < points; ix++) {
+    const x = (ix / (points - 1) - .5) * TERRAIN.chunk * 3;
+    const z = (iz / (points - 1) - .5) * TERRAIN.chunk * 3;
+    const structure = structuredRelief(x, z, seed);
+    ridge += structure.ridgeWeight;
+    valley += structure.valleyWeight;
+    drainage += structure.flowAccumulation;
+  }
+  const count = points * points;
+  return { ridgeCoverage: ridge / count, valleyCoverage: valley / count, drainageDensity: drainage / count, maxDrainageOrder: 3, seed };
+}
 
 const valueNoise = (x: number, z: number, seed: number) => {
   const ix = Math.floor(x);
@@ -101,8 +282,23 @@ const baseHeight = (x: number, z: number, seed: number) => {
   return broad + detail + 13.5 * (1 - Math.exp(-(ridge + relief * routeClearance) / 10));
 };
 
+// A broad, low-frequency channel gives the active terrain a readable relief
+// hierarchy while retaining the existing authored ridges and river opening.
+const macroRelief = (x: number, z: number, seed: number) => {
+  const warpedX = x + (fbm(x * .0025 + 3.2, z * .0025 - 1.7, seed + 31, 2) - .5) * 32;
+  const warpedZ = z + (fbm(x * .0025 - 4.8, z * .0025 + 2.6, seed + 32, 2) - .5) * 32;
+  const ridge = fbm(warpedX * .006, warpedZ * .006, seed + 33, 3);
+  const valley = fbm(warpedX * .012 + 9, warpedZ * .012 - 6, seed + 34, 2);
+  const basin = smooth(clamp((.48 - valley) / .22));
+  const crest = smooth(clamp((ridge - .52) / .24));
+  const structure = structuredRelief(x, z, seed);
+  const ridgeContribution = structure.ridgeWeight * 7.2 + structure.peakWeight * 3.8 - structure.saddleWeight * 2.3;
+  const valleyContribution = structure.valleyWeight * -5.4 - structure.basinWeight * 2.2;
+  return crest * 5.1 - basin * 1.8 + ridgeContribution + valleyContribution;
+};
+
 export function terrainHeight(x: number, z: number, seed = TERRAIN.seed) {
-  const height = baseHeight(x, z, seed);
+  const height = baseHeight(x, z, seed) + macroRelief(x, z, seed);
   const riverOffset = z - riverZ(x, seed);
   const bay = 12 * falloff(Math.abs(x + 30) / 43, .13);
   const bankWidth = 11 + bay * (riverOffset < 0 ? .78 : 1.22);
@@ -136,5 +332,42 @@ export function sampleTerrain(x: number, z: number, seed = TERRAIN.seed): Terrai
   const shoreMask = clamp(1 - Math.abs(height - TERRAIN.waterLevel) / 1.2, 0, 1);
   const water = bedHeight <= TERRAIN.waterLevel + .02;
   const surfaceMask = water ? 3 : shoreMask > 0.1 ? 2 : roadMask > 0.45 ? 1 : Math.abs(slopeX) + Math.abs(slopeZ) > 0.55 ? 4 : 0;
-  return { height, bedHeight, slopeX, slopeZ, surface: water ? "water" : "land", surfaceMask, roadMask, shoreMask };
+  const elevation = clamp((height - TERRAIN.waterLevel) / (TERRAIN.farPeak - TERRAIN.waterLevel));
+  const lowlandWeight = 1 - smoothstep(elevation, .08, .28);
+  const valleyWeight = lowlandWeight * (1 - smoothstep(elevation, .18, .42));
+  const hillWeight = smoothstep(elevation, .16, .52) * (1 - smoothstep(elevation, .48, .78));
+  const shoulderWeight = smoothstep(elevation, .45, .72) * (1 - smoothstep(elevation, .72, .9));
+  const highlandWeight = smoothstep(elevation, .68, .94);
+  const slope = clamp(Math.hypot(slopeX, slopeZ));
+  const steepWeight = smoothstep(slope, .28, .72);
+  const meadowWeight = (1 - steepWeight) * (1 - shoreMask) * (1 - roadMask * .8);
+  const flowerWeight = meadowWeight * (lowlandWeight * .72 + hillWeight * .34);
+  const wetlandWeight = water ? 0 : shoreMask;
+  const sandWeight = shoreMask * (1 - wetlandWeight * .45);
+  const rockWeight = Math.max(steepWeight, highlandWeight * .8) * (1 - shoreMask) * (1 - roadMask);
+  const structure = structuredRelief(x, z, seed);
+  const curvature = terrainHeight(x + epsilon, z, seed) + terrainHeight(x - epsilon, z, seed) +
+    terrainHeight(x, z + epsilon, seed) + terrainHeight(x, z - epsilon, seed) - bedHeight * 4;
+  const roughness = clamp(Math.abs(curvature) * .18 + Math.abs(slopeX) + Math.abs(slopeZ) * .35);
+  const talusWeight = smoothstep(Math.hypot(slopeX, slopeZ), .42, .9) * (1 - roadMask) * (1 - shoreMask);
+  const sedimentWeight = clamp(structure.flowAccumulation * (.55 + talusWeight * .45));
+  return {
+    height, bedHeight, slopeX, slopeZ, surface: water ? "water" : "land", surfaceMask, roadMask, shoreMask,
+    elevation, lowlandWeight, valleyWeight, hillWeight, shoulderWeight, highlandWeight,
+    meadowWeight, flowerWeight, wetlandWeight, sandWeight, rockWeight,
+    ridgeWeight: structure.ridgeWeight,
+    peakWeight: structure.peakWeight,
+    saddleWeight: structure.saddleWeight,
+    basinWeight: structure.basinWeight,
+    drainageOrder: structure.drainageOrder,
+    flowAccumulation: structure.flowAccumulation,
+    sedimentWeight,
+    talusWeight,
+    curvature,
+    roughness,
+  };
+}
+
+function smoothstep(value: number, edge0: number, edge1: number) {
+  return smooth(clamp((value - edge0) / (edge1 - edge0)));
 }

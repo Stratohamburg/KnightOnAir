@@ -6,7 +6,9 @@ import { World } from "../src/simulation/World";
 import { resolveBombAvailability } from "../src/content/2d/BattleStatus";
 import { CombatHud } from "../src/content/2d/CombatHud";
 import {
+  renderBottomNav,
   renderEquipmentBody,
+  renderPlaceholderBody,
   renderSortieBody,
   updateEquipmentPartHighlight,
 } from "../src/content/2d/HangarView";
@@ -100,6 +102,19 @@ class FakeElement {
 }
 
 describe("mobile retro aviation UI views", () => {
+  it("renders four player icon destinations with a single current page and safe shop sections", () => {
+    const nav = renderBottomNav("reservedA");
+    expect([...nav.matchAll(/data-tab="([^"]+)"/g)].map(match => match[1]))
+      .toEqual(["shop", "equipment", "sortie", "reservedA"]);
+    expect(nav.match(/class="nav-slice"/g)).toHaveLength(4);
+    expect(nav.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(nav).toMatch(/data-tab="reservedA"[^>]+aria-current="page"[^>]*>.*?活动/);
+    const shop = renderPlaceholderBody("shop");
+    expect(shop).toContain('name="shop-section" value="draw" checked');
+    expect(shop).toContain('name="shop-section" value="currency"');
+    expect([...shop.matchAll(/data-action="([^"]+)"/g)].map(match => match[1])).toEqual(["return-sortie"]);
+  });
+
   it("renders the upgrade sheet with ordered actions and accessible prices", () => {
     const world = new World(airframeById("heron_09"), 7, { showroom: true });
     world.upgradesAvailable = 1;

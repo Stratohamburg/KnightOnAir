@@ -336,6 +336,10 @@ export function buildFokkerDr1Model(context: AircraftModelContext) {
   const engine = context.partRoot(enginePart);
   engine.root.position.set(enginePart.x, enginePart.y ?? 0, enginePart.z);
   const engineOffset = (s: number) => stationZ(s) - stationZ(12);
+  // Approximate the discharge at the lower shoulder of the cowl.
+  context.effectSites.add(enginePart.id, "cowl-exhaust", "exhaust", engine.root,
+    [hullAt(18).w * unit * .9, -9 * unit, engineOffset(18)],
+    { direction: [.23, -.1, -1], basis: "configuredFallback" });
   const ring = cached("cowl-rim", () => new THREE.TorusGeometry(17 * unit, unit, 6, 24));
   context.mesh(ring, trim, engine.root, 0, 0, engineOffset(8));
   const cylinder = cached("radial-cylinder", () => new THREE.CylinderGeometry(2 * unit, 2.5 * unit, 10 * unit, 8));

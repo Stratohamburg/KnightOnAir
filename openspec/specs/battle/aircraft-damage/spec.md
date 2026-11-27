@@ -20,6 +20,11 @@
 - **WHEN** 整机剩余生命归零
 - **THEN** 实体进入对应的毁坏、坠毁或死亡流程
 
+#### Scenario: Damaged detachable part stays attached
+
+- **WHEN** 可脱落部件生命归零但整机仍有生命
+- **THEN** 部件进入禁用状态，保留原有轮廓并持续显示损毁烟火。只有整机进入毁坏或死亡流程后，部件才产生脱落碎片
+
 #### Scenario: Disabled body segment
 
 - **WHEN** 机身部件生命归零但整机仍有生命

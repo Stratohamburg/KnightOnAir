@@ -1,8 +1,11 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { riverZ, surfaceHeight } from "../simulation/Terrain";
+import { sampleTerrain, TERRAIN } from "../simulation/Terrain";
+import { Random } from "../services/Random";
 import { cloudShadowGLSL } from "./CloudShadowShader";
 import { landscapeLight } from "./ShaderMaterials";
+import { ContentCatalog } from "../content/3d/ContentCatalog";
 
 function stoneArch(x: number, z: number, span: number, rise: number, angle: number, seed: number) {
   const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
@@ -143,12 +146,71 @@ function archShadows(arches: readonly (readonly [number, number, number, number,
   return new THREE.Mesh(geometry, material);
 }
 
+export type TerrainLandmarkKind = "house" | "rock" | "flower" | "wetland" | "marker";
+
+export interface TerrainLandmarkInstance {
+  id: string;
+  kind: TerrainLandmarkKind;
+  x: number;
+  y: number;
+  z: number;
+  rotation: number;
+  scale: number;
+  phase: number;
+}
+
+/** Deterministic, world-coordinate keyed scenic layout shared by streaming chunks. */
+export function placeTerrainLandmarks(cellX: number, cellZ: number, seed: number, density = 1) {
+  const random = new Random(seed ^ Math.imul(cellX, 374761393) ^ Math.imul(cellZ, 668265263));
+  const items: TerrainLandmarkInstance[] = [];
+  const candidates = Math.max(4, Math.round(22 * density));
+  for (let index = 0; index < candidates; index++) {
+    const x = cellX * TERRAIN.chunk + random.range(-34, 34);
+    const z = cellZ * TERRAIN.chunk + random.range(-34, 34);
+    const sample = sampleTerrain(x, z, seed);
+    const slope = Math.hypot(sample.slopeX, sample.slopeZ);
+    if (sample.surface === "water" || sample.roadMask > .35 || slope > .62) continue;
+    let kind: TerrainLandmarkKind;
+    if (sample.rockWeight > .44) kind = "rock";
+    else if (sample.wetlandWeight > .2) kind = "wetland";
+    else if (sample.flowerWeight > .28) kind = "flower";
+    else if (sample.hillWeight > .2 && random.next() > .42) kind = "house";
+    else kind = "marker";
+    const worldKey = `${Math.round(x * 16)}:${Math.round(z * 16)}`;
+    items.push({
+      id: `terrain-${kind}-${seed}-${worldKey}`,
+      kind,
+      x,
+      y: sample.height,
+      z,
+      rotation: random.range(0, Math.PI * 2),
+      scale: kind === "house" ? random.range(.82, 1.18) : random.range(.62, 1.24),
+      phase: random.range(0, Math.PI * 2),
+    });
+  }
+  return items;
+}
+
 export class TerrainLandmarks {
   private readonly rocks: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
   private readonly water;
   private readonly shadows;
+  private readonly houses: THREE.InstancedMesh;
+  private readonly scenicRocks: THREE.InstancedMesh;
+  private readonly flowers: THREE.InstancedMesh;
+  private readonly wetland: THREE.InstancedMesh;
+  private readonly scenicChunks = new Map<string, TerrainLandmarkInstance[]>();
+  private readonly transform = new THREE.Object3D();
+  private readonly seed: number;
+  private readonly scenicLeases: Array<{ release: () => void }> = [];
 
-  constructor(private readonly scene: THREE.Scene, seed: number, cloudShadows: THREE.ShaderMaterial["uniforms"]) {
+  constructor(
+    private readonly scene: THREE.Scene,
+    seed: number,
+    cloudShadows: THREE.ShaderMaterial["uniforms"],
+    private readonly catalog = new ContentCatalog(),
+  ) {
+    this.seed = seed;
     const locations = [[-17, 43, 7, 10, -.26], [-44, 112, 9, 12, .51]] as const;
     const arches = locations.map(([x, z, span, rise, angle]) => stoneArch(x, z, span, rise, angle, seed));
     const geometry = mergeGeometries(arches);
@@ -160,7 +222,61 @@ export class TerrainLandmarks {
     }));
     this.water = cascade(seed, cloudShadows);
     this.shadows = archShadows(locations, seed);
-    scene.add(this.rocks, this.water, this.shadows);
+    const houseGeometry = this.catalog.geometry("terrain.house.v1.geometry", () => new THREE.BoxGeometry(1.8, 1.2, 1.5));
+    const houseMaterial = this.catalog.material("terrain.house.v1.material", () => new THREE.MeshStandardMaterial({ color: "#e9c995", roughness: 1, flatShading: true }));
+    const rockGeometry = this.catalog.geometry("terrain.rock.v1.geometry", () => new THREE.DodecahedronGeometry(.75, 0));
+    const rockMaterial = this.catalog.material("terrain.rock.v1.material", () => new THREE.MeshStandardMaterial({ color: "#91a39d", roughness: 1, flatShading: true }));
+    const flowerGeometry = this.catalog.geometry("terrain.flower.v1.geometry", () => new THREE.ConeGeometry(.12, .5, 5).translate(0, .25, 0));
+    const flowerMaterial = this.catalog.material("terrain.flower.v1.material", () => new THREE.MeshStandardMaterial({ color: "#e6b6cf", roughness: 1, flatShading: true }));
+    const wetlandGeometry = this.catalog.geometry("terrain.wetland.v1.geometry", () => new THREE.ConeGeometry(.08, .9, 4).translate(0, .45, 0));
+    const wetlandMaterial = this.catalog.material("terrain.wetland.v1.material", () => new THREE.MeshStandardMaterial({ color: "#7bb78d", roughness: 1, flatShading: true }));
+    this.scenicLeases.push(houseGeometry, houseMaterial, rockGeometry, rockMaterial, flowerGeometry, flowerMaterial, wetlandGeometry, wetlandMaterial);
+    this.houses = new THREE.InstancedMesh(houseGeometry.value, houseMaterial.value, 160);
+    this.scenicRocks = new THREE.InstancedMesh(rockGeometry.value, rockMaterial.value, 220);
+    this.flowers = new THREE.InstancedMesh(flowerGeometry.value, flowerMaterial.value, 220);
+    this.wetland = new THREE.InstancedMesh(wetlandGeometry.value, wetlandMaterial.value, 220);
+    for (const mesh of [this.houses, this.scenicRocks, this.flowers, this.wetland]) mesh.count = 0;
+    scene.add(this.rocks, this.water, this.shadows, this.houses, this.scenicRocks, this.flowers, this.wetland);
+  }
+
+  update(x: number, z: number, density = 1) {
+    const centerX = Math.round(x / TERRAIN.chunk);
+    const centerZ = Math.round(z / TERRAIN.chunk);
+    const live = new Set<string>();
+    const all: TerrainLandmarkInstance[] = [];
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+      const cellX = centerX + dx, cellZ = centerZ + dz;
+      const key = `${cellX}:${cellZ}`;
+      live.add(key);
+      const distance = Math.hypot(dx, dz);
+      const localDensity = density * (distance <= 1 ? 1 : distance <= 2 ? .72 : .45);
+      let entries = this.scenicChunks.get(key);
+      if (!entries || entries.length > Math.round(22 * localDensity) + 4) {
+        entries = placeTerrainLandmarks(cellX, cellZ, this.seed, localDensity);
+        this.scenicChunks.set(key, entries);
+      }
+      all.push(...entries);
+    }
+    for (const key of this.scenicChunks.keys()) if (!live.has(key)) this.scenicChunks.delete(key);
+    const buckets = new Map<TerrainLandmarkKind, TerrainLandmarkInstance[]>([
+      ["house", []], ["rock", []], ["flower", []], ["wetland", []], ["marker", []],
+    ]);
+    for (const item of all) buckets.get(item.kind)!.push(item);
+    const write = (mesh: THREE.InstancedMesh, items: TerrainLandmarkInstance[], yOffset: number) => {
+      mesh.count = Math.min(mesh.instanceMatrix.count, items.length);
+      items.slice(0, mesh.count).forEach((item, index) => {
+        this.transform.position.set(item.x, item.y + yOffset, item.z);
+        this.transform.rotation.set(0, item.rotation, 0);
+        this.transform.scale.setScalar(item.scale);
+        this.transform.updateMatrix();
+        mesh.setMatrixAt(index, this.transform.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    };
+    write(this.houses, buckets.get("house")!, .6);
+    write(this.scenicRocks, buckets.get("rock")!, .28);
+    write(this.flowers, buckets.get("flower")!, 0);
+    write(this.wetland, buckets.get("wetland")!, 0);
   }
 
   updateTime(time: number) {
@@ -181,13 +297,26 @@ export class TerrainLandmarks {
     this.rocks.visible = visible;
     this.water.visible = visible;
     this.shadows.visible = visible;
+    for (const mesh of [this.houses, this.scenicRocks, this.flowers, this.wetland]) mesh.visible = visible;
   }
 
   dispose() {
     for (const mesh of [this.rocks, this.water, this.shadows]) {
       this.scene.remove(mesh);
       mesh.geometry.dispose();
-      mesh.material.dispose();
+      const material = mesh.material;
+      if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
+      else material.dispose();
     }
+    for (const mesh of [this.houses, this.scenicRocks, this.flowers, this.wetland]) this.scene.remove(mesh);
+    for (const lease of this.scenicLeases) lease.release();
+    this.scenicChunks.clear();
+  }
+
+  get diagnostics() {
+    return {
+      houseInstances: this.houses.count,
+      scenicInstances: this.scenicRocks.count + this.flowers.count + this.wetland.count,
+    };
   }
 }

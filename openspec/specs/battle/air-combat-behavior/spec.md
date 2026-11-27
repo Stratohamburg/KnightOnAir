@@ -32,7 +32,7 @@
 
 ### Requirement: Air-combat state machine
 
-空中敌人 MUST 使用可观察的有限状态机。状态至少包括 entering、cruising、attacking、breaking 和 fleeing。状态转换 MUST 由距离、相对速度、目标提前量、攻击角、攻击窗口和生命状态共同决定。
+空中敌人 MUST 使用可观察的有限状态机。状态至少包括 entering、cruising、attacking、breaking 和 fleeing。能进行机动空战的角色还 MUST 支持 defending。状态转换 MUST 由距离、相对速度、目标提前量、攻击角、攻击窗口和生命状态共同决定。
 
 #### Scenario: Enter attack window
 
@@ -132,10 +132,26 @@
 - **WHEN** 玩家以同代常用巡航速度直线飞行，追猎机从同向后方接近
 - **THEN** 追猎机在有效武器距离内保持尾后位置一段可读时间，并产生至少一次有效攻击窗口
 
+#### Scenario: Hunter closes on normal throttle
+
+- **WHEN** 追猎机从后方接近使用常用普通油门直飞的同代玩家机
+- **THEN** 距离超出尾后距离带时，追猎机使用机体包线内的闭合速度接近，在射击距离内根据间隔收油或减速
+- **AND** 固定种子验收使用实际出击机体记录间距和首轮开火
+
+#### Scenario: Hunter follows a small correction
+
+- **WHEN** 玩家轻微转向且追猎机仍可恢复尾后射击角
+- **THEN** 追猎机继续修正航线，暂时丢失射界时停火，并在超出可恢复条件后脱离
+
 #### Scenario: Tail pursuit becomes a counterattack window
 
 - **WHEN** 玩家持续转向或加力，追猎机失去尾后角度并进入脱离
 - **THEN** 追猎机沿横向或超越航线拉开距离，玩家能够在其重新切入前建立反向追击窗口
+
+#### Scenario: Threatened fighter defends
+
+- **WHEN** 玩家在可机动敌机的后半球用可用武器形成射击威胁
+- **THEN** 敌机执行一段可读的规避转弯并调整油门，威胁持续时可以反向规避，拉开射界后重新寻找交锋位置
 
 ### Requirement: Air separation
 

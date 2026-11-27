@@ -1,17 +1,16 @@
 import * as THREE from "three";
 import type { Player, Enemy, Part, RuntimeWeapon } from "../../simulation/types";
-import { engineOutlet, muzzleAnchor, partAnchor, type ActorPose } from "./anchors";
-import { AircraftEffectSites, outlineVertex, type AircraftEffectSite } from "./aircraftEffectSites";
+import { engineOutlet, muzzleAnchor, type ActorPose } from "./anchors";
+import { AircraftEffectSites, type AircraftEffectSite } from "./aircraftEffectSites";
 import { aircraftMaterial } from "../../rendering/ShaderMaterials";
 import type { AircraftLivery } from "../../data/aircraftLiveries";
 import { aircraftLivery, liveryBaseColor, liveryForValues } from "../../data/aircraftLiveries";
-import { combatantById, NPC_PROFILES, type CombatantConfig } from "../../data/combatants";
-import { AIRFRAMES } from "../../data/aircrafts";
+import { BALLOON_TARGET_MODEL_ID, combatAircraftFrame, combatantById } from "../../data/combatants";
 import { buildAircraftFitting } from "./aircraftFittings";
-import { FUSELAGE_SECTIONS, npcAirframeShape } from "./airframeShape";
+import { FUSELAGE_SECTIONS } from "./airframeShape";
 import { NpcAircraftBatch } from "./NpcAircraftBatch";
 import { ContentCatalog, geometryKey } from "./ContentCatalog";
-import { resolveAircraftModel, type AircraftModelContext, type AircraftVisualFrame } from "./aircraftModels";
+import { aircraftReferencePreview, resolveAircraftModel, type AircraftModelContext, type AircraftVisualFrame } from "./aircraftModels";
 
 export type ReferenceAircraft = Pick<Player,
   "parts" | "weapons" | "heading" | "bank" | "speed" | "energy" | "x" | "z" | "prevX" | "prevZ" | "vx" | "vz"
@@ -40,39 +39,14 @@ export function fuselageGeometry(length: number, width = 0.48, sections: readonl
   g.computeVertexNormals();
   return g;
 }
-function wingVolume(p: number[][], side: number) {
-  const corners = p.length / 2;
-  const indices: number[] = [];
-  const forward = side > 0;
-  for (let index = 1; index < corners - 1; index++) {
-    indices.push(0, forward ? index : index + 1, forward ? index + 1 : index);
-    indices.push(corners, forward ? corners + index + 1 : corners + index, forward ? corners + index : corners + index + 1);
-  }
-  for (let index = 0; index < corners; index++) {
-    const next = (index + 1) % corners;
-    indices.push(index, next, corners + index, next, corners + next, corners + index);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute("position", new THREE.Float32BufferAttribute(p.flat(), 3));
-  g.setIndex(indices);
-  const flat = g.toNonIndexed();
-  flat.computeVertexNormals();
-  g.dispose();
-  return flat;
-}
 const defaultCatalog = new ContentCatalog();
-const npcAirModelKeys = new Set([
-  "scout", "hunter", "bomber", "escort", "striker", "elite", "recon_balloon",
-  "interceptor", "heavy_fighter", "torpedo_bomber", "gunship", "ace", "jet_bomber",
-]);
-
 export class ProceduralAircraft {
   readonly effectSites = new AircraftEffectSites();
   private readonly leases: (() => void)[] = [];
   private readonly acquired = new Map<string, THREE.BufferGeometry>();
   private readonly finish = new Map<string, THREE.ShaderMaterial>();
   readonly group = new THREE.Group();
-  private npcBatch?: NpcAircraftBatch;
+  private npcBatches: NpcAircraftBatch[] = [];
   private modelRoot?: THREE.Group;
   private readonly liftPivot = new THREE.Vector3();
   private readonly inverseRotation = new THREE.Quaternion();
@@ -80,7 +54,6 @@ export class ProceduralAircraft {
   private partFinishes = new Map<string, THREE.ShaderMaterial>();
   private parts = new Map<string, THREE.Group>();
   private propellers: { mesh: THREE.Mesh; part: Part; direction?: number }[] = [];
-  private turretHeads = new Map<string, THREE.Group>();
   private turretSites: { site: AircraftEffectSite; part: Part; weapon: RuntimeWeapon; index: number }[] = [];
   private livery?: AircraftLivery;
   private cloudShadowUniforms?: THREE.ShaderMaterial["uniforms"];
@@ -116,6 +89,12 @@ export class ProceduralAircraft {
     this.finish.set(key, lease.value);
     return lease.value;
   }
+  private partMaterial(color: string, applyLivery: boolean) {
+    const livery = applyLivery && this.livery ? { ...this.livery, primary: color } : undefined;
+    const material = aircraftMaterial(color, false, livery);
+    this.bindCloudShadows(material);
+    return material;
+  }
   private mesh(
     geometry: THREE.BufferGeometry,
     material: THREE.Material,
@@ -137,8 +116,7 @@ export class ProceduralAircraft {
     this.ensureModelRoot().add(root);
     this.parts.set(part.id, root);
     const baseColor = liveryBaseColor(this.livery, part.role, color);
-    const material = this.paint(baseColor, false, Boolean(this.livery)).clone();
-    this.bindCloudShadows(material);
+    const material = this.partMaterial(baseColor, Boolean(this.livery));
     this.materials.set(part.id, material);
     return { root, material };
   }
@@ -157,9 +135,17 @@ export class ProceduralAircraft {
     this.contentError = undefined;
     const actor = this.actor;
     this.revision = "revision" in actor ? actor.revision : 0;
-    const frame = "frame" in actor ? actor.frame : AIRFRAMES.find(({ id }) => id === actor.configId);
+    const config = !("frame" in actor) && actor.configId ? combatantById(actor.configId) : undefined;
+    const modelId = config?.visual.modelKey;
+    const frame = "frame" in actor ? actor.frame : modelId
+      ? combatAircraftFrame(modelId) ?? aircraftReferencePreview(modelId)?.frame
+      : undefined;
     if (frame) {
-      this.livery = aircraftLivery(frame);
+      const visual = config?.visual;
+      this.livery = visual && config.id !== frame.id
+        ? liveryForValues(visual.liveryId ?? `legacy:${config.id}`, visual.color, visual.accent)
+        : aircraftLivery(frame);
+      const color = this.livery.primary;
       const { model, error } = resolveAircraftModel(frame);
       if (!model) {
         this.contentError = error;
@@ -170,14 +156,13 @@ export class ProceduralAircraft {
         actor,
         frame,
         handledParts: new Set(),
-        partRoot: (part) => this.partRoot(part, frame.color),
+        partRoot: (part) => this.partRoot(part, color),
         partPaint: (part, color) => {
           const key = part.id + "/" + color;
           const cached = this.partFinishes.get(key);
           if (cached) return cached;
-          const finish = this.paint(color, false, color === this.livery?.primary).clone();
-          this.bindCloudShadows(finish);
-          const owner = this.partRoot(part, frame.color).material;
+          const finish = this.partMaterial(color, color === this.livery?.primary);
+          const owner = context.partRoot(part).material;
           for (const uniform of ["time", "damage", "heat", "highlight", "cloudTint", "cloudVeil"])
             finish.uniforms[uniform] = owner.uniforms[uniform];
           this.partFinishes.set(key, finish);
@@ -201,20 +186,27 @@ export class ProceduralAircraft {
       if (missing.length) {
         this.contentError = `Dedicated aircraft model ${frame.id} is missing parts: ${missing.map(({ id }) => id).join(", ")}`;
         this.disposeContents();
-      } else this.finishEffectSites();
+      } else {
+        this.finishEffectSites();
+        if (config && config.id !== frame.id)
+          this.npcBatches = NpcAircraftBatch.create(this.ensureModelRoot(), this.catalog);
+      }
       return;
     }
 
-    if (!("frame" in actor)) {
-      const config = actor.configId && combatantById(actor.configId);
-      const npc = actor.profileId && NPC_PROFILES[actor.profileId];
-      if (config && npc && npc.combatantId === config.id && npcAirModelKeys.has(config.visual.modelKey)) {
-        this.livery = liveryForValues(config.visual.liveryId ?? `legacy:${config.visual.modelKey}`, config.visual.color, config.visual.accent);
-        this.buildNpcAircraft(config);
-        this.finishEffectSites();
-        this.npcBatch = NpcAircraftBatch.create(this.ensureModelRoot(),config.id,this.catalog);
-        return;
-      }
+    if (config && modelId === BALLOON_TARGET_MODEL_ID && !("frame" in actor) && actor.kind === "recon_balloon") {
+      const { color, accent } = config.visual;
+      const part = actor.parts.find(({ id }) => id === "center_body")!;
+      const { root, material } = this.partRoot(part, color);
+      const length = config.frame.length;
+      const hull = this.mesh(this.geometry(geometryKey("icosahedron", 1, 2), () => new THREE.IcosahedronGeometry(1, 2)),
+        material, root, 0, length * .14);
+      hull.scale.set(.9, length * .15, length * .5);
+      this.effectSites.surfaces.push({ partId: part.id, mesh: hull });
+      this.mesh(this.geometry(geometryKey("box", length * .10, .9, length * .36),
+        () => new THREE.BoxGeometry(length * .10, .9, length * .36)), this.paint(accent, true), root);
+      this.finishEffectSites();
+      return;
     }
     this.contentError = `Unregistered aircraft model: ${"frame" in actor ? actor.frame.id : actor.configId ?? "unknown"}`;
   }
@@ -281,72 +273,6 @@ export class ProceduralAircraft {
     }
   }
 
-  private buildNpcAircraft(config: CombatantConfig) {
-    const { color, accent, modelKey } = config.visual;
-    const shape = npcAirframeShape(modelKey, config.era);
-    const metal = this.paint("#46535a");
-    for (const part of this.actor.parts) {
-      const { root, material } = this.partRoot(part, color);
-      if (part.id === "center_body") {
-        if (shape.buoyant) {
-          const hull = this.mesh(this.geometry(geometryKey("icosahedron", 1, 2), () => new THREE.IcosahedronGeometry(1, 2)), material, root, 0, shape.length * .14);
-          hull.scale.set(shape.width, shape.length * .15, shape.length * .5);
-          this.effectSites.surfaces.push({partId: part.id, mesh: hull});
-          this.mesh(this.geometry(geometryKey("box", shape.length * .10, .9, shape.length * .36), () => new THREE.BoxGeometry(shape.length * .10, .9, shape.length * .36)), this.paint(accent, true), root);
-        } else {
-          const { length, width } = shape;
-          const mesh = this.mesh(this.geometry(geometryKey("npc-fuselage", length, width), () => fuselageGeometry(length, width)), material, root);
-          this.effectSites.surfaces.push({partId: part.id, mesh});
-        }
-      } else if (part.role === "wing" && part.silhouette) {
-        const anchor = partAnchor(part);
-        root.position.set(anchor.x, anchor.y, anchor.z);
-        for (const corners of part.silhouette) {
-          const positions = [.085, -.085].flatMap((height) =>
-            corners.map(({ x, y, z }) => [x - anchor.x, y - anchor.y + height, z - anchor.z]),
-          );
-          const key = geometryKey("npc-wing-section", ...positions.flat());
-          const side = part.slot === "leftWing" ? -1 : 1;
-          const mesh = this.mesh(this.geometry(key, () => wingVolume(positions, side)), material, root);
-          const segment = part.silhouette.indexOf(corners);
-          this.effectSites.surfaces.push({partId: part.id, mesh});
-          if (!part.visual?.detachable) this.effectSites.addWingFlow(part.id, "surface-"+segment, mesh);
-          if (part.visual?.detachable) this.effectSites.add(part.id, "tip-"+segment, "wingTip", mesh, outlineVertex(mesh,"x",side));
-        }
-      } else if (part.kind === "engine") {
-        const anchor = partAnchor(part);
-        root.position.set(anchor.x, anchor.y, anchor.z);
-        const engine = this.mesh(
-          this.geometry("npc-engine", () => new THREE.CylinderGeometry(.28, .34, 1.3, 8)),
-          material, root,
-        );
-        engine.rotation.x = Math.PI / 2;
-        this.effectSites.surfaces.push({partId: part.id, mesh: engine});
-        this.effectSites.add(part.id, "casing-rim", "protrusion", root, [0,.34,-.65]);
-        if (config.era === "pioneer" || config.era === "ww1" || config.era === "ww2") {
-          const propeller = this.mesh(
-            this.geometry(geometryKey("npc-propeller", Number(shape.buoyant)), () => new THREE.BoxGeometry(.14, shape.buoyant ? 2.3 : 1.7, .07)),
-            this.paint(accent, true), root, 0, 0, part.engineInstallation === "pusher" ? -.75 : .75,
-          );
-          this.registerPropeller(propeller, part);
-        } else {
-          this.effectSites.add(part.id, "outlet", "jetOutlet", root, [0,0,-.65], {radius: .34});
-        }
-      } else if (part.kind === "turret") {
-        const anchor = partAnchor(part);
-        root.position.set(anchor.x, anchor.y, anchor.z);
-        this.mesh(this.geometry("npc-turret-base", () => new THREE.CylinderGeometry(.35, .43, .2, 8)), metal, root);
-        const head = new THREE.Group();
-        root.add(head);
-        this.turretHeads.set(part.id, head);
-        this.mesh(this.geometry("npc-turret-head", () => new THREE.SphereGeometry(.36, 6, 3)), material, head, 0, .15);
-        for (const x of [-.15, .15]) {
-          this.mesh(this.geometry("npc-turret-barrel", () => new THREE.BoxGeometry(.09, .09, .8)), metal, head, x, .18, .5);
-        }
-      }
-    }
-  }
-
   setCloudAtmosphere(veil: number, tint: THREE.ColorRepresentation) {
     const clamped = THREE.MathUtils.clamp(veil, 0, .32);
     for (const mat of this.materials.values()) {
@@ -357,7 +283,7 @@ export class ProceduralAircraft {
       if (mat.uniforms.cloudVeil) mat.uniforms.cloudVeil.value = clamped;
       if (mat.uniforms.cloudTint) mat.uniforms.cloudTint.value.set(tint);
     }
-    this.npcBatch?.setCloudAtmosphere(clamped, tint);
+    for (const batch of this.npcBatches) batch.setCloudAtmosphere(clamped, tint);
   }
 
   setCloudShadows(uniforms: THREE.ShaderMaterial["uniforms"]) {
@@ -366,7 +292,7 @@ export class ProceduralAircraft {
     this.materials.forEach(apply);
     this.finish.forEach(apply);
     this.partFinishes.forEach(apply);
-    this.npcBatch?.setCloudShadows(uniforms);
+    for (const batch of this.npcBatches) batch.setCloudShadows(uniforms);
   }
 
   setQualityDetail(detail: number) {
@@ -375,7 +301,7 @@ export class ProceduralAircraft {
     };
     this.materials.forEach(apply);
     this.partFinishes.forEach(apply);
-    this.npcBatch?.setQualityDetail(detail);
+    for (const batch of this.npcBatches) batch.setQualityDetail(detail);
   }
 
   setSceneLighting(viewDirection: THREE.Vector3, ambient: number, direct: number) {
@@ -388,7 +314,7 @@ export class ProceduralAircraft {
     this.materials.forEach(apply);
     this.finish.forEach(apply);
     this.partFinishes.forEach(apply);
-    if (this.npcBatch) apply(this.npcBatch.mesh.material);
+    for (const batch of this.npcBatches) apply(batch.mesh.material);
   }
 
   update(time: number, dt: number, highlight = "", display = false, refitParts?: ReadonlySet<string>) {
@@ -411,12 +337,6 @@ export class ProceduralAircraft {
           ? 1
           : 0;
     }
-    for (const [id, head] of this.turretHeads) {
-      const weapon: RuntimeWeapon | undefined = p.weapons.find(
-        (w) => w.partId === id,
-      );
-      if (weapon) head.rotation.y = weapon.heading - p.heading;
-    }
     for (const {site, part, weapon, index} of this.turretSites) {
       const anchor = muzzleAnchor(part, weapon, p.heading, index);
       site.position = [anchor.x, anchor.y, anchor.z];
@@ -424,7 +344,8 @@ export class ProceduralAircraft {
     }
     this.group.rotation.set(0, p.heading, p.bank);
     this.syncLiftPivot();
-    this.npcBatch?.update(time);
+    if (this.npcBatches.length) this.modelRoot!.updateWorldMatrix(true, true);
+    for (const batch of this.npcBatches) batch.update(time);
   }
   /** Resolve an installed node at a fixed-step pose, independently of presentation interpolation. */
   matrixAtPose(node: THREE.Object3D, pose: ActorPose) {
@@ -457,11 +378,10 @@ export class ProceduralAircraft {
       .sub(this.liftPivot);
   }
   private disposeContents() {
-    this.npcBatch?.dispose();
-    this.npcBatch = undefined;
+    for (const batch of this.npcBatches) batch.dispose();
+    this.npcBatches = [];
     this.effectSites.clear();
     this.parts.clear();
-    this.turretHeads.clear();
     this.turretSites.length = 0;
     this.propellers = [];
     for (const release of this.leases.splice(0)) release();

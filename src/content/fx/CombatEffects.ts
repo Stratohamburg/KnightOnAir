@@ -50,7 +50,6 @@ export class CombatEffects {
   private nextFire = 0;
   private elapsed = 0;
   private readonly random: Random;
-  private readonly engineSmoke: EffectBatch;
   private readonly impactSmoke: EffectBatch;
   private readonly muzzleFlashes: EffectBatch;
   private readonly muzzleStreaks: EffectBatch;
@@ -65,7 +64,6 @@ export class CombatEffects {
     this.trails = new EffectBatch(scene, RULES.maxProjectiles, "glow");
     this.rings = new EffectBatch(scene, 16, "ring");
     this.smoke = new EffectBatch(scene, 96, "smoke");
-    this.engineSmoke = previewSeed === undefined ? this.smoke : new EffectBatch(scene, 96, "smoke");
     this.impactSmoke = previewSeed === undefined ? this.smoke : new EffectBatch(scene, 96, "smoke");
     this.muzzleFlashes = previewSeed === undefined ? this.flashes : new EffectBatch(scene, 48, "facet");
     this.muzzleStreaks = previewSeed === undefined ? this.streaks : new EffectBatch(scene, 96, "glow");
@@ -78,10 +76,10 @@ export class CombatEffects {
     this.refitSparks = new EffectBatch(overlay, 48, "glow");
     this.flight = new AircraftFlightEffects(scene);
     this.playerFlight = new AircraftFlightEffects(scene,overlay);
-    this.airflow = [this.flight.lines,this.flight.bands,this.playerFlight.lines,this.playerFlight.bands];
+    this.airflow = [...this.flight.trails, ...this.playerFlight.trails];
     this.holes = new SurfaceDamage(scene,overlay,this.random);
     this.batches = [...new Set([this.flashes, this.streaks, this.muzzleFlashes, this.muzzleStreaks,
-      this.trails, this.rings, this.smoke, this.engineSmoke, this.impactSmoke, this.debris, this.detached,
+      this.trails, this.rings, this.smoke, this.impactSmoke, this.debris, this.detached,
       ...this.flight.batches, ...this.playerFlight.batches, this.cases, this.waves, this.gunSmoke,
       this.refitGlow, this.refitSparks, ...this.holes.batches])];
   }
@@ -260,7 +258,7 @@ export class CombatEffects {
     this.playerFlight.resetRoots();
     for (const {id,model} of sources) {
       if (model && preview?.emitting !== false)
-        (typeof id === "string" ? this.playerFlight : this.flight).emit(model,this.elapsed,dt,quality,this.engineSmoke);
+        (typeof id === "string" ? this.playerFlight : this.flight).emit(model,this.elapsed,quality,camera);
     }
     preview?.airflow?.(this.playerFlight);
     for (const batch of this.airflow) batch.write();
@@ -309,7 +307,7 @@ export class CombatEffects {
   repairPreviewSite(siteId: number) { this.holes.repair(siteId); }
   showPreview(visibility: PreviewEffectVisibility) {
     for (const batch of this.airflow) batch.write(visibility.site);
-    for (const batch of [...this.flight.batches, ...this.playerFlight.batches, this.engineSmoke]) {
+    for (const batch of [...this.flight.batches, ...this.playerFlight.batches]) {
       batch.mesh.visible = visibility.engines && batch.mesh.count > 0;
     }
     for (const batch of [...this.holes.batches, this.smoke, this.impactSmoke, this.debris, this.detached, this.rings, this.flashes, this.streaks]) {
@@ -324,6 +322,7 @@ export class CombatEffects {
       active: this.active,
       airflow: { ...this.playerFlight.lines.visibleStrands, ...this.playerFlight.bands.visibleStrands },
       engineRoots: this.playerFlight.cones.mesh.count,
+      engineSmoke: { ...this.playerFlight.pistonSmoke.visibleStrands, ...this.playerFlight.jetSmoke.visibleStrands },
       holes: this.holes.count,
       activeBatches: this.airflow.filter(batch => batch.active > 0).length + this.batches.filter(({ mesh }) => mesh.count > 0).length,
       allocatedBatches: this.batches.length + this.airflow.length,

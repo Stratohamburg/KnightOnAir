@@ -3,7 +3,8 @@ import {
   meteorInlet, meteorNacelle, meteorOutboardWing, meteorOutlet, meteorTailplane, meteorTailSection,
   meteorUnit, meteorWingSection, meteorZ,
 } from "../../data/meteorF3ModelSheet";
-import { partFromRecipe } from "../../simulation/parts";
+import { configuredParts } from "../../simulation/AirframeActor";
+import { REFERENCE_JETS } from "../../data/referenceJetParts";
 import type { AircraftModelContext } from "./aircraftModels";
 import type { ReferenceAircraft } from "./AircraftFactory";
 import { partAnchor } from "./anchors";
@@ -140,17 +141,7 @@ export function buildMeteorF3Model(context: AircraftModelContext) {
 }
 
 export function createMeteorF3Preview(): ReferenceAircraft {
-  const parts = [partFromRecipe("center_body", { role: "body" })];
-  for (const [side, wingId, engineId, slot] of [
-    [-1, "left_wing", "engine_0", "leftWing"], [1, "right_wing", "engine_1", "rightWing"],
-  ] as const) {
-    parts.push(partFromRecipe(wingId, { role: "wing", side, slot, x: side * 76 * meteorUnit, y: 0, z: meteorZ(117), parentId: "center_body" }));
-    parts.push(partFromRecipe(engineId, {
-      role: "engine", side, slot, x: side * engineX * meteorUnit, y: 0, z: meteorZ(frontStation), parentId: wingId,
-      outletOffset: { x: side * (outletX - engineX) * meteorUnit, y: outletY * meteorUnit, z: meteorZ(outletStation) - meteorZ(frontStation) },
-    }));
-  }
-  parts.push(partFromRecipe("tail", { role: "tail", slot: "tail", x: 0, y: 42 * meteorUnit, z: meteorZ(276), parentId: "center_body" }));
+  const parts = configuredParts(REFERENCE_JETS[meteorF3Frame.id]);
   return {
     frame: meteorF3Frame, parts, weapons: [],
     x: 0, z: 0, prevX: 0, prevZ: 0, vx: 0, vz: 0, heading: 0, bank: 0, speed: 0, energy: 0,

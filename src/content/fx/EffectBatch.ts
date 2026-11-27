@@ -68,7 +68,7 @@ export class EffectBatch {
       : style === "ring"
         ? "float opacity = exp(-pow((length(p)-.66)*15.,2.));"
         : style === "smoke"
-          ? "float opacity = .68;"
+          ? "float opacity = .84;"
           : "float opacity = 1.;";
     const material = new THREE.ShaderMaterial({
       uniforms: { qualityOpacity: this.opacity },
@@ -172,7 +172,12 @@ export class EffectBatch {
       const { x, y, z } = slot.position;
       this.transform.position.set(x, y, z);
       this.transform.quaternion.copy(camera.quaternion);
-      if (this.style === "debris" || this.style === "wing" || this.style === "casing") {
+      if (this.style === "smoke") {
+        // Billboarded low-poly puffs rotate independently so the smoke reads
+        // as animated volume while remaining camera-facing.
+        this.roll.setFromAxisAngle(this.normal, slot.age * (1.8 + slot.size));
+        this.transform.quaternion.multiply(this.roll);
+      } else if (this.style === "debris" || this.style === "wing" || this.style === "casing") {
         this.transform.rotation.set(slot.age * 2.1, slot.heading + slot.age * 2.7, slot.bank + slot.age * 3.4);
       } else if (slot.orientation) {
         this.transform.quaternion.copy(slot.orientation);
@@ -188,7 +193,7 @@ export class EffectBatch {
       const index = this.mesh.count++;
       this.mesh.setMatrixAt(index, this.transform.matrix);
       this.mesh.setColorAt(index, this.tint.set(slot.color));
-      this.alpha.setX(index, (slot.opacity ?? 1) * (this.style === "smoke" ? .75 * (1 - Math.max(0, (slot.age - slot.hold) / Math.max(.01, slot.life - slot.hold))) : (1 - t) ** .85));
+      this.alpha.setX(index, (slot.opacity ?? 1) * (this.style === "smoke" ? .9 * (1 - Math.max(0, (slot.age - slot.hold) / Math.max(.01, slot.life - slot.hold))) : (1 - t) ** .85));
     }
     this.mesh.visible = this.mesh.count > 0;
     this.mesh.instanceMatrix.needsUpdate = true;

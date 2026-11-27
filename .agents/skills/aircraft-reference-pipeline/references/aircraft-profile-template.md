@@ -84,11 +84,25 @@ For each moving item record its parent, fixed attachment, pivot or slide axis, a
 | --- | --- | --- | --- | --- | --- | --- |
 |  |  |  |  |  |  |  |
 
+## Damage ownership
+
+Record the model parent, collision coverage and eligible exterior meshes independently. Fuselage, wing sections, tail surfaces, engines and configured large functional modules may carry independent damage. Rigging, control cables, thin struts, pitot tubes and small fittings follow their host. Their geometry stays outside collision coverage and hole sampling, including when an exposed endpoint carries airflow. Check the open gaps between major assemblies. Record exterior skin and material, outward normals, separation seams, and which details and effect origins follow a detachable part.
+
+| Item / plate ID | Model parent | Configured damage owner and collision region, if any | Eligible exterior mesh and material, if any | Separation seam and parts that travel |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
+
 ## Installation and refits
 
 For a configurable aircraft, list the starting parts and counts by parent, side and layer. Identify the source of each choice as a prototype feature or a gameplay decision. Fill one row for each distinct insertion rule. A repeated unit can keep its dimensions while its mount changes position along the wing.
 
-| Upgrade and quantity per use | Parent line and insertion seam | Dimensions and internal spacing to reuse | Controlling edge, station and facing | Parts displaced and lines held fixed |
+Record the starting handling role, recommended opening upgrades, later growth direction and their benefits and tradeoffs. For each proposed route, identify existing upgrade IDs or mark it as a candidate. Check prerequisites, exclusions, capacity and repeat limits against the current configuration. Record the visible or UI feedback for upgrades that change only statistics.
+
+| Build direction | Opening upgrade IDs | Later upgrades and applicable limits | Benefit and tradeoff | Expected visible or UI feedback |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
+
+| Upgrade and quantity per use | Parent, side or layer and insertion seam or anchor | Dimensions and spacing to reuse | Controlling edge, station, facing and clearance | Parts and effect origins displaced, collision and damage ownership changes |
 | --- | --- | --- | --- | --- |
 |  |  |  |  |  |
 
@@ -108,9 +122,13 @@ For a configured damage or detachment effect, identify the owning game part, its
 
 Record a row for each applicable mount, outlet, propeller disk, aerodynamic point or wing-flow region. Include secondary flow from exposed protrusions on each fitted module. For damageable surfaces record the region and outward normal, including distinct fallback sites for unattributed contact positions. Keep these gameplay annotations separate from historical measurements.
 
-| Landmark ID / plate view | Owning part and side or layer | Local point, axis or region | Effect and strength relative to main tip | Moves or leaves with | Combat-view check |
-| --- | --- | --- | --- | --- | --- |
-|  |  |  |  |  |  |
+Collect propulsion references per installation. Record engine and housing location, each propeller disk's center, axis, radius and rotation direction, and each exhaust or jet outlet's location, facing and aperture. Identify cooling openings separately. For flight effects locate main and fitted tail tips, wing-flow start and trailing-edge span, nose and aft silhouette extrema, and exposed endpoints by side, layer and host.
+
+For configured equipment, record visible outlets and release origins used by the game, including muzzle effects, applicable casing effects, and ordnance release. Record which origins follow a moving or removable part. Cite the source or gameplay basis and flag any configured approximation.
+
+| Landmark ID / plate view | Owning part and side or layer | Local point, axis or region | Effect and strength relative to main tip | Moves or leaves with | Evidence or configured approximation | Combat-view check |
+| --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |
 
 ## Module edge record
 

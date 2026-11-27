@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import {
-  fb5Boom, fb5BoomX, fb5Canopy, fb5Fin, fb5Frame, fb5Pod, fb5Probes, fb5TailFairing, fb5Unit, fb5Wing, fb5Z, type Fb5Section,
+  fb5Boom, fb5BoomX, fb5Canopy, fb5Fin, fb5Frame, fb5Pod, fb5Probes, fb5TailFairing, fb5Tailplane, fb5Unit, fb5Wing, fb5Z, type Fb5Section,
 } from "../../data/vampireFb5Sheet";
-import { partFromRecipe } from "../../simulation/parts";
+import { configuredParts } from "../../simulation/AirframeActor";
+import { REFERENCE_JETS } from "../../data/referenceJetParts";
 import { partAnchor } from "./anchors";
 import type { ReferenceAircraft } from "./AircraftFactory";
 import type { AircraftModelContext } from "./aircraftModels";
@@ -41,17 +42,7 @@ function foil(ribs: readonly Rib[], chordStart = 0, chordEnd = 1, joinPod = fals
 }
 
 export function createVampireFb5Preview(): ReferenceAircraft {
-  const parts = [
-    partFromRecipe("center_body", {role:"body"}),
-    partFromRecipe("engine_0", {role:"engine", parentId:"center_body", slot:"center", z:fb5Z(97),
-      outletOffset:{x:0,y:nozzleY*fb5Unit,z:fb5Z(nozzle[0])-fb5Z(97)}}),
-    partFromRecipe("tail", {role:"tail", slot:"tail", parentId:"center_body", y:13*fb5Unit,z:fb5Z(183)}),
-  ];
-  for (const side of [-1,1] as const) {
-    const left = side < 0, wing = left ? "left_wing" : "right_wing", slot = left ? "leftWing" : "rightWing";
-    parts.push(partFromRecipe(wing,{role:"wing",side,slot,parentId:"center_body",x:side*fb5BoomX*fb5Unit,z:fb5Z(72)}));
-    parts.push(partFromRecipe(left ? "left_boom" : "right_boom",{role:"tail",side,slot,parentId:wing,x:side*fb5BoomX*fb5Unit,z:fb5Z(100)}));
-  }
+  const parts = configuredParts(REFERENCE_JETS[fb5Frame.id]);
   return {frame:fb5Frame,parts,weapons:[],x:0,z:0,prevX:0,prevZ:0,vx:0,vz:0,heading:0,bank:0,speed:0,energy:0,
     stats:{length:fb5Frame.length,wingspan:fb5Frame.wingspan,maxSpeed:1}};
 }
@@ -128,6 +119,6 @@ export function buildVampireFb5Model(ctx: AircraftModelContext) {
     rod.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),delta.normalize());
     ctx.effectSites.add(wing.id,"probe-tip","protrusion",wing.datum,end);
   }
-  add(tail,"fixed-tailplane",()=>foil([[-31,172,187,14.4,11.7],[31,172,187,14.4,11.7]]));
+  add(tail,"fixed-tailplane",()=>foil(fb5Tailplane));
   add(tail,"elevator",()=>foil([[-29.8,187,197,13.3,11.8],[29.8,187,197,13.3,11.8]]));
 }

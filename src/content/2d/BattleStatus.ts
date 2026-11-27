@@ -112,7 +112,13 @@ function markup(mission: string, era: string) {
     </header>
     <div class="xp-bar"><i id="xp-fill"></i><span id="level-label">LV.01</span><small class="quality-chip" id="quality-readout"></small></div>
     <div class="battle-announcement" id="battle-notice" role="status" aria-live="polite"></div>
-    <div class="battle-status"><span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span><span id="environment-notice" role="status"></span></div>
+    <div class="battle-status">
+      <div class="control-readout">
+        <span id="flight-mode">空战巡航</span>
+        <strong id="speed-label"><span id="speed-value">0.0</span><small>m/s</small></strong>
+        <span id="energy-state">加力就绪</span>
+      </div>
+      <span id="kills-label"></span><span id="combo-label"></span><span id="wind-label"></span><span id="environment-notice" role="status"></span></div>
     <div class="control-deck" data-bombing="false">
       <div class="deck-top">
         <button type="button" class="upgrade-button" data-action="upgrade" id="upgrade-button" disabled>${icon("wrench")}<span>改装</span><b id="upgrade-count">0</b></button>
@@ -120,18 +126,11 @@ function markup(mission: string, era: string) {
         <span id="mission-prompt" class="mission-prompt"></span>
       </div>
       <div class="deck-main">
-        <div class="control-readout">
-          <span id="flight-mode">空战巡航</span>
-          <strong id="speed-label"><span id="speed-value">0.0</span><small>m/s</small></strong>
-          <span id="energy-state">加力就绪</span>
-        </div>
         <div class="stick-surface" role="slider" aria-label="飞行摇杆，外圈加力" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div class="stick-base">
-            <span class="stick-boost-ring" aria-hidden="true"><b>加力</b></span>
+            <span class="stick-boost-ring" aria-hidden="true"></span>
             <span class="stick-throttle"></span>
-            <span class="stick-half"></span>
-            <span class="stick-cross"></span>
-            <span class="stick-knob">${icon("plane")}</span>
+            <span class="stick-knob"></span>
           </div>
           <span class="stick-label">巡航 · 油门 0%</span>
         </div>

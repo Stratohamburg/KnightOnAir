@@ -1,0 +1,267 @@
+/* Use the printed ticket palette only on paper. World labels keep the flight palette. */
+.game-shell {
+  --nav-height: 68px;
+  --paper-grain: url("../assets/ui/ticket/paper.webp");
+  --red-grain: url("../assets/ui/ticket/vermillion.webp");
+  --print-face: Georgia, "Songti SC", SimSun, serif;
+  container-type: inline-size;
+}
+
+.game-shell :is(.meta-top, .bottom-nav, .panel-surface, .equipment-badge,
+  .showroom-page, .modal, .battle-top, .deck-top, .toast) {
+  color-scheme: light;
+  --ink: #26343b;
+  --ink-muted: #505a58;
+  --ink-dim: #656660;
+  --amber: #a43c29;
+  --amber-bright: #852f22;
+  --amber-ink: #fff6df;
+  --amber-soft: #a43c2914;
+  --amber-line: #a43c2980;
+  --panel-bg: #f7eddf;
+  --panel-solid: #f6ecdc;
+  --panel-strong: #f9f1e4;
+  --panel-elevated: #f2e5d2;
+  --panel-inset: #48382108;
+  --line-subtle: #59463136;
+  --line-mid: #59463165;
+  --line-strong: #594631aa;
+  --signal: #286050;
+  --signal-line: #28605075;
+  --signal-soft: #28605010;
+  --alert: #923528;
+  --rare: #276074;
+  --epic: #784d76;
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  color: var(--ink);
+}
+
+.game-shell :is(.panel-surface, .modal, .bottom-nav, .showroom-controls,
+  .showroom-stage-actions, .showroom-stage-caption, .showroom-stage-stats, .battle-clock, .health-block) {
+  background: var(--panel-bg) var(--paper-grain) repeat;
+  background-size: 70px;
+  backdrop-filter: none;
+  box-shadow: 0 2px 9px #261f182b;
+}
+
+.game-shell :is(.panel-surface, .modal) :is(h1, h2),
+.nav-item span, .game-shell .ticket-stub {
+  font-family: var(--print-face);
+}
+.game-shell :is(.panel-surface, .modal) {
+  border: 1px solid var(--line-mid);
+}
+.game-shell .btn-primary:not(:disabled), .upgrade-confirm:enabled {
+  background: #a43c29 var(--red-grain) repeat;
+  background-size: 32px 68px;
+  border: 1px solid #8e392d;
+  color: #fff6e4;
+}
+.game-shell .btn-primary:hover:not(:disabled), .upgrade-confirm:hover:enabled {
+  filter: brightness(1.07);
+}
+
+.bottom-nav {
+  padding-inline: 4px;
+  box-shadow: 0 -2px 8px #31241529;
+}
+.nav-item .nav-slice, .nav-item > .icon {
+  display: block;
+  width: 36px;
+  height: 29px;
+}
+.nav-slice {
+  background: currentColor;
+  mask: var(--nav-art) center / contain no-repeat;
+}
+.nav-item[data-tab="shop"] { --nav-art: url("../assets/ui/ticket/shop.png"); }
+.nav-item[data-tab="equipment"] { --nav-art: url("../assets/ui/ticket/equipment.png"); }
+.nav-item[data-tab="sortie"] { --nav-art: url("../assets/ui/ticket/sortie.png"); }
+.nav-item[data-tab="reservedA"] { --nav-art: url("../assets/ui/ticket/activity.png"); }
+.bottom-nav .nav-item {
+  gap: 2px;
+  color: var(--ink);
+  opacity: 1;
+  font-size: 12px;
+}
+.nav-item + .nav-item::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  height: 32px;
+  border-left: 1px solid var(--line-subtle);
+}
+.bottom-nav .nav-item.selected { color: var(--amber); }
+.nav-item.selected::before { top: auto; bottom: 0; }
+
+.game-shell .home-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24%;
+  padding: 0;
+  left: 10px;
+  right: 10px;
+  overflow: auto;
+  max-height: 42%;
+  mask: radial-gradient(circle at 0 50%, transparent 2px, black 2.6px) 0 0 / 51% 9px repeat-y,
+        radial-gradient(circle at 100% 50%, transparent 2px, black 2.6px) 100% 0 / 51% 9px repeat-y;
+}
+.ticket-brief { min-width: 0; padding: 9px 10px 10px 13px; }
+.ticket-tools, .ticket-details, .ticket-record {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ticket-series, .ticket-record {
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.ticket-series { margin-right: auto; }
+.ticket-tools .btn { height: 26px; padding-inline: 6px; }
+.ticket-tools .btn::after, .ticket-details .btn::after { inset: -2px; }
+.ticket-brief h2 { margin: 2px 0 3px; font-size: 22px; line-height: 1.16; }
+.ticket-objective { font-size: 12px; line-height: 1.45; }
+.ticket-details, .ticket-record { flex-wrap: wrap; }
+.ticket-details { margin-top: 6px; font-size: 11px; }
+.ticket-details > span + span::before { content: "· "; }
+.ticket-details .btn { height: 24px; }
+.ticket-record {
+  justify-content: space-between;
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line-subtle);
+}
+.game-shell .ticket-stub {
+  flex-direction: column;
+  gap: 8px;
+  align-self: stretch;
+  height: auto;
+  min-height: 86px;
+  padding: 10px 4px;
+  border: 0;
+  border-left: 2px dashed #664e3e;
+  border-radius: 0;
+  white-space: normal;
+  font-size: clamp(16px, 5cqw, 23px);
+}
+.game-shell .ticket-stub::before, .game-shell .ticket-stub::after {
+  content: "";
+  display: block;
+  width: 55%;
+  height: 16px;
+  background: url("../assets/ui/ticket/wings.png") center / contain no-repeat;
+}
+.game-shell .ticket-stub::after {
+  width: 74%;
+  height: 15px;
+  background: url("../assets/ui/ticket/barcode.webp") center / 100% 100% no-repeat;
+  mix-blend-mode: multiply;
+}
+.game-shell .ticket-stub:focus-visible { outline-offset: -4px; outline-color: white; }
+.launching .launch-button { opacity: 1; }
+
+.equipment-card { max-height: 47%; overflow-y: auto; overscroll-behavior: contain; }
+.stat-track, .hud-meter { background: #5c584236; }
+.placeholder-page {
+  top: auto;
+  bottom: calc(var(--nav-height) + 10px + env(safe-area-inset-bottom));
+  transform: none;
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 4px 12px;
+  text-align: start;
+  align-items: center;
+  padding: 14px;
+}
+.placeholder-page p { margin: 0; grid-column: 1; font-size: 12px; }
+.placeholder-page .btn { grid-column: 2; grid-row: 1 / 3; }
+.game-shell .modal-scrim:not(:has(.upgrade-modal)) {
+  background: #18232959;
+  backdrop-filter: blur(2px);
+}
+.game-shell .modal:not(.upgrade-modal) {
+  max-height: min(78%, calc(100% - 32px));
+  border-block: 2px solid #9e8163;
+}
+.modal .modal-heading h2 { letter-spacing: .06em; }
+.modal .setting-row, .result-sheet .result-score { border-bottom-style: dashed; }
+.result-active .scene-vignette { background: #19292938; backdrop-filter: none; }
+.result-page { justify-content: safe end; }
+.result-sheet { border-top: 3px solid var(--amber); }
+
+.game-shell .battle-top { align-items: start; }
+.health-block, .battle-clock { border-radius: 3px; }
+.deck-top .mode-button i { background-color: #625b4940; }
+.deck-top .upgrade-button.available, .deck-top .mode-button[aria-pressed="true"] {
+  background: var(--panel-bg);
+  color: var(--amber);
+  box-shadow: inset 0 -2px var(--amber);
+}
+@media (max-height: 690px) {
+  .game-shell { --nav-height: 60px; }
+  .ticket-brief { padding-block: 5px; }
+  .nav-item .nav-slice, .nav-item > .icon { height: 26px; }
+}
+.shop-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #c7bbce url("../assets/ui/ticket/airmail-stall.webp") center / cover no-repeat;
+}
+.shop-ticket .btn { grid-row: 2; }
+.shop-sections {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: 4px;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dashed var(--line-mid);
+}
+.shop-sections legend {
+  position: absolute;
+  clip-path: inset(50%);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.shop-sections label {
+  position: relative;
+  padding: 7px 12px;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+.shop-sections input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.shop-sections label:has(:checked) { color: var(--amber-ink); background: var(--amber); }
+.shop-sections label:focus-within { outline: 2px solid var(--ink); outline-offset: -2px; }
+.shop-offer { grid-column: 1; grid-row: 2; }
+.currency-offer, .shop-ticket:has([value="currency"]:checked) .draw-offer { display: none; }
+.shop-ticket:has([value="currency"]:checked) .currency-offer { display: block; }
+
+.game-shell :is(.modal:has(.pause-brief), .result-sheet) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24%;
+  padding: 0;
+}
+.pause-brief, .result-brief { padding: 14px; min-width: 0; }
+.pause-tools { display: flex; gap: 6px; margin-top: 10px; }
+.pause-brief .retreat-button { padding-inline: 0; }
+.result-sheet .result-score { margin-top: 6px; padding: 6px 0; }
+.result-sheet .result-grid { margin-top: 8px; gap: 8px; }
+.result-sheet .result-aircraft { margin-top: 8px; padding: 6px 0; }
+.result-brief .result-best { margin-top: 6px; text-align: start; }
+.result-page .result-actions { display: flex; justify-content: center; margin-top: 8px; }
+.result-actions .btn-secondary { color: #27353b; background: #f7eddf; }
+.setting-row input[type="checkbox"] {
+  appearance: none;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  border: 1px solid var(--line-mid);
+  border-radius: 20px;
+  background: radial-gradient(circle at 10px 50%, white 0 7px, transparent 8px), #716f66;
+}
+.setting-row input:checked { background: radial-gradient(circle at 26px 50%, white 0 7px, transparent 8px), var(--amber); }
+.deck-top .mission-prompt { color: #fff0ce; }

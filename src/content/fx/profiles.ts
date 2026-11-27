@@ -44,6 +44,11 @@ export const flightEffectProfiles: Record<string, { waveThreshold: number; boost
   jet_bomber: { waveThreshold: 1.08, boostLength: 1.65, segmented: true },
 };
 
+export const propulsionSmoke = {
+  piston: { color: "#57534f", opacity: .88, width: .36, life: .88, ripple: .26, spread: .55, speed: 3.2 },
+  jet: { color: "#b0bfc6", opacity: .23, width: .17, life: .66, ripple: .09, spread: .9, speed: 5.5 },
+} as const;
+
 
 // Seconds of visible motion history and the opacity at the point of release.
 export const airflowProfiles = {

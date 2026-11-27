@@ -11,7 +11,10 @@ const healthFactor = (part: Part) =>
 
 export function stateFor(part: Part): PartDamageState {
   if (part.destroyed || part.state === "destroyed") return "destroyed";
-  if (part.health <= 0) return part.visual?.detachable ? "destroyed" : "disabled";
+  // A zero-health assembly remains attached and visibly damaged until the
+  // aircraft itself is destroyed. Death is the only transition that releases
+  // detachable assemblies.
+  if (part.health <= 0) return "disabled";
   const ratio = healthFactor(part);
   return ratio > 0.7 ? "intact" : ratio > 0.4 ? "damaged" : "critical";
 }

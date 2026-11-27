@@ -42,7 +42,7 @@ export const ERAS: Record<EraId, Era> = {
   ww1: {
     label: "一战", mission: "堑壕天空",
     opening: ["scout", "hunter"], air: ["hunter", "scout", "striker", "bomber", "escort", "recon_balloon"],
-    surface: ["resource", "supply_train", "armored_train", "patrol_boat", "seaplane_patrol", "mobile_artillery"], elite: ["elite"],
+    surface: ["resource", "supply_train", "armored_train", "patrol_boat", "mobile_artillery"], elite: ["elite"],
     caps: { air: 6, surface: 5 },
     colors: {
       grass: "#727a4a", accent: "#a59460", water: "#467d86", haze: "#c3c8b0",
@@ -53,7 +53,7 @@ export const ERAS: Record<EraId, Era> = {
   ww2: {
     label: "二战", mission: "铁翼海峡",
     opening: ["hunter", "interceptor"], air: ["hunter", "interceptor", "striker", "bomber", "heavy_fighter", "torpedo_bomber", "gunship", "escort"],
-    surface: ["aa_truck", "fuel_truck", "supply_train", "armored_train", "radar_truck", "mobile_artillery", "patrol_boat", "landing_ship", "seaplane_patrol"], elite: ["elite", "ace"],
+    surface: ["aa_truck", "fuel_truck", "supply_train", "armored_train", "radar_truck", "mobile_artillery", "patrol_boat", "landing_ship"], elite: ["elite", "ace"],
     caps: { air: 7, surface: 6 },
     colors: {
       grass: "#5b8457", accent: "#87a26b", water: "#2c839f", haze: "#a8d2e2",

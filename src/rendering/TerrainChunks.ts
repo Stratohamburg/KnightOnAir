@@ -4,16 +4,21 @@ import {
   sampleTerrain,
   terrainHeight,
   surfaceHeight,
+  prepareTerrainChunk,
+  terrainDerivationDiagnostics,
 } from "../simulation/Terrain";
 import { createDefaultRoutes, routeHeading, routePosition } from "../simulation/Routes";
 import { waterMaterial } from "./ShaderMaterials";
 import { TerrainLandmarks } from "./TerrainLandmarks";
 import { routeBridges } from "./RouteBridges";
 import type { VegetationWindUniforms } from "./VegetationWind";
+import { ContentCatalog } from "../content/3d/ContentCatalog";
 
 interface ChunkMesh {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
   water?: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  cellX: number;
+  cellZ: number;
 }
 
 const chunkKey = (x: number, z: number) => `${x}:${z}`;
@@ -25,6 +30,23 @@ export class TerrainChunks {
   private readonly routeObjects: THREE.Object3D[] = [];
   private centerX = Number.NaN;
   private centerZ = Number.NaN;
+  private detailDensity = Number.NaN;
+
+  get diagnostics() {
+    let triangles = 0;
+    for (const chunk of this.chunks.values()) triangles += chunk.mesh.geometry.index?.count ? chunk.mesh.geometry.index.count / 3 : 0;
+    return {
+      visibleChunks: this.chunks.size,
+      terrainTriangles: triangles,
+      terrainDraws: [...this.chunks.values()].reduce((count, chunk) => count + 1 + (chunk.water ? 1 : 0), 0),
+      materialChannels: 6,
+      derivation: terrainDerivationDiagnostics(),
+    };
+  }
+
+  get landmarkDiagnostics() {
+    return this.landmarks.diagnostics;
+  }
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -32,10 +54,11 @@ export class TerrainChunks {
     private readonly seed: number,
     lighting: THREE.ShaderMaterial["uniforms"],
     wind?: VegetationWindUniforms,
+    catalog?: ContentCatalog,
   ) {
     this.water = waterMaterial(wind);
     Object.assign(this.water.uniforms, lighting);
-    this.landmarks = new TerrainLandmarks(scene, seed, lighting);
+    this.landmarks = new TerrainLandmarks(scene, seed, lighting, catalog);
     this.buildRouteProps(seed, lighting);
   }
 
@@ -126,12 +149,13 @@ export class TerrainChunks {
     }
   }
 
-  update(x: number, z: number) {
+  update(x: number, z: number, detailDensity = 1) {
     const centerX = Math.round(x / TERRAIN.chunk);
     const centerZ = Math.round(z / TERRAIN.chunk);
-    if (centerX === this.centerX && centerZ === this.centerZ) return;
+    if (centerX === this.centerX && centerZ === this.centerZ && detailDensity === this.detailDensity) return;
     this.centerX = centerX;
     this.centerZ = centerZ;
+    this.detailDensity = detailDensity;
     const wanted = new Set<string>();
     const radius = TERRAIN.chunkRadius;
     for (let dz = -radius; dz <= radius; dz++) {
@@ -152,14 +176,23 @@ export class TerrainChunks {
         this.chunks.delete(key);
       }
     }
+    this.landmarks.update(x, z, detailDensity);
   }
 
   private create(cellX: number, cellZ: number): ChunkMesh {
+    prepareTerrainChunk(cellX, cellZ, this.seed);
     const segments = TERRAIN.segments;
     const geometry = new THREE.BufferGeometry();
     const positions: number[] = [];
     const normals: number[] = [];
     const roadMasks: number[] = [];
+    const elevation: number[] = [];
+    const landformWeights: number[] = [];
+    const shoreMasks: number[] = [];
+    const talusWeights: number[] = [];
+    const sedimentWeights: number[] = [];
+    const flowAccumulations: number[] = [];
+    const reliefWeights: number[] = [];
     const originX = cellX * TERRAIN.chunk;
     const originZ = cellZ * TERRAIN.chunk;
     for (let iz = 0; iz <= segments; iz++) {
@@ -173,6 +206,13 @@ export class TerrainChunks {
         positions.push(localX, sample.bedHeight, localZ);
         normals.push(-sample.slopeX / length, 1 / length, -sample.slopeZ / length);
         roadMasks.push(sample.roadMask);
+        elevation.push(sample.elevation);
+        landformWeights.push(sample.meadowWeight, sample.flowerWeight, sample.wetlandWeight, sample.rockWeight);
+        shoreMasks.push(sample.shoreMask);
+        talusWeights.push(sample.talusWeight);
+        sedimentWeights.push(sample.sedimentWeight);
+        flowAccumulations.push(sample.flowAccumulation);
+        reliefWeights.push(sample.ridgeWeight, sample.peakWeight, sample.saddleWeight, sample.basinWeight);
       }
     }
 
@@ -194,12 +234,19 @@ export class TerrainChunks {
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
     geometry.setAttribute("roadMask", new THREE.Float32BufferAttribute(roadMasks, 1));
+    geometry.setAttribute("elevation", new THREE.Float32BufferAttribute(elevation, 1));
+    geometry.setAttribute("landformWeights", new THREE.Float32BufferAttribute(landformWeights, 4));
+    geometry.setAttribute("shoreMask", new THREE.Float32BufferAttribute(shoreMasks, 1));
+    geometry.setAttribute("talusWeight", new THREE.Float32BufferAttribute(talusWeights, 1));
+    geometry.setAttribute("sedimentWeight", new THREE.Float32BufferAttribute(sedimentWeights, 1));
+    geometry.setAttribute("flowAccumulation", new THREE.Float32BufferAttribute(flowAccumulations, 1));
+    geometry.setAttribute("reliefWeights", new THREE.Float32BufferAttribute(reliefWeights, 4));
     geometry.setIndex(indices);
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, this.material);
     mesh.position.set(originX, 0, originZ);
     this.scene.add(mesh);
-    if (waterIndices.length === 0) return { mesh };
+    if (waterIndices.length === 0) return { mesh, cellX, cellZ };
 
     // The water shader projects the same triangles onto the surface and clips
     // them against the interpolated bed, so the river follows the actual shore.
@@ -213,7 +260,7 @@ export class TerrainChunks {
     const water = new THREE.Mesh(waterGeometry, this.water);
     water.position.copy(mesh.position);
     this.scene.add(water);
-    return { mesh, water };
+    return { mesh, water, cellX, cellZ };
   }
 
   private remove(chunk: ChunkMesh) {

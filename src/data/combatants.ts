@@ -4,6 +4,7 @@ import { AIRFRAMES, eraOf, type Airframe, type EraId } from "./aircrafts";
 import { fighterStationZ, fighterUnit, spitfireVbSheet, zero21Sheet } from "./pistonFighterSheets";
 import { ENEMIES } from "./enemies";
 import { ERA_ENEMIES } from "./eraEnemies";
+import { referenceJetById } from "./referenceJetParts";
 import { ERAS } from "./eras";
 import { WEAPONS } from "./weapons";
 import { upgradeConfigDiagnostics } from "./upgrades";
@@ -17,7 +18,7 @@ import { validateAircraftLivery } from "./aircraftLiveries";
 export type { EraId } from "./aircrafts";
 export type Layer = "air" | "ground" | "water";
 export type BehaviorKind = "chase" | "patrol" | "intercept" | "escort" | "crossing" | "strafe" | "dive" | "standoff" | "convoy" | "static" | "flee";
-export interface CombatPartRecipe { outletOffset?: Point3; id: string; parentId?: string; role: PartRole; slot: Slot; side: -1 | 0 | 1; health: number; damageTransfer: number; detachable: boolean; kind?: string; x?: number; y?: number; z?: number; radius?: number; weight?: number; lift?: number; thrust?: number; centerline?: CenterlineMount; engineInstallation?: "tractor" | "pusher"; }
+export interface CombatPartRecipe { outletOffset?: Point3; id: string; parentId?: string; role: PartRole; slot: Slot; side: -1 | 0 | 1; health: number; damageTransfer: number; detachable: boolean; kind?: string; x?: number; y?: number; z?: number; radius?: number; weight?: number; lift?: number; thrust?: number; centerline?: CenterlineMount; engineInstallation?: "tractor" | "pusher"; silhouette?: Point3[][]; layeredWing?: boolean; }
 export type AirframeMotionConfig = {
   model: "air";
   mass: number;
@@ -320,7 +321,7 @@ function airAttackFor(kind: BehaviorKind): AirAttackProfile {
   const tail = kind === "chase";
   const route = kind === "crossing" || kind === "escort" || kind === "standoff" || kind === "patrol";
   return {
-    attackWindow: fast ? .85 : tail ? 1.35 : route ? 1.1 : 1.3,
+    attackWindow: fast ? 1.15 : tail ? 4.2 : route ? 1.1 : 1.3,
     attackAngle: fast ? 22 : tail ? 28 : 32,
     attackThrottle: fast ? 1 : tail ? .74 : route ? .65 : .76,
     attackBoost: fast ? 1 : 0,
@@ -329,9 +330,9 @@ function airAttackFor(kind: BehaviorKind): AirAttackProfile {
     reentryDistance: fast ? 30 : tail ? 23 : 19,
     fleeHealth: .2,
     tailDistance: tail ? [7, 12] : [10, 18],
-    tailHoldTime: tail ? 1.1 : .65,
+    tailHoldTime: tail ? 4.2 : .65,
     lostAngle: tail ? .82 : 1.05,
-    breakOffset: fast ? .34 : tail ? .52 : .26,
+    breakOffset: fast ? .34 : tail ? .86 : .26,
     actionCooldown: fast ? .45 : tail ? .3 : .25,
     aimTolerance: fast ? 8 * RAD : tail ? 11 * RAD : 14 * RAD,
   };
@@ -342,11 +343,12 @@ function npcFlight(base: AirframeMotionConfig, id: string, behavior: BehaviorKin
   const light = id === "scout";
   const buoyant = id === "recon_balloon" || id === "elite";
   const route = behavior === "crossing" || behavior === "standoff" || behavior === "patrol";
-  const bank = buoyant ? 22 : route ? 45 : light ? 79 : fast ? 58 : 68;
+  const hunter = behavior === "chase";
+  const bank = buoyant ? 22 : route ? 45 : light ? 79 : fast ? 58 : 74;
   return {
     ...base,
     maxSpeed: speed * (fast ? 1.23 : route ? 1 : 1.12),
-    cruiseSpeed: speed * (buoyant ? .76 : route ? .80 : behavior === "escort" ? .38 : .59),
+    cruiseSpeed: speed * (buoyant ? .76 : route ? .80 : behavior === "escort" ? .38 : hunter ? .38 : .59),
     turnRate,
     acceleration: Math.max(.35, speed * (fast ? .94 : route ? .46 : .82)),
     bankLimit: bank * Math.PI / 180,
@@ -380,40 +382,69 @@ export const NPC_PROFILES: Record<string, NpcProfile> = Object.fromEntries(Objec
   } satisfies NpcProfile];
 }));
 const phases: NpcProfile["spawn"]["phases"] = ["intro", "skirmish", "pressure", "mixed"];
-for (const [era, kind, name, template, behavior, availableFrom, health, speed, turnRate, xp, coins, weaponId, modelKey] of ERA_ENEMIES) {
+export const BALLOON_TARGET_MODEL_ID = "target:recon_balloon";
+const ww1AircraftFromPioneer = new Set(["reference_caudron_g3", "reference_ilya_muromets", "reference_voisin_iii"]);
+
+export function combatAircraftFrame(modelId: string) {
+  return AIRFRAMES.find(frame => frame.id === modelId);
+}
+
+function modelMatchesEra(modelId: string, era: EraId) {
+  const modelEra = combatAircraftFrame(modelId)?.era ?? referenceJetById(modelId)?.frame.era;
+  return modelEra === era || (era === "ww1" && ww1AircraftFromPioneer.has(modelId));
+}
+
+for (const [era, kind, name, template, behavior, availableFrom, health, speed, turnRate, xp, coins, weaponId, modelId] of ERA_ENEMIES) {
   const base = COMBATANT_CONFIGS[template];
   const original = NPC_PROFILES[template];
   const id = era === "jet" ? kind : era + ":" + kind;
-  const maxHealth = base.parts.reduce((sum, part) => sum + part.health, 0);
+  const aircraft = modelId ? COMBATANT_CONFIGS[modelId] : undefined;
+  const reference = modelId ? referenceJetById(modelId) : undefined;
+  const balloon = kind === "recon_balloon";
+  const parts: CombatPartRecipe[] = aircraft?.parts ?? reference?.parts ?? (balloon ? [{
+    id: "center_body", role: "body", slot: "center", side: 0, health, damageTransfer: 1,
+    detachable: false, radius: 1.1, lift: 1, thrust: 1,
+  }] : base.parts);
+  const maxHealth = parts.reduce((sum, part) => sum + part.health, 0);
   const weapon = weaponId ? WEAPONS[weaponId] : undefined;
   if (weaponId && !weapon) throw new Error("Unknown era weapon " + weaponId);
   const elite = availableFrom === "elite";
-  const radial = kind === "elite";
   const damage = weapon ? Math.min(base.combat.weaponDamage || weapon.damage, weapon.damage) : 0;
-  const mounted = weapon && {
+  const primary: MountRecipe = {
     id: "primary",
     partId: base.layer === "air" ? "center_body" : "weapon",
-    weaponId: weapon.id,
-    count: radial ? 12 : weapon.count,
-    arc: radial ? 360 : weapon.arc,
+    weaponId: weaponId ?? "",
+    count: weapon?.count ?? 1,
+    arc: weapon?.arc ?? 0,
     baseAngle: 0,
-    targetLayers: weapon.targetLayers ?? ["air"] as Layer[],
+    targetLayers: weapon?.targetLayers ?? ["air"],
     overrides: { damage },
   };
+  const aircraftMounts = aircraft?.mounts.filter(mount => mount.id.startsWith("primary"));
+  const mounts = aircraftMounts?.length ? aircraftMounts.map(mount => ({
+    ...mount, weaponId: primary.weaponId, arc: primary.arc, targetLayers: primary.targetLayers, overrides: primary.overrides,
+  })) : [{ ...primary, ...(reference ? { offset: { x: 0, y: -.24, z: reference.frame.length * .46 }, barrelSpacing: .18 } : {}) }];
+  const airMotion = aircraft?.frame.model === "air" ? aircraft.frame : base.frame;
   COMBATANT_CONFIGS[id] = {
     ...base, id, name, era,
     tags: [kind, ...(elite ? ["elite"] : [])],
-    parts: base.parts.map((part) => ({ ...part, health: part.health * health / maxHealth })),
-    frame: base.frame.model === "air"
-      ? npcFlight(base.frame, kind, behavior, speed, turnRate ?? base.frame.turnRate)
+    parts: parts.map(part => ({ ...part, health: part.health * health / maxHealth })),
+    topology: aircraft?.topology,
+    frame: airMotion.model === "air"
+      ? npcFlight({ ...airMotion, ...(reference && {
+        length: reference.frame.length, wingspan: reference.frame.wingspan,
+        mass: reference.mass, wingArea: reference.wingArea,
+        liftCenterY: reference.frame.liftCenterY, liftCenterZ: reference.frame.liftCenterZ,
+      }), ...(balloon && { length: 2.2, wingspan: 1.8 }) }, kind, behavior, speed, turnRate ?? airMotion.turnRate)
       : { ...base.frame, maxSpeed: speed, turnRate: turnRate ?? base.frame.turnRate },
     capabilities: { ...base.capabilities, boost: base.layer === "air" && airAttackFor(behavior).attackBoost > 0 },
-    mounts: mounted ? [mounted] : [],
-    visual: { ...base.visual, modelKey: modelKey ?? kind, eraSkin: era },
-    combat: { ...base.combat, weaponDamage: damage },
+    mounts: weapon ? mounts : [],
+    visual: { ...base.visual, modelKey: balloon ? BALLOON_TARGET_MODEL_ID : modelId ?? kind, eraSkin: era },
+    combat: { ...base.combat, collisionRadius: aircraft?.combat.collisionRadius ?? (reference ? reference.frame.length * .14 : balloon ? 1.1 : base.combat.collisionRadius),
+      weaponDamage: damage, fireInterval: behavior === "chase" ? 1.15 : base.combat.fireInterval },
   };
   NPC_PROFILES[id] = {
-    ...original, id, kind, elite, radial, combatantId: id,
+    ...original, id, kind, elite, radial: false, combatantId: id,
     airAttack: base.layer === "air" ? airAttackFor(behavior) : undefined,
     reinforcement: kind === "radar_truck" || (kind === "scout" && era !== "pioneer") ? "hunter" : undefined,
     behavior: {
@@ -512,6 +543,9 @@ export function validateNpcProfile(profile: NpcProfile, combatants: ReadonlyMap<
   if (["patrol", "convoy"].includes(profile.behavior.kind) && !profile.behavior.patrolRoute) errors.push("route behavior needs patrolRoute");
   if (profile.behavior.kind === "escort" && !profile.behavior.escortAnchorTag) errors.push("escort behavior needs escortAnchorTag");
   if (config?.frame.model === "air") {
+    const trainingTarget = profile.kind === "recon_balloon" && config.visual.modelKey === BALLOON_TARGET_MODEL_ID && !config.mounts.length;
+    if (!trainingTarget && !modelMatchesEra(config.visual.modelKey, config.era))
+      errors.push("missing era-appropriate prototype aircraft model");
     const { kind, engageRadius, leadTime, preferredRange } = profile.behavior;
     if (!["chase", "patrol", "intercept", "escort", "crossing", "strafe", "dive", "standoff", "static", "flee"].includes(kind) ||
         [engageRadius, leadTime, ...preferredRange].some((value) => !Number.isFinite(value) || value <= 0) ||

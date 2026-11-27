@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Euler, Vector3 } from "three";
 import { engineOutlet, localToWorld, muzzleAnchor } from "../src/content/3d/anchors";
 import { RULES } from "../src/data/config";
-import { ENEMIES } from "../src/data/enemies";
+import { airframeById } from "../src/data/aircrafts";
 import { combatantById, npcProfileById } from "../src/data/combatants";
 import { npcIntent } from "../src/simulation/Controllers";
 import * as controllers from "../src/simulation/Controllers";
@@ -211,7 +211,7 @@ describe("aerodynamic banking and enemy handling", () => {
     hunter.cooldown = 0;
     let attackSteps = 0;
     let shots = 0;
-    for (let i = 0; i < 200 && hunter.state !== "breaking"; i++) {
+    for (let i = 0; i < 330 && hunter.state !== "breaking"; i++) {
       const steering = attackSteps > 0 && maneuver === "turn";
       const boosting = attackSteps > 0 && maneuver === "boost";
       w.frame(1 / 60, {
@@ -228,13 +228,104 @@ describe("aerodynamic banking and enemy handling", () => {
     expect(hunter.warning).toBe(0);
     expect(hunter.breakWindow).toBeGreaterThan(0);
     if (maneuver === "straight") {
-      expect(attackSteps).toBeGreaterThan(60);
-      expect(shots).toBe(1);
+      expect(attackSteps).toBeGreaterThan(180);
+      expect(shots).toBeGreaterThanOrEqual(2);
     } else {
       expect(attackSteps).toBeGreaterThan(0);
-      expect(attackSteps).toBeLessThan(60);
+      expect(attackSteps).toBeLessThan(100);
       if (maneuver === "boost") expect(shots).toBe(0);
     }
+  });
+
+  it.each([
+    ["pioneer", "heron_09"], ["ww1", "heron_09"], ["ww2", "falcon_13"], ["jet", "stingray_16"],
+  ] as const)("closes a normal cruise gap and fires in %s", (era, frameId) => {
+    for (const throttle of [0, .25]) {
+      const w = new World(airframeById(frameId), 491, { director: false, supply: false, showroom: true, missionEra: era });
+      w.player.weapons = [];
+      const hunter = w.spawnEnemy("hunter", 0, -36)!;
+      let firstShot = Infinity;
+      let separation = Infinity;
+      for (let i = 0; i < 600; i++) {
+        w.frame(RULES.step, { x: 0, z: 1, active: throttle > 0, magnitude: throttle });
+        if (w.consumeEvents().some(event => event.type === "enemy_fire" && event.enemyId === hunter.id)) {
+          firstShot = w.elapsed;
+          separation = Math.hypot(hunter.x - w.player.x, hunter.z - w.player.z);
+          break;
+        }
+      }
+      expect(firstShot).toBeLessThan(10);
+      expect(separation).toBeGreaterThan(hunter.radius + .7);
+      expect(separation).toBeLessThan(15);
+    }
+  });
+
+  it("holds through a small turn and breaks under a sustained turn", () => {
+    const w = aircraft();
+    w.player.weapons = [];
+    const hunter = w.spawnEnemy("hunter", 0, -13)!;
+    for (let i = 0; i < 120 && hunter.state !== "attacking"; i++) w.frame(RULES.step);
+    expect(hunter.state).toBe("attacking");
+    for (let i = 0; i < 48; i++)
+      w.frame(RULES.step, { x: Math.sin(.19), z: Math.cos(.19), active: true, magnitude: .2 });
+    expect(hunter.state).toBe("attacking");
+    for (let i = 0; i < 110 && hunter.state === "attacking"; i++)
+      w.frame(RULES.step, { x: -1, z: 0, active: true, magnitude: 1 });
+    expect(hunter.state).toBe("breaking");
+  });
+
+  it("defends against a player trailing in an active firing arc", () => {
+    const w = aircraft();
+    const h = w.spawnEnemy("hunter", 0, 13)!;
+    Object.assign(h, { heading: 0, vx: 0, vz: 6, speed: 6 });
+    const profile = npcProfileById("hunter", w.era)!;
+    const frame = combatantById(h.configId!).frame;
+    if (frame.model !== "air") throw Error("Expected air envelope");
+    const first = npcIntent(profile, h, w.player, 0, undefined, frame, RULES.step);
+    expect(h.state).toBe("defending");
+    expect(first.fire).toBe(false);
+    expect(Math.abs(first.targetHeading!)).toBeGreaterThan(.8);
+    const steady = npcIntent(profile, h, w.player, 0, undefined, frame, .35);
+    expect(steady.targetHeading).toBe(first.targetHeading);
+    const reverse = npcIntent(profile, h, w.player, 0, undefined, frame, 1.1);
+    expect(Math.sign(reverse.targetHeading!)).toBe(-Math.sign(first.targetHeading!));
+    w.player.weapons = [];
+    npcIntent(profile, h, w.player, 0, undefined, frame, 1);
+    expect(h.state).toBe("reentering");
+  });
+
+  it("lets Dr.I escape a hunter, counter-pursue it, and win through normal fire", () => {
+    const w = new World(airframeById("heron_09"), 491, { director: false, supply: false, showroom: true, missionEra: "pioneer" });
+    const hunter = w.spawnEnemy("hunter", 0, -36)!;
+    const player = w.player;
+    let firstShot: number | undefined;
+    let turnAt: number | undefined;
+    let brokeAway = false;
+    let defended = false;
+    let destroyed = false;
+    for (let i = 0; i < 900 && !destroyed; i++) {
+      let input: Intent | undefined;
+      if (firstShot !== undefined && w.elapsed > firstShot + .6) {
+        turnAt ??= w.elapsed;
+        const distance = Math.hypot(hunter.x - player.x, hunter.z - player.z);
+        const lead = Math.min(.55, distance / 28);
+        const heading = w.elapsed - turnAt < 1.2 ? 2 :
+          Math.atan2(hunter.x + lead * hunter.vx - player.x, hunter.z + lead * hunter.vz - player.z);
+        input = { x: Math.sin(heading), z: Math.cos(heading), active: true, magnitude: .65 };
+      }
+      w.frame(RULES.step, input);
+      brokeAway ||= firstShot !== undefined && hunter.state === "breaking";
+      defended ||= brokeAway && hunter.state === "defending";
+      for (const event of w.consumeEvents()) {
+        if (event.type === "enemy_fire" && event.enemyId === hunter.id) firstShot ??= event.time;
+        if (event.type === "enemy_destroyed" && event.enemyId === hunter.id) destroyed = true;
+      }
+    }
+    expect(firstShot).toBeLessThan(8);
+    expect(brokeAway).toBe(true);
+    expect(defended).toBe(true);
+    expect(destroyed).toBe(true);
+    expect(player.health).toBeGreaterThan(0);
   });
 
   it("reenters after a broken tail instead of snapping back to the player", () => {
@@ -448,7 +539,7 @@ describe("aerodynamic banking and enemy handling", () => {
     );
   });
   it.each(["scout", "hunter", "bomber", "escort", "striker", "elite"])(
-    "%s has steering inertia and less agility than the starter aircraft",
+    "%s has steering inertia and respects its configured turn limit",
     (kind) => {
       const w = aircraft(),
         e = w.spawnEnemy(kind, 25, 25)!;
@@ -461,10 +552,8 @@ describe("aerodynamic banking and enemy handling", () => {
         0.2 * RAD,
       );
       for (let i = 0; i < 90; i++) w.frame(1 / 60);
-      expect(Math.abs(e.turnVelocity)).toBeLessThanOrEqual(
-        ENEMIES[kind].turnRate * RAD + 1e-8,
-      );
-      expect(ENEMIES[kind].turnRate).toBeLessThan(simulationFrames[0].turnRate / 2);
+      const config = combatantById(e.configId!);
+      expect(Math.abs(e.turnVelocity)).toBeLessThanOrEqual(config.frame.turnRate * RAD + 1e-8);
       expect(Number.isFinite(e.bank + e.heading + e.speed)).toBe(true);
     },
   );

@@ -54,7 +54,8 @@ export const QUALITIES = {
   low: {
     label: "省电", scale: 0.7, particles: 24, shadows: false,
     cloud: { resolution: 0.55, samples: 12, detail: 0.38 },
-    vegetation: { tufts: 0, waveDetail: 0, waveStrength: 0.12, bendFrequency: 0.65, flutter: 0 },
+    vegetation: { tufts: 0, trees: 8, rocks: 5, waveDetail: 0, waveStrength: 0.12, bendFrequency: 0.65, flutter: 0 },
+    terrain: { materialChannels: 4, offscreenDensity: .35, shadows: false },
   },
   standard: {
     label: "标准",
@@ -62,11 +63,13 @@ export const QUALITIES = {
     particles: 48,
     shadows: true,
     cloud: { resolution: 0.75, samples: 18, detail: 0.72 },
-    vegetation: { tufts: 12, waveDetail: 0.55, waveStrength: 0.15, bendFrequency: 1, flutter: 0 },
+    vegetation: { tufts: 12, trees: 12, rocks: 10, waveDetail: 0.55, waveStrength: 0.15, bendFrequency: 1, flutter: 0 },
+    terrain: { materialChannels: 6, offscreenDensity: .72, shadows: true },
   },
   high: {
     label: "高", scale: 1, particles: 80, shadows: true,
     cloud: { resolution: 1, samples: 24, detail: 1 },
-    vegetation: { tufts: 24, waveDetail: 1, waveStrength: 0.17, bendFrequency: 1, flutter: 0.14 },
+    vegetation: { tufts: 24, trees: 16, rocks: 14, waveDetail: 1, waveStrength: 0.17, bendFrequency: 1, flutter: 0.14 },
+    terrain: { materialChannels: 6, offscreenDensity: 1, shadows: true },
   },
 } as const;

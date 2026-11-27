@@ -182,12 +182,13 @@ export interface Enemy extends AirMotionState {
   slow: number;
   armorBreak: number;
   called: boolean;
-  state: "entering" | "cruising" | "attacking" | "breaking" | "reentering" | "fleeing";
+  state: "entering" | "cruising" | "attacking" | "defending" | "breaking" | "reentering" | "fleeing";
   phaseTime: number;
   breakHeading: number;
   attackWindow: number;
   tailAttack: boolean;
   attackTargetHeading: number;
+  lostAttackTime?: number;
   breakWindow: number;
   combatGeometry?: AirCombatGeometry;
   factionId?: string;

@@ -186,9 +186,16 @@ export class SurfaceDamage {
         h.next = time + (burning ? .075 : .27 - .1*severity) * (low ? 1.45 : 1);
         const velocity = aft.clone().multiplyScalar(burning ? 1.5 : .5);
         velocity.y += .5;
-        smoke.spawn({...style,position:burning ? root.clone().addScaledVector(aft,size*1.6) : root,
-          color:h.fragment ? "#a1aaa5" : burning ? "#48443f" : "#83918f",
-          size:size*(burning ? 1.7 : .85),velocity,life:low ? .7 : 1.25});
+        const smokeRoot = burning ? root.clone().addScaledVector(aft,size*1.15) : root;
+        smoke.spawn({...style, priority: 3, position:smokeRoot,
+          color:h.fragment ? "#a1aaa5" : burning ? "#302e2b" : "#68736f",
+          size:size*(burning ? 2.05 : 1.05),velocity,life:low ? .8 : burning ? 1.55 : 1.35});
+        if (burning && !low) {
+          smoke.spawn({...style, priority: 3,
+            position: smokeRoot.clone().addScaledVector(aft,size*.7),
+            velocity: {x: velocity.x * .78, y: velocity.y + .45, z: velocity.z * .78},
+            color: "#5a5650", size: size * 1.55, life: 1.85});
+        }
         if (!h.fragment && !burning && severity > .7) debris.spawn({...style,position:root,velocity,
           size:.09,color:"#847868",life:.5});
       }

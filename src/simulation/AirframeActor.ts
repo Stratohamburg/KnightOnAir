@@ -5,7 +5,7 @@ import { localToWorld, mountOffset, muzzleAnchor, type ActorPose } from "../cont
 import { mountForPart } from "./CenterlineLayout";
 import { neutralDamage } from "./DamageModel";
 import { partFromRecipe } from "./parts";
-import type { Enemy, Player, RuntimeWeapon, Stats, WorldEvent } from "./types";
+import type { Enemy, Part, Player, RuntimeWeapon, Stats, WorldEvent } from "./types";
 
 export function createAirframeActor(frame: Airframe, config: CombatantConfig): Player {
   const motion = config.frame;
@@ -74,12 +74,15 @@ function baseStats(f: Airframe, motion: AirframeMotionConfig): Stats {
   };
 }
 
-export function configuredParts(config: CombatantConfig, frame?: Airframe) {
+export function configuredParts(config: Pick<CombatantConfig, "parts">, frame?: Airframe) {
   return config.parts.map((recipe) => {
-    return partFromRecipe(recipe.id, {
+    const part = partFromRecipe(recipe.id, {
       ...recipe,
       centerline: frame ? recipe.centerline ?? mountForPart({ ...recipe, x: recipe.x ?? 0, z: recipe.z ?? 0 }, frame) : recipe.centerline,
     });
+    part.layeredWing = recipe.layeredWing;
+    part.silhouette = recipe.silhouette?.map(panel => panel.map(point => ({ ...point })));
+    return part;
   });
 }
 
@@ -122,6 +125,16 @@ export function weaponMuzzle(entity: Player | Enemy, pose: ActorPose, weapon: Ru
     parentId = parent.parentId;
   }
   return localToWorld(pose, muzzleAnchor(part, weapon, entity.heading, index));
+}
+
+export function weaponMountActive(parts: readonly Part[], weapon: RuntimeWeapon) {
+  let partId: string | undefined = weapon.partId;
+  while (partId) {
+    const part = parts.find(value => value.id === partId);
+    if (!part || part.health <= 0 || part.state === "disabled" || part.destroyed) return false;
+    partId = part.parentId;
+  }
+  return true;
 }
 
 export function aircraftPreviewFire(player: Player, pose: ActorPose, time: number, enabled: (weapon: RuntimeWeapon) => boolean = () => true) {

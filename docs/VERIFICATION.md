@@ -10,7 +10,7 @@ npm run check     # 严格 TypeScript 检查
 npm run build     # 类型检查并生成 dist/
 ```
 
-2026-11-26 在当前工作区运行上述命令，`npm test` 通过 18 个测试文件、255 项测试，`npm run check` 通过，`npm run build` 通过并生成生产包。Vite 对超过 500 kB 的 Three.js 分块给出体积提示。
+2026-11-27 在当前工作区运行上述命令，`npm test` 通过 21 个测试文件、284 项测试，`npm run check` 通过，`npm run build` 通过并生成生产包。Vite 对超过 500 kB 的 Three.js 分块给出体积提示。
 
 ## 特效调试台验收（2026-11-26）
 
@@ -55,6 +55,23 @@ npm run build     # 类型检查并生成 dist/
 
 使用种子 491 分别推进自由巡航和 `trench-skies` 战役。自由巡航在 30 秒内记录了 `entering`、`cruising`、`attacking`、`breaking`、`reentering` 和 `fleeing`，并产生 1 次敌方开火事件。战役先清除正面波次，再推进侧后方波次，记录了 `entering`、`cruising`、`attacking`、`breaking` 和 `reentering`，产生 1 次敌方开火事件，随后清除 4 个目标并得到 `victory`。玩家转弯和加力输入贯穿侧后方波次，固定步状态序列保持确定。
 
+### 敌机模型与攻守转换验收（2026-11-27）
+
+固定种子 491，追猎机从玩家正后方 36 个游戏单位接近。玩家以指定机体直飞，关闭玩家武器以观察纯追击。换用校验台机体后，四个时代在两种油门输入下均在 10 秒内发射三轮。
+
+| 关卡时代 | 玩家机体 | 松杆首次开火 | 25% 普通油门首次开火 |
+| --- | --- | ---: | ---: |
+| 萌芽期 | 福克 Dr.I | 5.45 秒 | 6.47 秒 |
+| 一战 | 福克 Dr.I | 5.33 秒 | 6.20 秒 |
+| 二战 | 喷火 Mk Vb | 5.13 秒 | 5.25 秒 |
+| 初代喷气 | Ho 229 V2 | 5.07 秒 | 5.13 秒 |
+
+同种子启用双方武器后，萌芽期的 Farman MF.11 追猎机在 5.45 秒开火。福克 Dr.I 在首次开火后约 0.6 秒开始持续转向，随后反追。追猎机在 7.20 秒中断咬尾，9.78 秒转入防御，12.53 秒被击落。固定步回归还覆盖小转向保持追击、持续规避触发脱离、加力摆脱、截击机超越，以及敌机受威胁时的航向反转。[飞行动力学回归](../tests/flight-dynamics.test.ts)
+
+29 个空战角色逐个校验所引用机型的时代、模型注册、可损部件和效果挂点。两架同型号敌机共用网格，各自处理部件损伤，最后一个实例退出后释放共享几何。桌面内置 Chromium 在 360×640 视口逐一渲染四时代使用的 10 个原型，均成功加载。[配置与模型回归](../tests/config-v3.test.ts)
+
+同一浏览器在 360×640 视口和标准档运行二战满额样本。14 个敌人和 140 枚弹体所在帧记录 142 次绘制、156,957 个三角形。绘制次数低于 150 次上限，三角形比 150,000 上限多 6,957 个。该记录是当前工作区整帧负载，包含地形、云层、投射物和特效。移动真机的首次入场耗时、持续帧时间与手感仍待实测。[标准档预算](../openspec/specs/rendering/quality-and-performance/spec.md)
+
 ### 飞机低模特效验收（2026-11-25）
 
 Windows 桌面无头 Chrome，360×640 CSS 像素，DPR 1。固定种子 491，使用开发页 `?environmentTest=battle`。调用 `environment.setup("battle","standard")` 后，逐帧传入 `environment.soak(1/60, frame/60, frame%4===0)`。120 秒切换至低档，240 秒切回标准档，共推进 18,000 个渲染步。各档均保有 14 个敌人和 140 枚活动弹体。以下记录为所有步骤中各项的独立峰值。
@@ -94,6 +111,30 @@ Windows 桌面无头 Chrome，360×640 CSS 像素，DPR 1。固定种子 491，�
 | 脱落部件 | 24 | 0 | 0 | 0 |
 
 ## 连续云层与风动植被验收
+
+## 地形海拔与视口景物验收
+
+地形验收使用固定种子 491 和 360×640 视口。启动 `npm run dev` 后打开以下入口，并在控制台读取 `window.__koa.environment.report()` 与 `window.__koa.environment.terrainViews()`。
+
+```text
+/?environmentTest=terrain&view=lowland
+/?environmentTest=terrain&view=valley
+/?environmentTest=terrain&view=hill
+/?environmentTest=terrain&view=highland
+/?environmentTest=terrain&view=shore
+/?environmentTest=terrain&view=shore&clouds=off&cloudShadows=off
+/?environmentTest=terrain&view=bombing
+```
+
+每个镜头检查 `terrainViews().views` 返回的 `elevation`、`flowerWeight`、`wetlandWeight`、`rockWeight` 和 `shoreMask`，并检查 `terrainViews().structure` 的脊线覆盖、谷地覆盖和排水密度。确认当前视口出现与区域匹配的花甸、湿地植物、房屋、灌木、裸岩和水岸。调用 `environment.pause(true)` 后连续执行 `frame()`，地面颜色、景物位置与风动相位应保持不变，恢复后从同一相位继续。移动到 `x = TERRAIN.chunk` 附近后重新执行 `frame()`，跨块边界的高度、材质和景物位置应连续。
+
+开发诊断中的 `terrain.visibleChunks`、`terrain.terrainTriangles`、`terrain.terrainDraws`、`terrain.houseInstances` 和 `terrain.scenicInstances` 用于记录地形预算。标准档完整战斗场景在 360×640 下总绘制次数低于 150 次、总三角形低于 150,000 个，省电档优先降低视口外景物密度与阴影。
+
+同一份诊断还记录 `terrain.derivation.generationMs`、`thermalIterations`、`hydraulicIterations`、`cacheHits`、`cacheMisses`、`seamError`、`gullyQuality` 和 `sedimentWeight`。这些指标来自固定次数的生成期派生，飞行、暂停、恢复和轰炸落点不会启动每帧侵蚀。缓存不可用时使用结构化山脉骨架、谷地横截面、热侵蚀权重和低频残余噪波回退。
+
+离线 GAN 与扩散候选使用 `node tools/procedural-terrain-research.mjs --model=<name> --candidate=<json>` 对照高程、坡度、曲率、脊线连续性、谷网密度、平铺接缝和资产成本。浏览器运行时不加载模型权重或执行推理。
+
+地面颜色不再读取场景时间或风向形成连续移动波纹。分别推进 2 秒、改变风向、关闭云影并切换轰炸镜头，山脊、丘陵、谷地、草甸、花甸和裸岩边界应保持世界坐标锚定，近中景保持清晰通透。
 
 ### 开发调试入口
 

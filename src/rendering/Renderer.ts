@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { RULES, QUALITIES, type Quality } from "../data/config";
 import { eraOf } from "../data/aircrafts";
+import { combatantById } from "../data/combatants";
 import { ERAS } from "../data/eras";
 import { routeHeight } from "../simulation/Routes";
 import { clamp, damp, RAD } from "../services/Random";
@@ -174,6 +175,7 @@ export class Renderer {
       491,
       terrainLighting,
       this.vegetationWind,
+      this.content,
     );
     this.bulletBatches.forEach((batch, index) => {
       (index % 2 === 0 ? this.overlayScene : this.scene).add(batch);
@@ -417,6 +419,10 @@ export class Renderer {
       fog.far = 260 * visibility;
       this.terrainMat.uniforms.grass.value.set(colors.grass);
       this.terrainMat.uniforms.road.value.set(colors.accent);
+      this.terrainMat.uniforms.flower.value.set(colors.grass).offsetHSL(.02, .08, .05);
+      this.terrainMat.uniforms.wetland.value.set(colors.grass).offsetHSL(.42, -.08, -.02);
+      this.terrainMat.uniforms.shoulder.value.set(colors.grass).offsetHSL(.08, -.04, .08);
+      this.terrainMat.uniforms.rock.value.set("#5f7f79");
       this.terrainMat.uniforms.haze.value.set(colors.skyHorizon);
       this.terrainMat.uniforms.valleyFog.value.set(colors.valleyFog);
       this.terrainMat.uniforms.sunTint.value.set(colors.sunTint);
@@ -592,7 +598,7 @@ export class Renderer {
       this.showroomBackdrop.setVisible(false);
       this.terrainChunks.setVisible(true);
       this.vegetation.setVisible(true);
-      this.terrainChunks.update(x, z);
+      this.terrainChunks.update(x, z, QUALITIES[this.quality].terrain.offscreenDensity);
       this.vegetation.update(x, z, this.quality);
     }
     const wind = display ? undefined : world?.wind;
@@ -756,7 +762,8 @@ export class Renderer {
       const route = world.routes.find((candidate) => candidate.id === e.routeId);
       const surface = route ? routeHeight(route, e.x, e.z) : world.surfaceHeight(e.x, e.z);
       const height = e.layer === "air" ? RULES.flightAltitude : surface + .2;
-      mesh.visible = this.isSpawnVisible(e.x, height, e.z, e.radius * 2 + 2);
+      const extent = e.layer === "air" ? Math.max(e.hitExtent, e.radius) : e.radius;
+      mesh.visible = this.isSpawnVisible(e.x, height, e.z, extent + 2);
       mesh.position.set(
         e.x,
         height,
@@ -770,7 +777,10 @@ export class Renderer {
         marker.scale.setScalar(e.radius * 1.25);
       }
       if (e.layer === "air" && QUALITIES[this.quality].shadows) {
-        this.aircraftShadows.add(e.x, height, e.z, e.heading, e.radius * 4, e.radius * 3, .56);
+        const flight = combatantById(e.configId ?? e.kind)?.frame;
+        this.aircraftShadows.add(e.x, height, e.z, e.heading,
+          flight?.model === "air" ? flight.wingspan : e.radius * 4,
+          flight?.model === "air" ? flight.length : e.radius * 3, .56);
       }
     }
     for (let i = gi; i < this.groundMarkers.length; i++)
@@ -943,6 +953,12 @@ export class Renderer {
         shared: this.content.stats,
         effects: this.effects.diagnostics,
         projectileBatches: this.bulletBatches.length,
+      },
+      terrain: {
+        ...this.terrainChunks.diagnostics,
+        ...this.terrainChunks.landmarkDiagnostics,
+        trees: this.vegetation.treeCount,
+        tufts: this.vegetation.tuftCount,
       },
       aircraft: {
         liveryId: this.aircraft?.liveryId,

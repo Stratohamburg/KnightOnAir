@@ -1,10 +1,10 @@
-import { Matrix3, Quaternion, Vector3, type Scene } from "three";
+import { Matrix3, Quaternion, Vector3, type Camera, type Scene } from "three";
 import type { ProceduralAircraft } from "../3d/AircraftFactory";
 import { combatantById } from "../../data/combatants";
 import type { Quality } from "../../data/config";
 import { AirflowLines } from "./AirflowLines";
 import { EffectBatch } from "./EffectBatch";
-import { airflowProfile, resolveAirflowProfile, flightEffectProfiles } from "./profiles";
+import { airflowProfile, resolveAirflowProfile, flightEffectProfiles, propulsionSmoke } from "./profiles";
 import type { AircraftEffectSite } from "../3d/aircraftEffectSites";
 
 const axis = new Vector3(0, 0, 1);
@@ -16,12 +16,16 @@ type FlightModel = Pick<ProceduralAircraft, "actor" | "group" | "effectSites">;
 export class AircraftFlightEffects {
   readonly lines: AirflowLines;
   readonly bands: AirflowLines;
+  readonly pistonSmoke: AirflowLines;
+  readonly jetSmoke: AirflowLines;
+  readonly trails: readonly AirflowLines[];
   private readonly basis = new Matrix3();
   private readonly span = new Vector3();
+  private readonly view = new Vector3();
   readonly cones: EffectBatch;
   readonly arcs: EffectBatch;
   readonly batches: EffectBatch[];
-  private clocks = new WeakMap<FlightModel, {next: Map<string, number>; fast: boolean; waveUntil: number}>();
+  private clocks = new WeakMap<FlightModel, {fast: boolean; waveUntil: number}>();
   private point = new Vector3();
   private dir = new Vector3();
   private tail = new Vector3();
@@ -30,6 +34,10 @@ export class AircraftFlightEffects {
   constructor(scene: Scene, attachedScene = scene) {
     this.lines = new AirflowLines(attachedScene, scene === attachedScene ? 512 : 96);
     this.bands = new AirflowLines(attachedScene, scene === attachedScene ? 192 : 64, true);
+    const smokeCapacity = scene === attachedScene ? 96 : 24;
+    this.pistonSmoke = new AirflowLines(attachedScene, smokeCapacity, true, propulsionSmoke.piston);
+    this.jetSmoke = new AirflowLines(attachedScene, smokeCapacity, true, propulsionSmoke.jet);
+    this.trails = [this.lines, this.bands, this.pistonSmoke, this.jetSmoke];
     this.cones = new EffectBatch(attachedScene, 96, "cone");
     this.arcs = new EffectBatch(attachedScene, 96, "arc");
     this.batches = [this.cones, this.arcs];
@@ -40,11 +48,10 @@ export class AircraftFlightEffects {
   }
   reset() {
     this.clocks = new WeakMap();
-    this.lines.reset();
-    this.bands.reset();
+    for (const trail of this.trails) trail.reset();
   }
 
-  emit(model: FlightModel, time: number, dt: number, quality: Quality, smoke: EffectBatch,
+  emit(model: FlightModel, time: number, quality: Quality, camera: Camera,
     enabled: (site: AircraftEffectSite) => boolean = () => true) {
     if (!model.group.visible) return;
     const actor = model.actor;
@@ -57,13 +64,14 @@ export class AircraftFlightEffects {
     const turn = Math.min(1, (motion?.turnLoad ?? 0) / 3);
     let clock = this.clocks.get(model);
     if (!clock) {
-      clock = {next: new Map(), fast: false, waveUntil: -1};
+      clock = {fast: false, waveUntil: -1};
       this.clocks.set(model, clock);
     }
     const fast = actor.speed >= maxSpeed * profile.waveThreshold;
     if (fast && !clock.fast) clock.waveUntil = time + .32;
     clock.fast = fast;
     model.group.updateWorldMatrix(true, true);
+    camera.getWorldDirection(this.view);
     const low = quality === "low";
     for (const site of model.effectSites.sources) {
       if (!enabled(site)) continue;
@@ -77,9 +85,6 @@ export class AircraftFlightEffects {
       const p = this.point.fromArray(site.position).applyMatrix4(site.node.matrixWorld);
       const d = this.dir.fromArray(site.direction).transformDirection(site.node.matrixWorld);
       const q = this.rotation.setFromUnitVectors(axis, d);
-      const interval = site.kind === "exhaust" ? (.34 - .24 * throttle) / Math.max(.2, power) : low ? .15 : .085;
-      const release = dt > 0 && (clock.next.get(site.id) ?? 0) <= time;
-      if (release) clock.next.set(site.id, time + interval);
       const radius = site.radius ?? .24;
       const aft = this.tail.copy(p);
       const shape = { ...particle, opacity:.44, color: "#cbe0de", position: p, orientation: q };
@@ -92,22 +97,26 @@ export class AircraftFlightEffects {
         case "exhaust": {
           if (power <= 0) break;
           const jet = site.kind === "jetOutlet";
-          const length = (.35 + throttle * .85 + boost * profile.boostLength) * power;
-          if (jet || boost && (clock.next.get(site.id) ?? 0) - time > interval * .55) {
-            const sections = jet && boost && profile.segmented ? 3 : 1;
+          const length = (.52 + throttle * .85 + boost * profile.boostLength) * power *
+            (1 + .09 * Math.sin(time * 27));
+          if (jet) {
+            const sections = boost && profile.segmented ? 3 : 1;
             for (let n = 0; n < sections; n++) {
               aft.copy(p).addScaledVector(d, length * (n + .5) / sections);
               this.cones.spawn({...shape, position: aft, opacity:.9, size: radius * (2 - .4*n),
                 thickness: length / sections / (radius * (2 - .4*n)),
-                color: jet ? boost ? "#b2f0ff" : "#76badd" : "#ffc865"});
+                color: n === 0 ? "#e3f7ff" : "#8dc9f4"});
             }
           }
-          if (release) {
-            const v = d.clone().multiplyScalar((jet ? 2 : .9) + throttle * 2);
-            v.y += .35;
-            smoke.spawn({...particle, drag:2.6, position: jet ? aft.copy(p).addScaledVector(d,length) : p, velocity: v,
-              size: radius * (jet ? 1.4 : .85), life: low ? .45 : .8, color: jet ? "#b8cbd1" : "#92928a"});
-          }
+          const smoke = jet ? propulsionSmoke.jet : propulsionSmoke.piston;
+          const trail = jet ? this.jetSmoke : this.pistonSmoke;
+          if (jet) aft.addScaledVector(d, length * .82);
+          this.span.crossVectors(d, this.view);
+          if (this.span.lengthSq() < .01) this.span.set(1, 0, 0).transformDirection(site.node.matrixWorld);
+          this.span.normalize().multiplyScalar(smoke.width * (.85 + .45 * throttle + .2 * boost) *
+            Math.sqrt(power) * Math.max(1, radius / .36));
+          trail.follow(site, aft, d, smoke.life, smoke.opacity * (.65 + .35 * power),
+            low ? .06 : .042, undefined, this.span);
           break;
         }
         case "propeller": {

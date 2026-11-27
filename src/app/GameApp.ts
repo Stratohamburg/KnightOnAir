@@ -366,7 +366,7 @@ export class GameApp {
     this.root.classList.add("launching");
     const launchBtn = this.ui.querySelector<HTMLButtonElement>('[data-action="launch"]')!;
     launchBtn.disabled = true;
-    launchBtn.innerHTML = `<span>准备起飞 · ${this.selectedMission?.name ?? ERAS[this.patrolEra].mission}</span><span class="loading-spinner"></span>`;
+    launchBtn.innerHTML = `<span>准备起飞</span><span class="loading-spinner"></span>`;
     this.audio.play("upgrade");
   }
 

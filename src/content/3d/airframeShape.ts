@@ -159,16 +159,3 @@ export function aircraftGeometryProfile(id?: string) {
   if (!id) return undefined;
   return Object.values(AIRCRAFT_GEOMETRY_PROFILES).find((candidate) => candidate.id === id);
 }
-
-export function npcAirframeShape(kind: string, era: string) {
-  const heavy = ["elite", "bomber", "gunship", "jet_bomber", "heavy_fighter"].includes(kind);
-  const buoyant = kind === "recon_balloon" || (kind === "elite" && era === "ww1");
-  return {
-    buoyant,
-    wingspan: kind === "bomber" ? 5.6 : 4,
-    length: buoyant ? kind === "elite" ? 4.9 : 2.2 : heavy ? 3.45 : 2.5,
-    width: buoyant ? .9 : heavy ? .48 : .27,
-    tiers: era === "pioneer" || era === "ww1" ? 2 : 1,
-    wingLength: 3.25,
-  };
-}

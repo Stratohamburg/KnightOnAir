@@ -73,6 +73,21 @@
 - **WHEN** 世界进入指定时代
 - **THEN** 敌人生成池、运动 profile、颜色和任务标签来自该时代配置
 
+#### Scenario: Air enemy model resolves in the selected era
+
+- **WHEN** 配置启用一架作战飞机
+- **THEN** 其模型 ID 必须解析到原型校验台已可用的同时代机型。模型缺失或时代不符时报告配置错误
+
+#### Scenario: Air target without an aircraft
+
+- **WHEN** 任务需要无武装训练气球
+- **THEN** 该任务引用独立登记的靶标，靶标占用空中目标预算
+
+#### Scenario: Floatplane with a prototype model
+
+- **WHEN** 一战或二战需要水上巡逻机
+- **THEN** 有对应且可用的原型模型时启用空中角色，按照模型保留浮筒，使用空中预算。缺少模型时该角色不进入生成池
+
 ### Requirement: Content compatibility
 
 配置校验 MUST 报告不存在的引用、非法数值、缺失的必要能力和不完整的空战行为参数。战斗启动前须通过配置校验。

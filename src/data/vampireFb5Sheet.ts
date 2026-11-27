@@ -45,6 +45,7 @@ export const fb5Wing = [
   [32,51.5,110,4.1,-2.9], [63,58,102,4.2,-.9], [96,64.4,95,4.9,1.6],
   [120,69,90.5,5.4,3.5], [123.6,70.5,89,5.4,4.2], [124.5,74,86,5.4,4.6],
 ] as const;
+export const fb5Tailplane = [[-31,172,187,14.4,11.7],[31,172,187,14.4,11.7]] as const;
 export const fb5Probes = [
   {side: -1, span: 109.8, station: 80, top: 3.1, bottom: -6.1},
   {side: 1, span: 120.2, station: 81, top: 4.6, bottom: -7, endSpan: 121.7},

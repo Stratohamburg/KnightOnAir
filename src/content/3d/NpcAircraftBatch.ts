@@ -5,17 +5,23 @@ import { ContentCatalog } from "./ContentCatalog";
 import { aircraftMaterial } from "../../rendering/ShaderMaterials";
 
 type Piece = Mesh<BufferGeometry, ShaderMaterial>;
+// Nine vertex uniform vectors per piece, with room for the scene uniforms.
+const MAX_PIECES_PER_BATCH = 24;
 
 /** Keep the assembly graph for articulated effect sites and damage surfaces while
- * submitting the visible NPC skin in one draw. Vertex positions remain mesh-local. */
+ * submitting the visible NPC skin in bounded draws. Vertex positions remain mesh-local. */
 export class NpcAircraftBatch {
-  readonly mesh: Mesh<BufferGeometry,ShaderMaterial>;
+  readonly mesh: Mesh<BufferGeometry, ShaderMaterial>;
   private readonly transforms: Matrix4[];
   private readonly states: Vector4[];
   private readonly inverse = new Matrix4();
   private readonly release: () => void;
 
-  constructor(private readonly root: Group, private readonly pieces: Piece[], key: string, catalog: ContentCatalog) {
+  private constructor(private readonly root: Group, private readonly pieces: Piece[], catalog: ContentCatalog) {
+    const rootIsMirrored = root.matrixWorld.determinant() < 0;
+    const mirrored = pieces.map(piece => (piece.matrixWorld.determinant() < 0) !== rootIsMirrored);
+    // Roles with the same authored pieces can share the joined vertex buffers.
+    const key = pieces.map((piece, index) => piece.geometry.uuid + (mirrored[index] ? "-" : "+")).join("/");
     const geometry = catalog.geometry("npc-effect-skin/" + key, () => {
       const positions: number[] = [], normals: number[] = [], ids: number[] = [], indices: number[] = [];
       pieces.forEach((piece,id) => {
@@ -28,7 +34,10 @@ export class NpcAircraftBatch {
           ids.push(id);
         }
         const index = source.getIndex();
-        for (let i = 0; i < (index?.count ?? p.count); i++) indices.push(offset + (index?.getX(i) ?? i));
+        const vertex = (i: number) => offset + (index?.getX(i) ?? i);
+        const reverse = mirrored[id];
+        for (let i = 0; i < (index?.count ?? p.count); i += 3)
+          indices.push(vertex(i), vertex(i + (reverse ? 2 : 1)), vertex(i + (reverse ? 1 : 2)));
       });
       const joined = new BufferGeometry();
       joined.setIndex(indices);
@@ -61,23 +70,28 @@ export class NpcAircraftBatch {
         m.uniforms.liveryStripeWidth.value, m.uniforms.liveryPanelContrast.value))};
     this.mesh = new Mesh(geometry.value,material);
     this.mesh.name = "npc-aircraft-skin";
-    // The normal actor-level frustum check covers the transformed local positions.
+    // The actor-level frustum check covers the transformed local positions.
     this.mesh.frustumCulled = false;
     for (const piece of pieces) piece.layers.disable(0);
     root.add(this.mesh);
-    this.update(0);
   }
-  static create(root: Group, key: string, catalog: ContentCatalog) {
+  static create(root: Group, catalog: ContentCatalog) {
     const pieces: Piece[] = [];
     root.traverse(node => {
       if (node instanceof Mesh && node.material instanceof ShaderMaterial && node.material.uniforms.baseColor) {
         pieces.push(node as Piece);
       }
     });
-    if (pieces.length) return new NpcAircraftBatch(root,pieces,key,catalog);
+    root.updateWorldMatrix(true, true);
+    const batches: NpcAircraftBatch[] = [];
+    for (let index = 0; index < pieces.length; index += MAX_PIECES_PER_BATCH) {
+      const batch = new NpcAircraftBatch(root, pieces.slice(index, index + MAX_PIECES_PER_BATCH), catalog);
+      batch.update(0);
+      batches.push(batch);
+    }
+    return batches;
   }
   update(time: number) {
-    this.root.updateWorldMatrix(true,true);
     this.inverse.copy(this.root.matrixWorld).invert();
     this.pieces.forEach((piece,i) => {
       this.transforms[i].multiplyMatrices(this.inverse,piece.matrixWorld);

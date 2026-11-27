@@ -49,8 +49,16 @@
 | 出击 | `sortie` | 所有玩家 | 查看副本信息并开始下一局 | 已实现 |
 | 装备 | `equipment` | 所有玩家 | 选择载具、查看数据、管理局外升级和出击配置 | 已实现，升级入口需要向此页收敛 |
 | 商店 | `shop` | 所有玩家 | 抽奖和货币直购 | 当前为占位页 |
-| 活动 | 未来替换 `reservedA` | 所有玩家 | 活动列表、活动规则、任务进度和奖励领取 | 预留槽位 |
+| 活动 | `reservedA`（兼容路由） | 所有玩家 | 活动列表、活动规则、任务进度和奖励领取 | 预留槽位 |
 | 展台 | `showroom` | 开发和测试人员 | 检查机体、强化构型、武器试射和视觉校验 | 已实现，必须按调试入口管理 |
+
+### 航空票根与导航
+
+出击简报使用暖白票纸，朱红副券承载出击动作。暂停和结算的副券分别用于继续飞行和下一关或重试。任务名、价格、积分和按钮文字由视图提供，以便随存档、任务和操作状态更新。
+
+底部导航独占一行，与内容票之间留出间距。商店、装备、出击、活动使用原稿图标搭配短标签；选中项增加朱红色和底线。常规栏高 68px，短屏 60px，另加底部安全区。调试展台出现时五项等宽排列。
+
+切图目录为 `src/assets/ui/ticket/`。纸纹与朱红底纹平铺，机翼纹章和条码按比例缩放，四个导航图标使用透明蒙版随选中状态着色。原稿见 `output/imagegen/ticket-ui-revised/screens/`。摇杆对照前版 `ticket-ui-collection/screens/12-combat.png` 和 `13-bombing.png`，在屏幕下方居中，外圈直径约为屏宽的 27%。校验台沿用独立样式。
 
 ### 一级菜单通用规则
 
@@ -102,8 +110,8 @@
 | 当前实现 | 目标收敛 |
 | --- | --- |
 | `renderEquipmentBody` 已有载具、部位和数据，但没有局外升级面板 | 将局外升级、消耗、前后数值和确认动作放进装备页二级面板 |
-| `shop` 是通用占位页 | 按抽奖和货币直购两个二级分段实现 |
-| `reservedA` 显示为“预留” | 活动上线后替换显示名和职责，保留旧路由兼容 |
+| `shop` 提供抽奖、货币直购分段和未开放说明 | 交易开放时补充价格、确认和结果 |
+| `reservedA` 显示为“活动” | 后续活动内容沿用该入口 |
 
 ### 装备页
 
@@ -220,7 +228,7 @@
 | `src/content/2d/ShowroomView.ts` | 展台调试工具条和调试文案 |
 | `src/content/2d/ModalViews.ts` | 二级弹窗、设置、帮助、选关和升级文字 |
 | `src/app/GameApp.ts` | hash 路由、页面切换、模态状态、提交动作和兼容别名 |
-| `src/styles/hangar.css`、`showroom.css`、`modals.css`、`base.css` | 导航高度、按钮层级、切换栏和热区 |
+| `src/styles/ticket.css`、`src/assets/ui/ticket/`、`src/styles/hangar.css`、`showroom.css`、`modals.css`、`base.css` | 导航高度、按钮层级、切换栏和热区 |
 | `tests/mobile-ui.test.ts`、`tests/aircraft-showroom.test.ts`、相关 OpenSpec 场景 | 页面入口、按钮行为、局部更新、调试隔离和返回路径 |
 | `docs/README.md`、`AGENTS.md` | 规范索引和协作入口 |
 

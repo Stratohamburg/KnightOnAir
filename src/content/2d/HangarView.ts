@@ -18,7 +18,7 @@ export const META_TABS: readonly MetaTabDef[] = [
   { id: "shop", name: "商店", icon: "crate", placeholder: true },
   { id: "equipment", name: "装备", icon: "wrench" },
   { id: "sortie", name: "出击", icon: "plane" },
-  { id: "reservedA", name: "预留", icon: "compass", placeholder: true },
+  { id: "reservedA", name: "活动", icon: "compass", placeholder: true },
   { id: "showroom", name: "展台", icon: "plane" },
 ];
 
@@ -63,7 +63,7 @@ export function renderTopBar(playerLevel: number, currency: number) {
 export function renderBottomNav(activeTab: MetaTab, showDebug = false) {
   return `<nav class="bottom-nav" aria-label="主导航">${META_TABS.filter(tab => showDebug || tab.id !== "showroom").map(
     (tab) =>
-      `<button type="button" data-tab="${tab.id}"${tab.id === "showroom" ? ' data-reserved-slot="reservedB"' : ""} class="nav-item${tab.placeholder ? " placeholder-slot" : ""}${activeTab === tab.id ? " selected" : ""}"${activeTab === tab.id ? ' aria-current="page"' : ""}>${icon(tab.icon)}<span>${tab.name}</span></button>`,
+      `<button type="button" data-tab="${tab.id}"${tab.id === "showroom" ? ' data-reserved-slot="reservedB"' : ""} class="nav-item${tab.placeholder ? " placeholder-slot" : ""}${activeTab === tab.id ? " selected" : ""}"${activeTab === tab.id ? ' aria-current="page"' : ""}>${tab.id === "showroom" ? icon(tab.icon) : '<i class="nav-slice" aria-hidden="true"></i>'}<span>${tab.name}</span></button>`,
   ).join("")}</nav>`;
 }
 
@@ -112,48 +112,22 @@ export function renderSortieBody(model: SortieViewModel) {
       ? ""
       : `<button type="button" class="btn btn-xs btn-secondary" data-tab="equipment">更换 ${icon("arrow")}</button>`;
   return `<section class="home-card panel-surface">
-    <div class="mission-strip">
-      ${missionNumber ? `<span class="mission-number">${missionNumber}</span>` : ""}
-      <div class="mission-meta">
-        <strong>${missionName}</strong>
-        <small>${eraLabel} · ${missionNumber ? "战役" : "自由巡航"}</small>
+    <div class="ticket-brief">
+      <div class="ticket-tools">
+        <span class="ticket-series">${missionNumber ? `战役 ${missionNumber}` : "自由巡航"} · ${eraLabel}</span>
+        ${actionButton("missions", "选关 ›", { size: "xs", variant: "secondary", extraClass: "mission-select", attributes: 'aria-haspopup="dialog"' })}
+        ${actionButton("help", icon("help"), { size: "xs", variant: "ghost", attributes: 'aria-label="飞行指南"' })}
       </div>
-      ${actionButton("missions", `选关 ${icon("chevron")}`, {
-        size: "sm",
-        variant: "secondary",
-        extraClass: "mission-select",
-        attributes: 'aria-haspopup="dialog"',
-      })}
+      <h2>${missionName}</h2>
+      <p class="ticket-objective">${briefing?.objective ?? "应对遭遇，收集补给并积累积分。"}</p>
+      <div class="ticket-details"><span>${briefing?.environment ?? "晴朗 · 白天"}</span><span>${frame.name}</span>${switchButton}</div>
+      <div class="ticket-record">${briefing?.equipment ? `<span>${briefing.equipment}</span>` : ""}<span>最高积分 ${formatCount(bestScore)}</span></div>
+      ${modelError ? `<p role="status">${modelError}</p>` : ""}
     </div>
-    <div class="sortie-brief">
-      <p>${briefing?.objective ?? "应对不断抵达的遭遇，收集补给并积累积分。"}</p>
-      <small>环境 · ${briefing?.environment ?? "晴朗 · 白天"}</small>
-    </div>
-    <div class="sortie-airframe">
-      <span>${briefing?.preset ? "任务机体" : "当前装备"} · <b>${frame.name}</b>${briefing?.equipment ? ` · ${briefing.equipment}` : ""}</span>
-      ${switchButton}
-    </div>
-    <div class="sortie-actions">
-      ${actionButton("help", icon("help"), {
-        size: "lg",
-        variant: "secondary",
-        attributes: 'aria-label="飞行指南"',
-      })}
-      ${actionButton(
-        "launch",
-        `<span>${modelError ? "暂不可出击" : "出击"}</span>${icon("arrow")}`,
-        {
-          size: "lg",
-          variant: "primary",
-          extraClass: "launch-button",
-          attributes: canLaunch ? "" : "disabled",
-        },
-      )}
-    </div>
-    <div class="home-footer">
-      ${modelError ? `<span>${modelError}</span>` : ""}
-      <span>最高积分<b>${formatCount(bestScore)}</b></span>
-    </div>
+    ${actionButton("launch", `<span>${modelError ? "暂不可出击" : "出击"}</span>`, {
+      size: "lg", variant: "primary", extraClass: "launch-button ticket-stub",
+      attributes: canLaunch ? "" : "disabled",
+    })}
   </section>`;
 }
 
@@ -260,18 +234,24 @@ export function updateEquipmentPartHighlight(
 }
 
 export function renderPlaceholderBody(tab: MetaTab) {
-  const entry = META_TABS.find((item) => item.id === tab) ?? META_TABS[0];
-  const isShop = tab === "shop";
+  const back = actionButton("return-sortie", `返回出击 ${icon("arrow")}`, {
+    size: "sm", variant: "secondary", attributes: 'data-tab="sortie"',
+  });
+  if (tab === "shop") {
+    return `<div class="shop-backdrop" aria-hidden="true"></div>
+      <section class="placeholder-page shop-ticket panel-surface">
+        <fieldset class="shop-sections"><legend>商店</legend>
+          <label><input type="radio" name="shop-section" value="draw" checked>抽奖</label>
+          <label><input type="radio" name="shop-section" value="currency">货币直购</label>
+        </fieldset>
+        <div class="shop-offer draw-offer"><h1>涂装补给券</h1><p>涂装抽奖即将开放。</p></div>
+        <div class="shop-offer currency-offer"><h1>货币直购</h1><p>货币购买即将开放。</p></div>
+        ${back}
+      </section>`;
+  }
   return `<section class="placeholder-page panel-surface">
-    <span class="eyebrow">STANDBY · COMING SOON</span>
-    <div class="placeholder-symbol">${icon(entry.icon)}</div>
-    <h1>${isShop ? "商店即将开放" : "内容准备中"}</h1>
-    <p>${isShop ? "未来将在这里开放更多机体涂装与局外补给。<br>现在先返回出击页开始航程。" : "新的系统功能正在筹备中。<br>当前装备与飞行记录均已安全保留。"}</p>
-    ${actionButton("return-sortie", `返回出击 ${icon("arrow")}`, {
-      size: "md",
-      variant: "primary",
-      block: true,
-      attributes: 'data-tab="sortie"',
-    })}
+    <h1>活动即将开放</h1>
+    <p>后续活动与奖励将在这里开放。</p>
+    ${back}
   </section>`;
 }

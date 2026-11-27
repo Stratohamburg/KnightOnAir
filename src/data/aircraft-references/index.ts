@@ -14,6 +14,8 @@ import caudronG3 from "./caudron-g3";
 import ilyaMuromets from "./ilya-muromets";
 import voisinIii from "./voisin-iii";
 import farmanMf11 from "./farman-mf11";
+import { ww1ReferenceDossiers } from "./ww1-dossiers";
+import { ww2ReferenceDossiers } from "./ww2-dossiers";
 import { REFERENCE_ERAS, type AircraftReference } from "./types";
 
 export const DEFAULT_AIRCRAFT_REFERENCE: AircraftReference = fokkerDr1;
@@ -22,8 +24,8 @@ const eraOrder = Object.keys(REFERENCE_ERAS);
 const references: AircraftReference[] = [
   wrightFlyer, santos14bis, santosDemoiselle, bleriotXi, etrichTaube,
   deperdussinMonocoque, caudronG3, ilyaMuromets, voisinIii, farmanMf11,
-  fokkerDr1,
-  spitfireVb, a6m2, ho229V2,
+  fokkerDr1, ...ww1ReferenceDossiers,
+  spitfireVb, a6m2, ho229V2, ...ww2ReferenceDossiers,
   vampire, glosterMeteorF3,
 ];
 

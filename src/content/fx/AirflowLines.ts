@@ -6,6 +6,13 @@ import type { WindSampler } from "./EffectBatch";
 
 const samples = 24;
 
+export interface SmokeTrailStyle {
+  color: string;
+  ripple: number;
+  spread: number;
+  speed: number;
+}
+
 class Strand {
   readonly halfSpan = new Vector3();
   readonly spans: Vector3[];
@@ -37,7 +44,8 @@ export class AirflowLines {
   private time = 0;
   private vertices = 0;
 
-  constructor(scene: Scene, private readonly capacity: number, private readonly wide = false) {
+  constructor(scene: Scene, private readonly capacity: number, private readonly wide = false,
+    private readonly smoke?: SmokeTrailStyle) {
     const segments = capacity * (samples + 1);
     const vertices = segments * (wide ? 4 : 2);
     this.positions = new BufferAttribute(new Float32Array(vertices * 3), 3).setUsage(DynamicDrawUsage);
@@ -59,8 +67,8 @@ export class AirflowLines {
     geometry.setDrawRange(0, 0);
     const material = new ShaderMaterial({
       transparent: true, depthWrite: false, side: DoubleSide, forceSinglePass: true,
-      defines: wide ? {WING_BAND:1} : {},
-      uniforms: { tint: { value: new Color("#e2f2ef") } },
+      defines: wide ? {WING_BAND:1, ...(smoke ? {SMOKE_TRAIL:1} : {})} : {},
+      uniforms: { tint: { value: new Color(smoke?.color ?? "#e2f2ef") } },
       vertexShader: `attribute float alpha; varying float opacity;
         #ifdef WING_BAND
         attribute float across; varying float edge;
@@ -79,12 +87,16 @@ export class AirflowLines {
           #ifdef WING_BAND
           a*=1.-smoothstep(.50,1.,abs(edge));
           #endif
+          #ifdef SMOKE_TRAIL
+          gl_FragColor=vec4(tint * mix(1.34,.74,smoothstep(.15,.85,edge)),a);
+          #else
           gl_FragColor=vec4(tint,a);
+          #endif
           #include <colorspace_fragment>
         }`,
     });
     this.mesh = wide ? new Mesh(geometry, material) : new LineSegments(geometry, material);
-    this.mesh.name = wide ? "wing-surface-bands" : "aircraft-airflow-lines";
+    this.mesh.name = smoke ? "engine-smoke-trail" : wide ? "wing-surface-bands" : "aircraft-airflow-lines";
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;
     scene.add(this.mesh);
@@ -135,7 +147,12 @@ export class AirflowLines {
       strand.points[strand.newest].copy(root);
       if (halfSpan) strand.spans[strand.newest].copy(halfSpan);
       // Retain the outflow direction at release, including in a stationary preview.
-      strand.velocities[strand.newest].copy(aft).multiplyScalar(site.kind === "propeller" ? 6 : 2.8);
+      strand.velocities[strand.newest].copy(aft).multiplyScalar(this.smoke?.speed ?? (site.kind === "propeller" ? 6 : 2.8));
+      if (this.smoke) {
+        strand.velocities[strand.newest].y += .55;
+        // Make the root visible on the first draw, before a history exists.
+        if (!strand.count) strand.points[strand.newest].addScaledVector(aft, interval * this.smoke.speed);
+      }
       strand.times[strand.newest] = this.time;
       strand.count = Math.min(samples, strand.count + 1);
     }
@@ -153,6 +170,12 @@ export class AirflowLines {
     }
   }
 
+  private widthScale(age: number, fade: number) {
+    if (!this.smoke) return .6 + .4 * fade;
+    const ripple = Math.sin(this.time * 14 - age * 24);
+    return (1 + this.smoke.spread * (1 - fade)) * (1 + this.smoke.ripple * ripple);
+  }
+
   write(visible: (site: AircraftEffectSite) => boolean = () => true) {
     this.vertices = 0;
     for (const kind of Object.keys(this.visibleStrands) as AircraftEffectSite["kind"][]) this.visibleStrands[kind] = 0;
@@ -161,7 +184,7 @@ export class AirflowLines {
       const start = this.vertices;
       let last = strand.seen ? strand.root : undefined;
       let alpha = strand.opacity;
-      let span = strand.halfSpan, scale = 1;
+      let span = strand.halfSpan, scale = this.widthScale(0, 1);
       if (strand.seen && strand.hasLead) {
         if (this.wide) {
           this.section(strand.lead,span,0,.85);
@@ -174,12 +197,14 @@ export class AirflowLines {
       for (let i = 0; i < strand.count; i++) {
         const index = (strand.newest - i + samples) % samples;
         const point = strand.points[index];
-        const fade = Math.max(0, 1 - (this.time - strand.times[index]) / strand.life);
-        const nextAlpha = strand.opacity * fade * fade;
+        const age = this.time - strand.times[index];
+        const fade = Math.max(0, 1 - age / strand.life);
+        const nextAlpha = strand.opacity * (this.smoke ? fade : fade * fade);
+        const nextScale = this.widthScale(age, fade);
         if (last && point.distanceToSquared(last) > 1e-10) {
           if (this.wide) {
             this.section(last,span,alpha,scale);
-            this.section(point,strand.spans[index],nextAlpha,.6+.4*fade);
+            this.section(point,strand.spans[index],nextAlpha,nextScale);
           } else {
             this.vertex(last,alpha);
             this.vertex(point,nextAlpha);
@@ -188,7 +213,7 @@ export class AirflowLines {
         last = point;
         alpha = nextAlpha;
         if (this.wide) span = strand.spans[index];
-        scale = .6+.4*fade;
+        scale = nextScale;
       }
       if (this.vertices > start) this.visibleStrands[site.kind] = (this.visibleStrands[site.kind] ?? 0) + 1;
     }

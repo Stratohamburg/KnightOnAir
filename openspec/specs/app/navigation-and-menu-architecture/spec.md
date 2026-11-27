@@ -15,6 +15,11 @@
 - **WHEN** 玩家首次打开应用或从结算页返回局外
 - **THEN** 应用显示出击页，页面默认聚焦当前副本和已确认装备
 
+#### Scenario: Ticket and icon navigation
+
+- **WHEN** 玩家进入任一局外页面
+- **THEN** 独立底部导航在页面内容票下方显示图标与短标签，当前入口以选中标记区分，新增调试入口时仍保持一行
+
 #### Scenario: First-level tab changes page responsibility
 
 - **WHEN** 玩家点击一级导航中的一个入口

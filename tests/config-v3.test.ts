@@ -4,8 +4,10 @@ import { AIRCRAFT_REFERENCES, aircraftReferenceByFrameId } from "../src/data/air
 import { aircraftReferencePreview, aircraftReviewPlate, resolveAircraftModel } from "../src/content/3d/aircraftModels";
 import { ProceduralAircraft } from "../src/content/3d/AircraftFactory";
 import { ContentCatalog } from "../src/content/3d/ContentCatalog";
-import { Box3 } from "three";
+import { Box3, Mesh, ShaderMaterial } from "three";
 import {
+  BALLOON_TARGET_MODEL_ID,
+  combatAircraftFrame,
   COMBATANT_CONFIGS,
   CONFIG_DIAGNOSTICS,
   NPC_PROFILES,
@@ -91,12 +93,21 @@ describe("configuration v3", () => {
     for (const profile of Object.values(NPC_PROFILES)) {
       const config = COMBATANT_CONFIGS[profile.combatantId];
       if (config.layer !== "air") continue;
+      if (config.visual.modelKey === BALLOON_TARGET_MODEL_ID) continue;
+      const frame = combatAircraftFrame(config.visual.modelKey) ?? aircraftReferencePreview(config.visual.modelKey)?.frame;
+      expect(frame, config.id).toBeDefined();
+      expect(resolveAircraftModel(frame!).model, config.id).toBeDefined();
       const world = new World(AIRFRAMES[0], 42, { missionEra: config.era, director: false, supply: false });
       world.enemies = [];
       const actor = world.spawnEnemy(profile.kind ?? profile.id, 0, 4)!;
       expect(actor.configId).toBe(config.id);
       const model = new ProceduralAircraft(actor);
-      expect(model.contentError).toBeUndefined();
+      expect(model.contentError, config.id).toBeUndefined();
+      expect(actor.parts.every(part => model.partNode(part.id)), config.id).toBe(true);
+      expect(actor.parts.filter(part => part.role === "wing").every(part => part.silhouette?.length), config.id).toBe(true);
+      expect(model.effectSites.sources.filter(site => site.kind === "muzzle")).toHaveLength(
+        actor.weapons.reduce((count, weapon) => count + weapon.config.count, 0),
+      );
       const ids = model.effectSites.sources.map(site => site.id);
       expect(new Set(ids).size).toBe(ids.length);
       expect(model.effectSites.surfaces.length).toBeGreaterThan(0);
@@ -108,6 +119,48 @@ describe("configuration v3", () => {
       model.dispose();
       world.dispose();
     }
+  });
+
+  it.each(["ww1", "ww2"] as const)("leaves the %s floatplane out until a prototype model is available", era => {
+    const world = new World(AIRFRAMES[0], 42, { missionEra: era, director: false, supply: false, showroom: true });
+    expect(world.spawnEnemy("seaplane_patrol", 0, 10)).toBeUndefined();
+    world.dispose();
+  });
+
+  it("keeps the training balloon as an explicit unarmed target", () => {
+    const world = new World(AIRFRAMES[0], 42, { missionEra: "pioneer", director: false, supply: false, showroom: true });
+    const actor = world.spawnEnemy("recon_balloon", 0, 10)!;
+    const model = new ProceduralAircraft(actor);
+    expect(COMBATANT_CONFIGS[actor.configId!].visual.modelKey).toBe(BALLOON_TARGET_MODEL_ID);
+    expect(actor.weapons).toEqual([]);
+    expect(model.contentError).toBeUndefined();
+    expect(model.effectSites.surfaces.length).toBeGreaterThan(0);
+    model.dispose();
+    world.dispose();
+  });
+
+  it("shares the mesh for two roles using the same airframe, with independent damage and leases", () => {
+    const catalog = new ContentCatalog();
+    const world = new World(AIRFRAMES[0], 42, { missionEra: "ww2", director: false, supply: false, showroom: true });
+    const hunter = world.spawnEnemy("hunter", -5, 10)!;
+    const escort = world.spawnEnemy("escort", 5, 10)!;
+    const first = new ProceduralAircraft(hunter, catalog);
+    const second = new ProceduralAircraft(escort, catalog);
+    const skin = (model: ProceduralAircraft) =>
+      model.group.getObjectByName("npc-aircraft-skin") as Mesh<Mesh["geometry"], ShaderMaterial>;
+    expect(skin(first).geometry).toBe(skin(second).geometry);
+    expect(skin(first).material.uniforms.pieceState.value).not.toBe(skin(second).material.uniforms.pieceState.value);
+    const wing = hunter.parts.find(part => part.id === "left_wing")!;
+    wing.destroyed = true;
+    first.update(1, 0);
+    second.update(1, 0);
+    expect(first.partNode(wing.id)?.visible).toBe(false);
+    expect(second.partNode(wing.id)?.visible).toBe(true);
+    first.dispose();
+    expect(catalog.stats.geometries).toBeGreaterThan(0);
+    second.dispose();
+    expect(catalog.stats.geometries).toBe(0);
+    world.dispose();
   });
 
   it("loads every combatant and NPC profile without diagnostics", () => {
@@ -153,6 +206,10 @@ describe("configuration v3", () => {
 
   it("reports incomplete air attack profiles", () => {
     const profile = NPC_PROFILES.interceptor;
+    const config = COMBATANT_CONFIGS[profile.combatantId];
+    expect(validateNpcProfile(profile, {
+      [config.id]: { ...config, visual: { ...config.visual, modelKey: "undefined-model" } },
+    })?.errors).toContain("missing era-appropriate prototype aircraft model");
     expect(validateNpcProfile({ ...profile, airAttack: undefined }, COMBATANT_CONFIGS)?.errors)
       .toContain("invalid air attack, breakaway or reentry profile");
   });

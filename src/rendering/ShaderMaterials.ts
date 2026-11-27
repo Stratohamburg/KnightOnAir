@@ -17,9 +17,9 @@ export const landscapeLight = `
     vec3 toPoint = world - cameraPosition;
     float range = length(toPoint);
     // Keep the top-down playable view crystal clear and sunny; only soften far screen top edge.
-    float farFog = smoothstep(118. * weatherVisibility, 245. * weatherVisibility, range);
+    float farFog = smoothstep(155. * weatherVisibility, 285. * weatherVisibility, range);
     vec3 fogColor = mix(haze, sunTint, .12);
-    return mix(color * ambientAmount, fogColor, farFog * mix(.88, .62, weatherVisibility));
+    return mix(color * ambientAmount, fogColor, farFog * mix(.48, .30, weatherVisibility));
   }
 `;
 export function aircraftMaterial(
@@ -80,7 +80,6 @@ export function aircraftMaterial(
           vState=pieceState[id]; vFinish=pieceFinish[id]; vLivery=pieceLivery[id]; vPattern=piecePattern[id]; vTrim=pieceTrim[id];
           if(vState.w<.5){gl_Position=vec4(2.,2.,2.,1.);return;}
           mat4 transform=pieceTransform[id];
-          modelView*=transform;
           localPosition=transform*localPosition;
           normals*=transpose(inverse(mat3(transform)));
           #endif
@@ -163,7 +162,11 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
       grass: { value: new THREE.Color("#68ad76") },
       road: { value: new THREE.Color("#94c779") },
       sand: { value: new THREE.Color("#e4d49d") },
-      stone: { value: new THREE.Color("#839e8e") },
+      stone: { value: new THREE.Color("#709783") },
+      flower: { value: new THREE.Color("#88bd79") },
+      wetland: { value: new THREE.Color("#6da98c") },
+      shoulder: { value: new THREE.Color("#9fc17b") },
+      rock: { value: new THREE.Color("#5f7f79") },
       haze: { value: new THREE.Color("#dff5f0") },
       valleyFog: { value: new THREE.Color("#d9f3f2") },
       sunTint: { value: new THREE.Color("#fff3cc") },
@@ -171,20 +174,31 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
       waveDetail: { value: 0 },
       waveStrength: { value: 0 },
     },
-    vertexShader: `attribute float roadMask;
+    vertexShader: `attribute float roadMask, elevation, shoreMask, talusWeight, sedimentWeight, flowAccumulation;
+      attribute vec4 landformWeights, reliefWeights;
       varying vec3 vWorld, vNormal;
-      varying float vRoad;
+      varying float vRoad, vElevation, vShore, vTalus, vSediment, vFlow;
+      varying vec4 vLandform, vRelief;
       void main(){
         vec4 world=modelMatrix*vec4(position,1.);
         vWorld=world.xyz;
         vNormal=normalize(mat3(modelMatrix)*normal);
         vRoad=roadMask;
+        vElevation=elevation;
+        vLandform=landformWeights;
+        vShore=shoreMask;
+        vTalus=talusWeight;
+        vSediment=sedimentWeight;
+        vFlow=flowAccumulation;
+        vRelief=reliefWeights;
         gl_Position=projectionMatrix*viewMatrix*world;
       }`,
-    fragmentShader: `${noise} ${vegetationWindGLSL} ${cloudShadowGLSL} ${aircraftShadowGLSL} ${landscapeLight}
+    fragmentShader: `${noise} ${cloudShadowGLSL} ${aircraftShadowGLSL} ${landscapeLight}
       varying vec3 vWorld, vNormal;
-      varying float vRoad;
+      varying float vRoad, vElevation, vShore, vTalus, vSediment, vFlow;
+      varying vec4 vLandform, vRelief;
       uniform vec3 grass, road, sand, stone, cloudShadowColor;
+      uniform vec3 flower, wetland, shoulder, rock;
       uniform sampler2D detailTexture;
       uniform float waveDetail, waveStrength;
       void main(){
@@ -193,42 +207,72 @@ export function terrainMaterial(detailTexture: THREE.Texture, wind = vegetationW
         vec2 at = vWorld.xz;
         float broad = fbm(at * .028);
         vec2 grainUv = at * .052;
-        vec3 grain = texture2D(detailTexture, grainUv).rgb;
+        vec4 detailSample = texture2D(detailTexture, grainUv);
+        vec3 grain = detailSample.rgb;
+        float regionMask = detailSample.a;
+        vec3 fineSample = texture2D(detailTexture, at * .38 + vec2(.17, -.09)).rgb;
+        vec3 crispSample = texture2D(detailTexture, at * .72 + vec2(-.23, .41)).rgb;
         vec2 rotated = vec2(dot(at, vec2(.81, .59)), dot(at, vec2(-.59, .81)));
         vec3 relief = texture2D(detailTexture, rotated * .021 + .37).rgb;
-        float detail = mix(grain.r, relief.r, .52);
+        float detail = mix(grain.r, relief.r, .16);
+        float patchNoise = fbm(at * .072 + vec2(2.4, -1.7));
+        float patchBand = smoothstep(.22, .78, patchNoise);
+        float blockMask = smoothstep(.24, .76, regionMask);
+        float fleckMask = smoothstep(.28, .72, fineSample.b);
+        float crispFleck = smoothstep(.3, .7, crispSample.r);
+        vec2 blockUv = at * vec2(.12, .095);
+        vec2 blockCell = floor(blockUv);
+        float blockValue = smoothstep(.18, .82, hash(blockCell + vec2(7.4, -3.1)));
+        vec2 blockEdgeDistance = min(fract(blockUv), 1. - fract(blockUv));
+        float blockEdge = 1. - smoothstep(.035, .12, min(blockEdgeDistance.x, blockEdgeDistance.y));
         float bankHeight = vWorld.y - (${TERRAIN.waterLevel});
         float shore = 1. - smoothstep(.15, 2.35, bankHeight + (detail - .5) * .48);
         float track = smoothstep(.24, .88, vRoad) * (1. - shore);
         float slope = 1. - normalWorld.y;
-        float rock = smoothstep(.085, .31, slope + (broad - .5) * .08);
+        float rockSlope = smoothstep(.085, .31, slope + (broad - .5) * .08);
 
         // Clean painterly meadow gradient: warm sunlit chartreuse slopes to cool jade hollows.
-        vec3 meadowCool = grass * vec3(.72, .91, .92);
-        vec3 meadowWarm = grass * vec3(1.32, 1.24, .84);
+        vec3 meadowCool = grass * vec3(.62, .88, .70);
+        vec3 meadowWarm = grass * vec3(1.22, 1.12, .68);
         vec3 meadow = mix(meadowCool, meadowWarm, smoothstep(.22, .78, broad));
-        meadow *= mix(.91, 1.09, smoothstep(.24, .82, detail));
+        vec3 blockCool = vec3(.86, 1.04, .89);
+        vec3 blockWarm = vec3(1.08, 1.04, .76);
+        vec3 blockTint = mix(blockCool, blockWarm, patchBand);
+        meadow *= mix(vec3(.86), blockTint, (.42 + .4 * waveDetail) * blockMask);
+        meadow *= mix(.94, 1.06, smoothstep(.24, .82, detail));
+        meadow = mix(meadow, meadow * mix(vec3(.86, 1.08, .82), vec3(1.16, 1.0, .68), fleckMask), .36 + .2 * waveDetail);
+        meadow = mix(meadow, meadow * mix(vec3(.88, 1.03, .86), vec3(1.08, .99, .78), crispFleck), .18);
+        meadow *= mix(vec3(.84, .94, .84), vec3(1.1, 1.05, .78), blockValue * (.24 + .2 * blockMask));
+        meadow = mix(meadow, meadow * vec3(.76, .9, .8), blockEdge * .18);
 
-        float grassWeight = (1. - rock) * (1. - track) * (1. - shore);
-        if (grassWeight > .05) {
-          vec2 localWind = sampleWind(at);
-          float gustSpeed = .9 + length(localWind) * .9 + windGust * .22;
-          float phase = dot(at, windDirection) * .28 + broad * 3.4 - sceneTime * gustSpeed;
-          float wave = sin(phase) * .76;
-          if (waveDetail > 0.)
-            wave += sin(phase * 1.72 + broad * 4.2) * .24 * waveDetail;
-          // Two-tone grass wave: golden sunlit crests and cool teal-green troughs.
-          vec3 crestTint = vec3(1.18, 1.16, .88);
-          vec3 troughTint = vec3(.82, .94, .97);
-          meadow *= mix(troughTint, crestTint, clamp(.5 + wave * (.5 + waveStrength * 1.8), 0., 1.));
-          meadow *= 1. + wave * waveStrength * .65;
-          // Soft velvet rim sheen across wind-swept meadows.
-          float velvet = pow(1. - clamp(dot(normalWorld, viewDir), 0., 1.), 2.4);
-          meadow += sunTint * velvet * .11 * (.5 + .5 * wave);
-        }
+        float groundRock = max(rockSlope, vLandform.w);
+        float meadowWeight = clamp(vLandform.x, 0., 1.) * (1. - track) * (1. - shore);
+        vec3 flowerMeadow = mix(meadow, flower, .62);
+        vec3 wet = mix(meadow, wetland, .72);
+        vec3 shoulderGrass = mix(meadow, shoulder, .28);
+        meadow = mix(meadow, flowerMeadow, clamp(vLandform.y, 0., 1.));
+        meadow = mix(meadow, wet, clamp(vLandform.z, 0., 1.));
+        meadow = mix(meadow, shoulderGrass, smoothstep(.52, .86, vElevation));
+
+        // Keep the large-scale relief legible from the fixed top-down camera.
+        // Ridge and peak colors stay saturated enough to survive bright sunlight,
+        // while basin and saddle colors keep the valley network readable.
+        vec3 ridgeGreen = vec3(.43, .67, .42);
+        vec3 peakGreen = vec3(.55, .73, .47);
+        vec3 basinGreen = vec3(.31, .60, .47);
+        vec3 saddleGreen = vec3(.47, .69, .45);
+        meadow = mix(meadow, ridgeGreen, clamp(vRelief.x * .52, 0., .58));
+        meadow = mix(meadow, peakGreen, clamp(vRelief.y * .42, 0., .48));
+        meadow = mix(meadow, basinGreen, clamp(vRelief.w * .34, 0., .38));
+        meadow = mix(meadow, saddleGreen, clamp(vRelief.z * .28, 0., .3));
+        float ridgeBand = smoothstep(.18, .44, vRelief.x) * (1. - smoothstep(.44, .72, vRelief.x));
+        meadow = mix(meadow, vec3(.34, .56, .39), ridgeBand * .22);
 
         float strata = texture2D(detailTexture, vec2(rotated.x * .055, vWorld.y * .13 + relief.g * .12)).g;
-        vec3 col = mix(meadow, stone * (.72 + .42 * strata + .12 * grain.g), rock);
+        float rockFleck = smoothstep(.3, .7, texture2D(detailTexture, rotated * .16 + vec2(.31, .19)).b);
+        vec3 col = mix(meadow, stone * (.78 + .24 * strata + .06 * grain.g), groundRock);
+        col = mix(col, rock * (.72 + .38 * strata) * mix(.88, 1.12, rockFleck), clamp(max(vLandform.w, vTalus * .72), 0., 1.));
+        col = mix(col, shoulder * (.82 + .16 * strata), clamp(vSediment * .42 + vFlow * .12, 0., .55));
         col = mix(col, mix(road, sand, .52) * (.88 + .24 * grain.b), track * .74);
         float drySand = smoothstep(.15, 1.35, bankHeight);
         vec3 beach = sand * (.78 + .22 * drySand + .16 * grain.b + .1 * relief.b);

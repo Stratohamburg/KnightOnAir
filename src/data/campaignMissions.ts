@@ -100,7 +100,7 @@ const relay = target("relay", "中继站", "resource", at(-10, 31), { friendly: 
 const scout = target("recon", "侦察机", "scout", at(3, 18), { friendly: true, health: 110,
   motion: { points: [{ x: -7, z: 88 }, { x: 24, z: 160 }], speed: 4.8 } });
 const transport = target("transport", "运输船", "landing_ship", onRoute(water, 405), { friendly: true, health: 280 });
-const boss = target("gunship", "重型炮艇机", "gunship", from(-.2), { health: 170 });
+const boss = target("gunship", "飞翼重火力机", "gunship", from(-.2), { health: 170 });
 const evacuation = target("transport-plane", "运输机", "bomber", at(3, 18), { friendly: true, health: 180,
   motion: { points: [{ x: 20, z: 100 }, { x: -9, z: 196 }], speed: 5.5 } });
 

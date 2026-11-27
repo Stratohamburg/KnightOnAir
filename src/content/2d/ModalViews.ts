@@ -73,18 +73,15 @@ export function renderHelpModal() {
 }
 
 export function renderPauseModal() {
-  return `<div class="pause-emblem">${icon("pause")}</div>
-    <div class="modal-heading">
-      <span class="eyebrow">HOLDING PATTERN</span>
-      <h2>航线已暂停</h2>
-      <p>战斗、弹道与风场均已冻结。</p>
+  return `<div class="pause-brief">
+      <div class="modal-heading"><h2>航线已暂停</h2><p>战斗、弹道与风场均已冻结。</p></div>
+      <div class="pause-tools">
+        ${actionButton("settings", `${icon("gear")} 设置`, { size: "sm", variant: "secondary" })}
+        ${actionButton("help", `${icon("help")} 指南`, { size: "sm", variant: "secondary" })}
+      </div>
+      ${actionButton("retreat", "结束本次飞行并结算", { size: "sm", variant: "ghost", extraClass: "retreat-button" })}
     </div>
-    <div class="modal-actions">
-      ${actionButton("resume", `继续飞行 ${icon("play")}`, { size: "md", variant: "primary", block: true })}
-      ${actionButton("settings", `飞行设置 ${icon("gear")}`, { size: "sm", variant: "secondary", block: true })}
-      ${actionButton("help", `飞行指南 ${icon("help")}`, { size: "sm", variant: "secondary", block: true })}
-      ${actionButton("retreat", "结束本次飞行并结算", { size: "sm", variant: "ghost", block: true, extraClass: "retreat-button" })}
-    </div>`;
+    ${actionButton("resume", "继续飞行", { size: "lg", variant: "primary", extraClass: "ticket-stub" })}`;
 }
 
 export function renderMissionModal(
@@ -188,6 +185,7 @@ export function renderResultPage({ world, sorties, previousBest, bestScore, best
   }[outcome.outcome];
   return `<div class="result-page">
     <section class="result-sheet panel-surface">
+      <div class="result-brief">
       <span class="eyebrow">FLIGHT REPORT · #${String(sorties).padStart(3, "0")}</span>
       <h1>${outcomeLabel ?? (survived ? "平安返航" : "航迹永不消失")}<span>.</span></h1>
       <p class="result-lead">${mission && outcome
@@ -213,12 +211,15 @@ export function renderResultPage({ world, sorties, previousBest, bestScore, best
           <span>${configSummary}</span>
         </div>
       </div>
-      <div class="result-actions">
-        ${actionButton("home", "返回机库", { size: "md", variant: "secondary", block: true })}
-        ${actionButton("retry", mission ? "重试" : "再次出击", { size: "md", variant: nextMission ? "secondary" : "primary", block: true })}
-        ${nextMission ? actionButton("next-mission", `下一关 ${icon("arrow")}`, { size: "md", variant: "primary", block: true }) : ""}
-      </div>
       <small class="result-best">历史最高 ${formatCount(bestScore)} PTS · 最长巡航 ${formatClock(bestTime)}</small>
+      </div>
+      ${actionButton(nextMission ? "next-mission" : "retry", nextMission ? "下一关" : mission ? "重试" : "再次出击", {
+        size: "lg", variant: "primary", extraClass: "ticket-stub",
+      })}
     </section>
+    <div class="result-actions">
+      ${actionButton("home", "返回机库", { size: "sm", variant: "secondary" })}
+      ${nextMission ? actionButton("retry", "重试", { size: "sm", variant: "secondary" }) : ""}
+    </div>
   </div>`;
 }

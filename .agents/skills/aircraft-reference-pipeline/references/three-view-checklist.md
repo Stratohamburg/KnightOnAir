@@ -81,9 +81,16 @@ Apply each check only to the branches selected for the documented architecture a
 - [ ] Instance leases are released when the model leaves the scene.
 - [ ] Simulation code contains no Three.js or DOM objects.
 
+## Damage ownership checks
+
+- [ ] Cross-check the model parents, simulation collision regions, and registered exterior meshes against the damage ownership record. Exposed rigging, thin fittings and gaps contribute neither collision coverage nor damage surfaces. Airflow landmarks remain attached to the right model nodes.
+- [ ] Verify a path through exposed rigging or an open gap passes cleanly, then verify a contact on the neighboring skin leaves a hole on the owning part. Check two separate holes and their smoke roots while banking.
+- [ ] Exercise an attached disabled part and the configured detachment state. Check that the attached part retains its coverage, then verify collision coverage, attached details and hole effects follow the documented separation.
+
 ## Installation and refit checks
 
 - [ ] Compare the variant's eligible upgrades and supported special states against the plate IDs. Inspect the recorded before/after cue on the assembled model. For internal changes verify the configured feedback. For detachable parts, check what stays on the host, what travels with the part, and which visible effects move or stop.
+- [ ] Check the planned opening and later upgrades against the configured pool and limits. Exercise a representative installation through the normal upgrade path and verify the new part's host, hit region, effect origins, and preserved damage state on existing parts.
 
 - [ ] In the base assembly, compare the configured count, parent and side of each requested module with the starting loadout. On stacked wings, identify each layer in front view and trace its own span, stagger and degree of overlap in plan. Include the supports, horizontal tail and vertical tail where present.
 - [ ] In the showroom, exercise zero, one and two additions on the same side when the upgrade is repeatable. Exercise both sides independently when supported. For independent upgrade types sharing a wing, try a mixed sequence. Compare the assembled top views at one scale and datum. Follow both edges from the center to the tip, checking sweep, intended turns and the space behind each opening. Use front or side views for vertical displacement.
